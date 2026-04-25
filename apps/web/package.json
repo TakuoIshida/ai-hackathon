@@ -22,7 +22,8 @@
     "@stylexjs/stylex": "^0.10.1",
     "lucide-react": "^0.469.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.14.2"
   },
   "devDependencies": {
     "@stylexjs/babel-plugin": "^0.10.1",

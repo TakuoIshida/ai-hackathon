@@ -1,6 +1,7 @@
 import { ClerkProvider } from "@clerk/clerk-react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import "./index.css";
 
@@ -13,21 +14,19 @@ if (!rootElement) {
 
 const root = createRoot(rootElement);
 
+const tree = (
+  <StrictMode>
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
+  </StrictMode>
+);
+
 if (PUBLISHABLE_KEY) {
-  root.render(
-    <StrictMode>
-      <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
-        <App />
-      </ClerkProvider>
-    </StrictMode>,
-  );
+  root.render(<ClerkProvider publishableKey={PUBLISHABLE_KEY}>{tree}</ClerkProvider>);
 } else {
   console.warn(
     "[clerk] VITE_CLERK_PUBLISHABLE_KEY is not set — rendering app without Clerk. Auth-gated UI will be hidden.",
   );
-  root.render(
-    <StrictMode>
-      <App />
-    </StrictMode>,
-  );
+  root.render(tree);
 }

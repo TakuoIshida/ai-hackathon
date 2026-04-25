@@ -1,103 +1,50 @@
-import { SignedIn, SignedOut, SignInButton, UserButton } from "@clerk/clerk-react";
-import * as stylex from "@stylexjs/stylex";
-import { Button } from "@/components/ui/button";
-import { colors, space } from "@/styles/tokens.stylex";
+import { RedirectToSignIn, SignedIn, SignedOut } from "@clerk/clerk-react";
+import { Navigate, Route, Routes } from "react-router-dom";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { PublicLayout } from "@/components/layout/PublicLayout";
+import Bookings from "@/routes/Bookings";
+import CancelBooking from "@/routes/CancelBooking";
+import DashboardHome from "@/routes/DashboardHome";
+import Landing from "@/routes/Landing";
+import Links from "@/routes/Links";
+import NotFound from "@/routes/NotFound";
+import PublicLink from "@/routes/PublicLink";
+import Settings from "@/routes/Settings";
 
 const HAS_CLERK = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
 
-const styles = stylex.create({
-  page: {
-    minHeight: "100dvh",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: space.lg,
-    padding: space.xl,
-  },
-  title: {
-    fontSize: "2rem",
-    fontWeight: 700,
-    margin: 0,
-  },
-  subtitle: {
-    color: colors.muted,
-    margin: 0,
-  },
-  row: {
-    display: "flex",
-    alignItems: "center",
-    gap: space.md,
-  },
-  caption: {
-    fontSize: "0.875rem",
-    color: colors.muted,
-  },
-  notice: {
-    color: "#b45309",
-    fontSize: "0.875rem",
-    maxWidth: "32rem",
-    textAlign: "center",
-  },
-});
+function ProtectedDashboard() {
+  if (!HAS_CLERK) return <Navigate to="/" replace />;
+  return (
+    <>
+      <SignedIn>
+        <DashboardLayout />
+      </SignedIn>
+      <SignedOut>
+        <RedirectToSignIn />
+      </SignedOut>
+    </>
+  );
+}
 
 export default function App() {
   return (
-    <main {...stylex.props(styles.page)}>
-      <h1 {...stylex.props(styles.title)}>AI Hackathon</h1>
-      <p {...stylex.props(styles.subtitle)}>
-        Hono + React + Radix Primitives + StyleX + Drizzle + Clerk
-      </p>
+    <Routes>
+      <Route path="/" element={<Landing />} />
 
-      {HAS_CLERK ? <AuthSection /> : <NoClerkNotice />}
-    </main>
-  );
-}
+      <Route path="/dashboard" element={<ProtectedDashboard />}>
+        <Route index element={<DashboardHome />} />
+        <Route path="links" element={<Links />} />
+        <Route path="bookings" element={<Bookings />} />
+        <Route path="settings" element={<Settings />} />
+      </Route>
 
-function AuthSection() {
-  return (
-    <>
-      <SignedOut>
-        <SignInButton mode="modal">
-          <Button>Sign in</Button>
-        </SignInButton>
-      </SignedOut>
+      <Route element={<PublicLayout />}>
+        <Route path="cancel/:token" element={<CancelBooking />} />
+        <Route path=":slug" element={<PublicLink />} />
+      </Route>
 
-      <SignedIn>
-        <div {...stylex.props(styles.row)}>
-          <span {...stylex.props(styles.caption)}>Signed in</span>
-          <UserButton />
-        </div>
-        <PingApi />
-      </SignedIn>
-    </>
-  );
-}
-
-function NoClerkNotice() {
-  return (
-    <>
-      <p {...stylex.props(styles.notice)}>
-        Clerk is not configured. Set <code>VITE_CLERK_PUBLISHABLE_KEY</code> in{" "}
-        <code>apps/web/.env</code> and restart <code>bun run dev</code> to enable auth.
-      </p>
-      <PingApi />
-    </>
-  );
-}
-
-function PingApi() {
-  const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:8787";
-  return (
-    <Button
-      variant="outline"
-      onClick={async () => {
-        const res = await fetch(`${apiUrl}/health`);
-        const json = await res.json();
-        alert(JSON.stringify(json));
-      }}
-    >
-      Ping API
-    </Button>
+      <Route path="*" element={<NotFound />} />
+    </Routes>
   );
 }
