@@ -1,0 +1,29 @@
+{
+  "name": "ai-hackathon",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter '*' dev",
+    "build": "bun run --filter '@app/web' build",
+    "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun run --filter '*' test",
+    "format": "biome format --write .",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
+    "check": "biome check .",
+    "check:fix": "biome check --write .",
+    "db:generate": "bun --filter @app/api db:generate",
+    "db:migrate": "bun --filter @app/api db:migrate",
+    "db:studio": "bun --filter @app/api db:studio",
+    "docker:build": "docker compose build",
+    "docker:up": "docker compose up",
+    "prepare": "lefthook install"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.13",
+    "lefthook": "^2.1.6"
+  }
+}

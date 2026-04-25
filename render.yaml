@@ -1,0 +1,37 @@
+# Render IaC — services auto-created on first push if connected via Render Blueprint
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: ai-hackathon-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8787
+      - key: DATABASE_URL
+        sync: false
+      - key: CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+
+  - type: web
+    name: ai-hackathon-web
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./apps/web/Dockerfile
+    dockerContext: .
+    # NOTE: Vite inlines VITE_* at build-time. Render passes envVars as build-args
+    # for Docker services, so these reach the build stage via ARG/ENV in Dockerfile.
+    envVars:
+      - key: VITE_API_URL
+        value: https://ai-hackathon-api.onrender.com
+      - key: VITE_CLERK_PUBLISHABLE_KEY
+        sync: false
