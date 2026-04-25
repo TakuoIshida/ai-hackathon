@@ -9,8 +9,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  LEFTHOOK: 0
+
 jobs:
-  check:
+  setup:
+    name: setup (install + cache)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -20,19 +24,103 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Restore or save node_modules cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
       - name: Install dependencies
-        env:
-          LEFTHOOK: 0
+        if: steps.cache.outputs.cache-hit != 'true'
         run: bun install --frozen-lockfile
 
-      - name: Biome (format + lint)
-        run: bun run check
+  format:
+    name: format (biome)
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Typecheck
-        run: bun run typecheck
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
-      - name: Test
-        run: bun run test
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          fail-on-cache-miss: true
 
-      - name: Build
-        run: bun run build
+      - run: bun run check
+
+  typecheck:
+    name: typecheck
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          fail-on-cache-miss: true
+
+      - run: bun run typecheck
+
+  test:
+    name: test
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          fail-on-cache-miss: true
+
+      - run: bun run test
+
+  build:
+    name: build
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          fail-on-cache-miss: true
+
+      - run: bun run build
