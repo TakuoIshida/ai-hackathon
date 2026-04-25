@@ -4,6 +4,7 @@ import { HTTPException } from "hono/http-exception";
 import { logger } from "hono/logger";
 import { clerkWebhookRoute } from "@/routes/clerk-webhook";
 import { googleRoute } from "@/routes/google";
+import { linksRoute } from "@/routes/links";
 import { meRoute } from "@/routes/me";
 
 export const app = new Hono();
@@ -29,6 +30,7 @@ app.get("/health", (c) => c.json({ ok: true, service: "api" }));
 
 app.route("/me", meRoute);
 app.route("/google", googleRoute);
+app.route("/links", linksRoute);
 app.route("/webhooks", clerkWebhookRoute);
 
 export type AppType = typeof app;
