@@ -20,5 +20,17 @@ export default defineConfig({
     css: false,
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     restoreMocks: true,
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html", "lcov"],
+      include: ["src/components/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.test.{ts,tsx}", "src/**/*.stylex.ts"],
+      thresholds: {
+        lines: 80,
+        functions: 80,
+        branches: 75,
+        statements: 80,
+      },
+    },
   },
 });

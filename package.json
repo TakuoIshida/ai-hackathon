@@ -10,6 +10,7 @@
     "build": "bun run --filter '@app/web' build",
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun run --filter '*' test",
+    "test:coverage": "bun run --filter '@app/web' test:coverage",
     "format": "biome format --write .",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
