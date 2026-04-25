@@ -1,7 +1,9 @@
-import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
 import { logger } from "hono/logger";
+import { clerkWebhookRoute } from "@/routes/clerk-webhook";
+import { meRoute } from "@/routes/me";
 
 export const app = new Hono();
 
@@ -14,18 +16,17 @@ app.use(
   }),
 );
 
-// Public routes
+app.onError((err, c) => {
+  if (err instanceof HTTPException) {
+    return c.json({ error: err.message }, err.status);
+  }
+  console.error("[api] unhandled error:", err);
+  return c.json({ error: "internal_server_error" }, 500);
+});
+
 app.get("/health", (c) => c.json({ ok: true, service: "api" }));
 
-// Protected routes — Clerk middleware reads CLERK_SECRET_KEY / CLERK_PUBLISHABLE_KEY
-// from env at request time, so we only mount it where auth is required.
-app.use("/me", clerkMiddleware());
-app.get("/me", (c) => {
-  const auth = getAuth(c);
-  if (!auth?.userId) {
-    return c.json({ error: "unauthorized" }, 401);
-  }
-  return c.json({ userId: auth.userId });
-});
+app.route("/me", meRoute);
+app.route("/webhooks", clerkWebhookRoute);
 
 export type AppType = typeof app;
