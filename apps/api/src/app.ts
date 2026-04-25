@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { logger } from "hono/logger";
 import { clerkWebhookRoute } from "@/routes/clerk-webhook";
+import { googleRoute } from "@/routes/google";
 import { meRoute } from "@/routes/me";
 
 export const app = new Hono();
@@ -27,6 +28,7 @@ app.onError((err, c) => {
 app.get("/health", (c) => c.json({ ok: true, service: "api" }));
 
 app.route("/me", meRoute);
+app.route("/google", googleRoute);
 app.route("/webhooks", clerkWebhookRoute);
 
 export type AppType = typeof app;
