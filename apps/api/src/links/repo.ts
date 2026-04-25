@@ -163,6 +163,20 @@ export async function deleteLink(
   return result.length > 0;
 }
 
+export async function findPublishedLinkBySlug(
+  database: Database,
+  slug: string,
+): Promise<LinkWithRelations | null> {
+  const [link] = await database
+    .select()
+    .from(availabilityLinks)
+    .where(and(eq(availabilityLinks.slug, slug), eq(availabilityLinks.isPublished, true)))
+    .limit(1);
+  if (!link) return null;
+  const relations = await loadRelations(database, link.id);
+  return { ...link, ...relations };
+}
+
 export async function isSlugTaken(database: Database, slug: string): Promise<boolean> {
   const [row] = await database
     .select({ id: availabilityLinks.id })
