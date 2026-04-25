@@ -66,6 +66,23 @@ Git hooks (auto-installed by `bun install` via the `prepare` script):
 
 Manual hook re-install: `bunx lefthook install`. Bypass for emergencies: `git commit --no-verify`.
 
+## E2E tests (Playwright)
+
+```bash
+# one-time browser install (~92MB chromium)
+bunx --cwd apps/e2e playwright install chromium
+
+bun run e2e          # headless run, auto-starts api + web dev servers
+bun run e2e:ui       # interactive UI mode (recommended for writing tests)
+bun run e2e:headed   # watch the browser
+bun run e2e:report   # open the last HTML report
+```
+
+Specs live in `apps/e2e/tests/`. Playwright's `webServer` config in
+`apps/e2e/playwright.config.ts` auto-starts both `bun run --filter @app/api dev`
+and `bun run --filter @app/web dev` (and reuses them locally if already running).
+On CI the dev servers are launched fresh.
+
 ## Run (Docker, mirrors prod)
 
 ```bash
