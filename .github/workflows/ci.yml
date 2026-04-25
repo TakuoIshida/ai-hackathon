@@ -19,23 +19,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
+      - uses: ./.github/actions/setup
         with:
-          bun-version: latest
-
-      - name: Restore or save node_modules cache
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            node_modules
-            apps/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-
-      - name: Install dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: bun install --frozen-lockfile
+          install: "true"
 
   format:
     name: format (biome)
@@ -44,19 +30,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - uses: actions/cache/restore@v4
-        with:
-          path: |
-            node_modules
-            apps/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          fail-on-cache-miss: true
-
+      - uses: ./.github/actions/setup
       - run: bun run check
 
   typecheck:
@@ -66,19 +40,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - uses: actions/cache/restore@v4
-        with:
-          path: |
-            node_modules
-            apps/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          fail-on-cache-miss: true
-
+      - uses: ./.github/actions/setup
       - run: bun run typecheck
 
   test:
@@ -88,19 +50,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - uses: actions/cache/restore@v4
-        with:
-          path: |
-            node_modules
-            apps/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          fail-on-cache-miss: true
-
+      - uses: ./.github/actions/setup
       - run: bun run test
 
   build:
@@ -110,17 +60,5 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - uses: actions/cache/restore@v4
-        with:
-          path: |
-            node_modules
-            apps/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          fail-on-cache-miss: true
-
+      - uses: ./.github/actions/setup
       - run: bun run build

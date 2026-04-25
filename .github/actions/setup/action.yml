@@ -1,0 +1,47 @@
+name: Setup bun + workspace deps
+description: |
+  Set up bun and prepare workspace dependencies.
+  - install=true  → restore cache, install on miss, save cache (for the setup job).
+  - install=false → restore cache only and fail loudly on miss (for downstream jobs).
+
+inputs:
+  install:
+    description: When 'true', install on cache miss and save the cache.
+    required: false
+    default: "false"
+  bun-version:
+    description: Bun version to install via oven-sh/setup-bun.
+    required: false
+    default: latest
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: ${{ inputs.bun-version }}
+
+    - name: Cache deps (read + write)
+      if: inputs.install == 'true'
+      id: cache-rw
+      uses: actions/cache@v4
+      with:
+        path: |
+          node_modules
+          apps/*/node_modules
+        key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
+    - name: Install dependencies
+      if: inputs.install == 'true' && steps.cache-rw.outputs.cache-hit != 'true'
+      shell: bash
+      run: bun install --frozen-lockfile
+
+    - name: Restore deps cache (read only)
+      if: inputs.install != 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          node_modules
+          apps/*/node_modules
+        key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+        fail-on-cache-miss: true
