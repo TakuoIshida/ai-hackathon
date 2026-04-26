@@ -4,6 +4,8 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { colors, space } from "@/styles/tokens.stylex";
 
+const HAS_CLERK = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
+
 const styles = stylex.create({
   page: {
     minHeight: "100dvh",
@@ -18,6 +20,11 @@ const styles = stylex.create({
   title: { fontSize: "2.5rem", fontWeight: 700, margin: 0 },
   subtitle: { color: colors.muted, margin: 0, maxWidth: "32rem" },
   row: { display: "flex", gap: space.sm },
+  notice: {
+    color: "#b45309",
+    fontSize: "0.875rem",
+    maxWidth: "32rem",
+  },
 });
 
 export default function Landing() {
@@ -27,18 +34,33 @@ export default function Landing() {
       <p {...stylex.props(styles.subtitle)}>
         Google Calendar と連携し、空き時間リンクで予約を受け付けます。Meet URL も自動発行。
       </p>
-      <div {...stylex.props(styles.row)}>
-        <SignedOut>
-          <SignInButton mode="modal">
-            <Button>サインイン</Button>
-          </SignInButton>
-        </SignedOut>
-        <SignedIn>
-          <Button asChild>
-            <Link to="/dashboard">ダッシュボードへ</Link>
-          </Button>
-        </SignedIn>
-      </div>
+      {HAS_CLERK ? <AuthActions /> : <NoClerkNotice />}
     </main>
+  );
+}
+
+function AuthActions() {
+  return (
+    <div {...stylex.props(styles.row)}>
+      <SignedOut>
+        <SignInButton mode="modal">
+          <Button>サインイン</Button>
+        </SignInButton>
+      </SignedOut>
+      <SignedIn>
+        <Button asChild>
+          <Link to="/dashboard">ダッシュボードへ</Link>
+        </Button>
+      </SignedIn>
+    </div>
+  );
+}
+
+function NoClerkNotice() {
+  return (
+    <p {...stylex.props(styles.notice)}>
+      <code>VITE_CLERK_PUBLISHABLE_KEY</code> が未設定です。
+      <code>apps/web/.env</code> に追加して再起動するとサインインが有効になります。
+    </p>
   );
 }
