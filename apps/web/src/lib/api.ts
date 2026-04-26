@@ -1,4 +1,4 @@
-import type { LinkDetail, LinkInput, LinkSummary } from "./types";
+import type { BookingSummary, GoogleConnection, LinkDetail, LinkInput, LinkSummary } from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8787";
 
@@ -77,4 +77,21 @@ export const api = {
       `/links/slug-available?slug=${encodeURIComponent(slug)}`,
       { getToken },
     ),
+
+  listBookings: (getToken: AuthTokenGetter) =>
+    request<{ bookings: BookingSummary[] }>("/bookings", { getToken }),
+
+  cancelBooking: (id: string, getToken: AuthTokenGetter) =>
+    request<{ ok: boolean; alreadyCanceled?: boolean }>(`/bookings/${id}`, {
+      method: "DELETE",
+      getToken,
+    }),
+
+  getGoogleConnection: (getToken: AuthTokenGetter) =>
+    request<GoogleConnection>("/google/calendars", { getToken }),
+
+  disconnectGoogle: (getToken: AuthTokenGetter) =>
+    request<{ ok: boolean }>("/google/disconnect", { method: "POST", getToken }),
 };
+
+export const googleConnectUrl = `${API_URL}/google/connect`;
