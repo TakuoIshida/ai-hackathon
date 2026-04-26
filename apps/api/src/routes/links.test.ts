@@ -22,4 +22,16 @@ describe("/links auth gate", () => {
     const res = await app.request("/links/slug-available?slug=foo");
     expect(res.status).toBe(401);
   });
+  test("GET /links/:id/owners → 401 unauth", async () => {
+    const res = await app.request("/links/00000000-0000-0000-0000-000000000000/owners");
+    expect(res.status).toBe(401);
+  });
+  test("PUT /links/:id/owners → 401 unauth", async () => {
+    const res = await app.request("/links/00000000-0000-0000-0000-000000000000/owners", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userIds: [] }),
+    });
+    expect(res.status).toBe(401);
+  });
 });

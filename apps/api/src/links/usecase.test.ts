@@ -9,8 +9,10 @@ import {
   computePublicSlots,
   createLinkForUser,
   deleteLinkForUser,
+  getCoOwnersForLink,
   getLink,
   listLinks,
+  setCoOwnersForLink,
   updateLinkForUser,
 } from "./usecase";
 
@@ -28,7 +30,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(`
-    TRUNCATE TABLE bookings, availability_excludes, availability_rules,
+    TRUNCATE TABLE bookings, link_owners, availability_excludes, availability_rules,
     availability_links, google_calendars, google_oauth_accounts, users
     RESTART IDENTITY CASCADE;
   `);
@@ -187,5 +189,69 @@ describe("links/usecase: computePublicSlots", () => {
     // 9:00-17:00 JST = 8 hours, 30-min slots = 16 slots
     expect(result.slots.length).toBe(16);
     expect(result.busy).toEqual([]);
+  });
+});
+
+describe("links/usecase: co-owner management (ISH-112)", () => {
+  test("getCoOwnersForLink returns ok with empty list initially", async () => {
+    const userId = await seedUser();
+    const created = await createLinkForUser(db, userId, baseInput({ slug: "co-empty" }));
+    if (created.kind !== "ok") throw new Error("seed");
+    const result = await getCoOwnersForLink(db, userId, created.link.id);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.coOwnerIds).toEqual([]);
+  });
+
+  test("getCoOwnersForLink returns not_found when user does not own the link", async () => {
+    const owner = await seedUser();
+    const stranger = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "stranger@x.com",
+      name: null,
+    });
+    const created = await createLinkForUser(db, owner, baseInput({ slug: "co-scoped" }));
+    if (created.kind !== "ok") throw new Error("seed");
+    const result = await getCoOwnersForLink(db, stranger.id, created.link.id);
+    expect(result.kind).toBe("not_found");
+  });
+
+  test("setCoOwnersForLink replaces and returns the new set", async () => {
+    const userId = await seedUser();
+    const created = await createLinkForUser(db, userId, baseInput({ slug: "co-replace" }));
+    if (created.kind !== "ok") throw new Error("seed");
+    const u2 = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u2@x.com",
+      name: null,
+    });
+    const u3 = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u3@x.com",
+      name: null,
+    });
+    const result = await setCoOwnersForLink(db, userId, created.link.id, [u2.id, u3.id]);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.coOwnerIds.sort()).toEqual([u2.id, u3.id].sort());
+  });
+
+  test("setCoOwnersForLink returns not_found when caller is not the primary owner", async () => {
+    const owner = await seedUser();
+    const stranger = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "stranger@x.com",
+      name: null,
+    });
+    const created = await createLinkForUser(db, owner, baseInput({ slug: "co-403" }));
+    if (created.kind !== "ok") throw new Error("seed");
+    const result = await setCoOwnersForLink(db, stranger.id, created.link.id, []);
+    expect(result.kind).toBe("not_found");
+  });
+
+  test("setCoOwnersForLink rejects empty-string user IDs", async () => {
+    const userId = await seedUser();
+    const created = await createLinkForUser(db, userId, baseInput({ slug: "co-bad" }));
+    if (created.kind !== "ok") throw new Error("seed");
+    const result = await setCoOwnersForLink(db, userId, created.link.id, [""]);
+    expect(result.kind).toBe("invalid");
   });
 });

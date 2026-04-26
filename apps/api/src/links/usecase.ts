@@ -17,7 +17,9 @@ import {
   getLinkForUser,
   isSlugTaken,
   type LinkRow,
+  listLinkCoOwnerUserIds,
   listLinksForUser,
+  setLinkCoOwners,
   updateLink,
 } from "./repo";
 import type { LinkInput, LinkUpdateInput } from "./schemas";
@@ -94,6 +96,45 @@ export async function deleteLinkForUser(
   return deleteLink(database, userId, linkId);
 }
 
+// ---------- ISH-112: co-owner management ----------
+
+export type SetCoOwnersResult =
+  | { kind: "ok"; coOwnerIds: string[] }
+  | { kind: "not_found" }
+  | { kind: "invalid"; reason: string };
+
+/**
+ * Replace the set of co-owners on a link. Only the link's primary owner
+ * (link.userId) is allowed to call this. The primary is implicit and is
+ * silently filtered out if included in the input set.
+ */
+export async function setCoOwnersForLink(
+  database: Database,
+  primaryUserId: string,
+  linkId: string,
+  userIds: ReadonlyArray<string>,
+): Promise<SetCoOwnersResult> {
+  // Reject obvious malformed input early.
+  if (userIds.some((id) => typeof id !== "string" || id.length === 0)) {
+    return { kind: "invalid", reason: "user_id_must_be_non_empty_string" };
+  }
+  const link = await getLinkForUser(database, primaryUserId, linkId);
+  if (!link) return { kind: "not_found" };
+  await setLinkCoOwners(database, link, userIds);
+  const coOwnerIds = await listLinkCoOwnerUserIds(database, link.id);
+  return { kind: "ok", coOwnerIds };
+}
+
+export async function getCoOwnersForLink(
+  database: Database,
+  primaryUserId: string,
+  linkId: string,
+): Promise<{ kind: "ok"; coOwnerIds: string[] } | { kind: "not_found" }> {
+  const link = await getLinkForUser(database, primaryUserId, linkId);
+  if (!link) return { kind: "not_found" };
+  return { kind: "ok", coOwnerIds: await listLinkCoOwnerUserIds(database, link.id) };
+}
+
 // ---------- Public read use case (slots) ----------
 
 export type PublicSlotsParams = {
@@ -132,17 +173,36 @@ export async function computePublicSlots(
     excludeLocalDates: link.excludes,
   });
 
-  let busy: Interval[] = [];
-  const account = await getOauthAccountByUser(database, link.userId);
-  if (account) {
+  // ISH-112: merge busy across all owners (primary + co-owners).
+  // Per-owner failures are logged and skipped — the slot grid stays usable
+  // even if one owner's Google connection is broken.
+  const coOwnerIds = await listLinkCoOwnerUserIds(database, link.id);
+  const ownerIds = [link.userId, ...coOwnerIds];
+  const cfg = (() => {
     try {
-      const cfg = loadGoogleConfig();
-      const accessToken = await getValidAccessToken(database, cfg, account.id);
-      const calendars = await listUserCalendars(database, account.id);
-      const calendarIds = calendars.filter((c) => c.usedForBusy).map((c) => c.googleCalendarId);
-      busy = await queryFreeBusy({ accessToken, calendarIds, rangeStart, rangeEnd });
-    } catch (err) {
-      console.warn("[public-slots] busy fetch failed; returning windows without busy:", err);
+      return loadGoogleConfig();
+    } catch {
+      return null;
+    }
+  })();
+
+  const busy: Interval[] = [];
+  if (cfg) {
+    for (const ownerId of ownerIds) {
+      const account = await getOauthAccountByUser(database, ownerId);
+      if (!account) continue;
+      try {
+        const accessToken = await getValidAccessToken(database, cfg, account.id);
+        const calendars = await listUserCalendars(database, account.id);
+        const calendarIds = calendars.filter((c) => c.usedForBusy).map((c) => c.googleCalendarId);
+        const fb = await queryFreeBusy({ accessToken, calendarIds, rangeStart, rangeEnd });
+        busy.push(...fb);
+      } catch (err) {
+        console.warn(
+          `[public-slots] busy fetch failed for owner=${ownerId}; skipping that owner:`,
+          err,
+        );
+      }
     }
   }
 

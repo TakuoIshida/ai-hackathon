@@ -79,9 +79,34 @@ export const availabilityExcludes = pgTable(
   ],
 );
 
+// ISH-112: co-owners on a link. The link's `userId` (the creator) is the
+// "primary owner" and is implicit — it does NOT appear in this table. Rows
+// here represent additional co-owners. Rationale: avoids a delete-then-insert
+// dance every time the creator's id appears in upsert payloads, and keeps
+// the existing single-owner code paths working unchanged.
+export const linkOwners = pgTable(
+  "link_owners",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    linkId: uuid("link_id")
+      .notNull()
+      .references(() => availabilityLinks.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("uniq_link_owner").on(t.linkId, t.userId),
+    index("idx_link_owners_user").on(t.userId),
+  ],
+);
+
 export type AvailabilityLink = typeof availabilityLinks.$inferSelect;
 export type NewAvailabilityLink = typeof availabilityLinks.$inferInsert;
 export type AvailabilityRule = typeof availabilityRules.$inferSelect;
 export type NewAvailabilityRule = typeof availabilityRules.$inferInsert;
 export type AvailabilityExclude = typeof availabilityExcludes.$inferSelect;
 export type NewAvailabilityExclude = typeof availabilityExcludes.$inferInsert;
+export type LinkOwner = typeof linkOwners.$inferSelect;
+export type NewLinkOwner = typeof linkOwners.$inferInsert;

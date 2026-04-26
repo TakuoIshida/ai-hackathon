@@ -9,7 +9,9 @@ import {
   findPublishedLinkBySlug,
   getLinkForUser,
   isSlugTaken,
+  listLinkCoOwnerUserIds,
   listLinksForUser,
+  setLinkCoOwners,
   updateLink,
 } from "./repo";
 import type { LinkInput } from "./schemas";
@@ -28,7 +30,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(`
-    TRUNCATE TABLE bookings, availability_excludes, availability_rules,
+    TRUNCATE TABLE bookings, link_owners, availability_excludes, availability_rules,
     availability_links, users RESTART IDENTITY CASCADE;
   `);
 });
@@ -138,5 +140,87 @@ describe("links/repo", () => {
     await updateLink(db, userId, draft.id, { isPublished: true });
     const found = await findPublishedLinkBySlug(db, "draft");
     expect(found?.id).toBe(draft.id);
+  });
+});
+
+describe("links/repo: link co-owners (ISH-112)", () => {
+  test("listLinkCoOwnerUserIds returns [] when no co-owners", async () => {
+    const userId = await seedUser();
+    const link = await createLink(db, userId, baseInput({ slug: "no-co" }));
+    expect(await listLinkCoOwnerUserIds(db, link.id)).toEqual([]);
+  });
+
+  test("setLinkCoOwners persists co-owners and dedupes", async () => {
+    const userId = await seedUser();
+    const link = await createLink(db, userId, baseInput({ slug: "co-1" }));
+    const u2 = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u2@x.com",
+      name: null,
+    });
+    const u3 = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u3@x.com",
+      name: null,
+    });
+    await setLinkCoOwners(db, link, [u2.id, u3.id, u2.id]);
+    const co = await listLinkCoOwnerUserIds(db, link.id);
+    expect(co.sort()).toEqual([u2.id, u3.id].sort());
+  });
+
+  test("setLinkCoOwners filters out the primary user silently", async () => {
+    const userId = await seedUser();
+    const link = await createLink(db, userId, baseInput({ slug: "co-2" }));
+    const u2 = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u2@x.com",
+      name: null,
+    });
+    await setLinkCoOwners(db, link, [userId, u2.id]);
+    expect(await listLinkCoOwnerUserIds(db, link.id)).toEqual([u2.id]);
+  });
+
+  test("setLinkCoOwners replaces existing set on each call", async () => {
+    const userId = await seedUser();
+    const link = await createLink(db, userId, baseInput({ slug: "co-3" }));
+    const u2 = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u2@x.com",
+      name: null,
+    });
+    const u3 = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u3@x.com",
+      name: null,
+    });
+    await setLinkCoOwners(db, link, [u2.id]);
+    await setLinkCoOwners(db, link, [u3.id]);
+    expect(await listLinkCoOwnerUserIds(db, link.id)).toEqual([u3.id]);
+  });
+
+  test("setLinkCoOwners with empty array clears all co-owners", async () => {
+    const userId = await seedUser();
+    const link = await createLink(db, userId, baseInput({ slug: "co-4" }));
+    const u2 = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u2@x.com",
+      name: null,
+    });
+    await setLinkCoOwners(db, link, [u2.id]);
+    await setLinkCoOwners(db, link, []);
+    expect(await listLinkCoOwnerUserIds(db, link.id)).toEqual([]);
+  });
+
+  test("deleting the link cascades link_owners rows", async () => {
+    const userId = await seedUser();
+    const link = await createLink(db, userId, baseInput({ slug: "co-5" }));
+    const u2 = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u2@x.com",
+      name: null,
+    });
+    await setLinkCoOwners(db, link, [u2.id]);
+    await deleteLink(db, userId, link.id);
+    expect(await listLinkCoOwnerUserIds(db, link.id)).toEqual([]);
   });
 });

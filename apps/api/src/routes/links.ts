@@ -8,8 +8,10 @@ import {
   checkSlugAvailability,
   createLinkForUser,
   deleteLinkForUser,
+  getCoOwnersForLink,
   getLink,
   listLinks,
+  setCoOwnersForLink,
   updateLinkForUser,
 } from "@/links/usecase";
 import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
@@ -66,4 +68,27 @@ linksRoute.delete("/:id", async (c) => {
   const ok = await deleteLinkForUser(db, getDbUser(c).id, c.req.param("id"));
   if (!ok) return c.json({ error: "not_found" }, 404);
   return c.json({ ok: true });
+});
+
+// ISH-112: co-owners on a link.
+const coOwnersBodySchema = z.object({
+  userIds: z.array(z.string().uuid()).max(20),
+});
+
+linksRoute.get("/:id/owners", async (c) => {
+  const result = await getCoOwnersForLink(db, getDbUser(c).id, c.req.param("id"));
+  if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
+  return c.json({ coOwnerIds: result.coOwnerIds });
+});
+
+linksRoute.put("/:id/owners", zValidator("json", coOwnersBodySchema), async (c) => {
+  const result = await setCoOwnersForLink(
+    db,
+    getDbUser(c).id,
+    c.req.param("id"),
+    c.req.valid("json").userIds,
+  );
+  if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
+  if (result.kind === "invalid") return c.json({ error: result.reason }, 400);
+  return c.json({ coOwnerIds: result.coOwnerIds });
 });

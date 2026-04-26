@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
-import { availabilityExcludes, availabilityLinks, availabilityRules } from "@/db/schema/links";
+import {
+  availabilityExcludes,
+  availabilityLinks,
+  availabilityRules,
+  linkOwners,
+} from "@/db/schema/links";
 import type { ExcludeEntity, LinkEntity, LinkWithRelations, RuleEntity } from "./domain";
 import type { LinkInput, LinkUpdateInput } from "./schemas";
 
@@ -196,4 +201,42 @@ export async function isSlugTaken(database: Database, slug: string): Promise<boo
     .where(eq(availabilityLinks.slug, slug))
     .limit(1);
   return Boolean(row);
+}
+
+// ---------- ISH-112: link co-owners ----------
+
+/**
+ * Co-owner user IDs for a link. The primary owner (link.userId) is implicit
+ * and is NOT returned here.
+ */
+export async function listLinkCoOwnerUserIds(
+  database: Database,
+  linkId: string,
+): Promise<string[]> {
+  const rows = await database
+    .select({ userId: linkOwners.userId })
+    .from(linkOwners)
+    .where(eq(linkOwners.linkId, linkId));
+  return rows.map((r) => r.userId);
+}
+
+/**
+ * Replace the co-owner set for a link. Idempotent. The primary owner is
+ * never inserted here even if passed in (callers may pass the full
+ * "all owners" set without filtering).
+ */
+export async function setLinkCoOwners(
+  database: Database,
+  link: Pick<LinkEntity, "id" | "userId">,
+  userIds: ReadonlyArray<string>,
+): Promise<void> {
+  type BatchQuery = Parameters<Database["batch"]>[0][number];
+  const filtered = Array.from(new Set(userIds)).filter((u) => u !== link.userId);
+  const queries: BatchQuery[] = [database.delete(linkOwners).where(eq(linkOwners.linkId, link.id))];
+  if (filtered.length > 0) {
+    queries.push(
+      database.insert(linkOwners).values(filtered.map((userId) => ({ linkId: link.id, userId }))),
+    );
+  }
+  await database.batch(queries as [BatchQuery, ...BatchQuery[]]);
 }
