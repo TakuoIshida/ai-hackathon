@@ -43,6 +43,14 @@ describe("GET /google/* without Clerk session", () => {
     const res = await app.request("/google/callback?code=x&state=y");
     expect(res.status).toBe(401);
   });
+  test("PATCH /google/calendars/:id → 401", async () => {
+    const res = await app.request("/google/calendars/00000000-0000-0000-0000-000000000000", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ usedForBusy: true }),
+    });
+    expect(res.status).toBe(401);
+  });
 });
 
 // Note: full success-path tests for connect/callback require a Clerk session and DB.

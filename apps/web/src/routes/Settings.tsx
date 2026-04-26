@@ -13,7 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError, api, googleConnectUrl } from "@/lib/api";
-import type { GoogleConnection } from "@/lib/types";
+import type { GoogleCalendarSummary, GoogleConnection } from "@/lib/types";
 import { colors, space } from "@/styles/tokens.stylex";
 
 const styles = stylex.create({
@@ -93,6 +93,36 @@ export default function Settings() {
     }
   };
 
+  const [savingCalendarId, setSavingCalendarId] = useState<string | null>(null);
+
+  const updateLocalCalendars = (mapper: (cal: GoogleCalendarSummary) => GoogleCalendarSummary) => {
+    setConn((prev) => (prev ? { ...prev, calendars: prev.calendars.map(mapper) } : prev));
+  };
+
+  const onChangeFlag = async (
+    calendar: GoogleCalendarSummary,
+    field: "usedForBusy" | "usedForWrites",
+    next: boolean,
+  ) => {
+    setSavingCalendarId(calendar.id);
+    setError(null);
+    // Optimistic update — including exclusivity for usedForWrites.
+    updateLocalCalendars((cal) => {
+      if (cal.id === calendar.id) return { ...cal, [field]: next };
+      if (field === "usedForWrites" && next) return { ...cal, usedForWrites: false };
+      return cal;
+    });
+    try {
+      await api.updateCalendarFlags(calendar.id, { [field]: next }, () => getToken());
+    } catch (err) {
+      setError(err instanceof ApiError ? `${err.status} ${err.code}` : "failed");
+      // Revert by reloading from server.
+      await load();
+    } finally {
+      setSavingCalendarId(null);
+    }
+  };
+
   return (
     <div {...stylex.props(styles.page)}>
       <h1 {...stylex.props(styles.heading)}>設定</h1>
@@ -124,28 +154,46 @@ export default function Settings() {
                   <p {...stylex.props(styles.empty)}>カレンダーが見つかりません。</p>
                 ) : (
                   <div {...stylex.props(styles.list)}>
-                    {conn.calendars.map((cal) => (
-                      <div key={cal.id} {...stylex.props(styles.row)}>
-                        <div {...stylex.props(styles.rowMeta)}>
-                          <span {...stylex.props(styles.rowTitle)}>
-                            {cal.summary ?? cal.id}
-                            {cal.isPrimary && <span {...stylex.props(styles.badge)}>primary</span>}
-                          </span>
-                          <span {...stylex.props(styles.rowSub)}>{cal.id}</span>
+                    {conn.calendars.map((cal) => {
+                      const saving = savingCalendarId === cal.id;
+                      return (
+                        <div key={cal.id} {...stylex.props(styles.row)}>
+                          <div {...stylex.props(styles.rowMeta)}>
+                            <span {...stylex.props(styles.rowTitle)}>
+                              {cal.summary ?? cal.googleCalendarId}
+                              {cal.isPrimary && (
+                                <span {...stylex.props(styles.badge)}>primary</span>
+                              )}
+                            </span>
+                            <span {...stylex.props(styles.rowSub)}>{cal.googleCalendarId}</span>
+                          </div>
+                          <label {...stylex.props(styles.toggle)}>
+                            <input
+                              type="checkbox"
+                              checked={cal.usedForBusy}
+                              disabled={saving}
+                              onChange={(e) => onChangeFlag(cal, "usedForBusy", e.target.checked)}
+                            />
+                            空き判定
+                          </label>
+                          <label {...stylex.props(styles.toggle)}>
+                            <input
+                              type="radio"
+                              name="usedForWrites"
+                              checked={cal.usedForWrites}
+                              disabled={saving}
+                              onChange={(e) => onChangeFlag(cal, "usedForWrites", e.target.checked)}
+                            />
+                            書込先
+                          </label>
                         </div>
-                        <span {...stylex.props(styles.toggle)}>
-                          {cal.usedForBusy ? "✓ 空き判定" : "—"}
-                        </span>
-                        <span {...stylex.props(styles.toggle)}>
-                          {cal.usedForWrites ? "✓ 書込先" : "—"}
-                        </span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
                 <p {...stylex.props(styles.empty)}>
-                  カレンダーごとの設定変更は v1.5 で対応予定。今は primary が書込先・全部 busy
-                  判定対象です。
+                  「空き判定」のオンになっているカレンダーの予定が busy
+                  として参照されます。「書込先」は 確定イベントの作成先（1 つだけ選択可）。
                 </p>
               </CardSection>
             </>

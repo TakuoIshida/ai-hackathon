@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
+import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { z } from "zod";
 import { db } from "@/db/client";
 import { listCalendars } from "@/google/calendar";
 import { loadGoogleConfig } from "@/google/config";
@@ -19,6 +21,7 @@ import {
   syncCalendars,
   upsertOauthAccount,
 } from "@/google/repo";
+import { updateCalendarFlagsForUser } from "@/google/usecase";
 import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
 
 const STATE_COOKIE = "google_oauth_state";
@@ -108,12 +111,44 @@ googleRoute.get("/calendars", async (c) => {
     connected: true,
     accountEmail: account.email,
     calendars: calendars.map((cal) => ({
-      id: cal.googleCalendarId,
+      id: cal.id,
+      googleCalendarId: cal.googleCalendarId,
       summary: cal.summary,
       timeZone: cal.timeZone,
       isPrimary: cal.isPrimary,
       usedForBusy: cal.usedForBusy,
       usedForWrites: cal.usedForWrites,
     })),
+  });
+});
+
+const flagsPatchSchema = z
+  .object({
+    usedForBusy: z.boolean().optional(),
+    usedForWrites: z.boolean().optional(),
+  })
+  .refine((p) => p.usedForBusy !== undefined || p.usedForWrites !== undefined, {
+    message: "at least one of usedForBusy or usedForWrites must be provided",
+  });
+
+googleRoute.patch("/calendars/:id", zValidator("json", flagsPatchSchema), async (c) => {
+  const dbUser = getDbUser(c);
+  const calendarId = c.req.param("id");
+  const patch = c.req.valid("json");
+  const result = await updateCalendarFlagsForUser(db, dbUser.id, calendarId, patch);
+  if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
+  if (result.kind === "forbidden") return c.json({ error: "forbidden" }, 403);
+  if (result.kind === "invalid") return c.json({ error: result.reason }, 400);
+  const cal = result.calendar;
+  return c.json({
+    calendar: {
+      id: cal.id,
+      googleCalendarId: cal.googleCalendarId,
+      summary: cal.summary,
+      timeZone: cal.timeZone,
+      isPrimary: cal.isPrimary,
+      usedForBusy: cal.usedForBusy,
+      usedForWrites: cal.usedForWrites,
+    },
   });
 });
