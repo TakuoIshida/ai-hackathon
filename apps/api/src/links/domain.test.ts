@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { rulesToWeekly } from "./public-slots";
+import { rulesToWeekly } from "./domain";
 
 describe("rulesToWeekly", () => {
   test("buckets rules by weekday", () => {

@@ -2,18 +2,16 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
 import { availabilityExcludes, availabilityLinks, availabilityRules } from "@/db/schema/links";
+import type { ExcludeEntity, LinkEntity, LinkWithRelations, RuleEntity } from "./domain";
 import type { LinkInput, LinkUpdateInput } from "./schemas";
 
 type Database = typeof DbClient;
 
-export type LinkRow = typeof availabilityLinks.$inferSelect;
-export type RuleRow = typeof availabilityRules.$inferSelect;
-export type ExcludeRow = typeof availabilityExcludes.$inferSelect;
-
-export type LinkWithRelations = LinkRow & {
-  rules: Array<Pick<RuleRow, "weekday" | "startMinute" | "endMinute">>;
-  excludes: string[];
-};
+// Backwards-compatible aliases for existing imports.
+export type LinkRow = LinkEntity;
+export type RuleRow = RuleEntity;
+export type ExcludeRow = ExcludeEntity;
+export type { LinkWithRelations };
 
 const linkColumnsForUpsert = (input: Partial<LinkInput>) => {
   const out: Record<string, unknown> = {};

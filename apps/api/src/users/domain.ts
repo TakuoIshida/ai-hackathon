@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
-import type { db as DbClient } from "@/db/client";
-import { users } from "@/db/schema/users";
+import type { users } from "@/db/schema/users";
+
+export type UserEntity = typeof users.$inferSelect;
+export type NewUserAttributes = typeof users.$inferInsert;
 
 export type ClerkUserPayload = {
   id: string;
@@ -9,8 +10,6 @@ export type ClerkUserPayload = {
   first_name?: string | null;
   last_name?: string | null;
 };
-
-type Database = typeof DbClient;
 
 export function pickPrimaryEmail(payload: ClerkUserPayload): string | null {
   const primary = payload.email_addresses.find((e) => e.id === payload.primary_email_address_id);
@@ -25,21 +24,14 @@ export function buildDisplayName(payload: ClerkUserPayload): string | null {
   return combined.length > 0 ? combined : null;
 }
 
-export async function upsertUserFromClerk(database: Database, payload: ClerkUserPayload) {
+export function deriveUserAttributes(payload: ClerkUserPayload): {
+  clerkId: string;
+  email: string;
+  name: string | null;
+} {
   const email = pickPrimaryEmail(payload);
   if (!email) {
     throw new Error(`Clerk user ${payload.id} has no email addresses`);
   }
-  const name = buildDisplayName(payload);
-  await database
-    .insert(users)
-    .values({ clerkId: payload.id, email, name })
-    .onConflictDoUpdate({
-      target: users.clerkId,
-      set: { email, name, updatedAt: new Date() },
-    });
-}
-
-export async function deleteUserByClerkId(database: Database, clerkId: string): Promise<void> {
-  await database.delete(users).where(eq(users.clerkId, clerkId));
+  return { clerkId: payload.id, email, name: buildDisplayName(payload) };
 }

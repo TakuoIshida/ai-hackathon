@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { Webhook } from "svix";
 import { db } from "@/db/client";
-import { type ClerkUserPayload, deleteUserByClerkId, upsertUserFromClerk } from "@/users/sync";
+import type { ClerkUserPayload } from "@/users/domain";
+import { applyClerkUserDelete, applyClerkUserUpsert } from "@/users/usecase";
 
 type ClerkEvent =
   | { type: "user.created" | "user.updated"; data: ClerkUserPayload }
@@ -42,11 +43,11 @@ clerkWebhookRoute.post("/clerk", async (c) => {
   switch (event.type) {
     case "user.created":
     case "user.updated":
-      await upsertUserFromClerk(db, event.data as ClerkUserPayload);
+      await applyClerkUserUpsert(db, event.data as ClerkUserPayload);
       break;
     case "user.deleted": {
       const data = event.data as { id: string };
-      if (data.id) await deleteUserByClerkId(db, data.id);
+      if (data.id) await applyClerkUserDelete(db, data.id);
       break;
     }
     default:
