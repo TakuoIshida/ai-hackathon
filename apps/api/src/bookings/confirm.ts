@@ -2,7 +2,7 @@ import type { db as DbClient } from "@/db/client";
 import type { CreatedEvent, EventCreateInput } from "@/google/calendar";
 import type { GoogleConfig } from "@/google/config";
 import { getOauthAccountByUser, listUserCalendars } from "@/google/repo";
-import type { LinkWithRelations } from "@/links/repo";
+import { type LinkWithRelations, listLinkCoOwnerUserIds } from "@/links/repo";
 import { computePublicSlots } from "@/links/usecase";
 import { guestConfirmEmail, ownerConfirmEmail } from "@/notifications/templates";
 import type { SendEmailFn } from "@/notifications/types";
@@ -87,6 +87,11 @@ export async function confirmBooking(
 
   // Best-effort Google Calendar sync. If it fails the booking still stands
   // (the operator can manually add the event); we log + continue without Meet.
+  //
+  // ISH-112: when the link has co-owners, the event is still created on the
+  // primary owner's calendar, but ALL owners are invited as attendees so the
+  // event appears on each of their calendars natively (Google fans it out
+  // via attendee invites — no need for N separate insert calls).
   if (google.cfg) {
     try {
       const account = await getOauthAccountByUser(database, link.userId);
@@ -94,6 +99,12 @@ export async function confirmBooking(
         const calendars = await listUserCalendars(database, account.id);
         const writeTarget = calendars.find((c) => c.usedForWrites) ?? calendars[0];
         if (writeTarget) {
+          const coOwnerIds = await listLinkCoOwnerUserIds(database, link.id);
+          const ownerEmails: string[] = [];
+          for (const ownerId of coOwnerIds) {
+            const u = await getUserById(database, ownerId);
+            if (u) ownerEmails.push(u.email);
+          }
           const accessToken = await google.getAccessToken(database, google.cfg, account.id);
           const created = await google.createEvent({
             accessToken,
@@ -103,7 +114,10 @@ export async function confirmBooking(
             timeZone: link.timeZone,
             title: link.title,
             description: link.description ?? undefined,
-            attendees: [{ email: input.guestEmail, displayName: input.guestName }],
+            attendees: [
+              { email: input.guestEmail, displayName: input.guestName },
+              ...ownerEmails.map((email) => ({ email })),
+            ],
             generateMeetUrl: true,
           });
           await attachGoogleEvent(database, inserted.id, created.id, created.meetUrl ?? null);
