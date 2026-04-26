@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { cancelBookingByOwner } from "@/bookings/cancel";
 import type { CreateEventFn, GetAccessTokenFn } from "@/bookings/confirm";
 import { db } from "@/db/client";
@@ -18,6 +18,10 @@ export type BookingsRouteDeps = {
   getAccessToken: GetAccessTokenFn;
   sendEmail: SendEmailFn;
   appBaseUrl: string;
+  // Test escape hatch: integration tests can supply fake auth middleware to
+  // populate `dbUser` without going through Clerk. Production keeps the real
+  // Clerk + requireAuth + attachDbUser stack.
+  authMiddlewares?: MiddlewareHandler[];
 };
 
 function productionSendEmail(): SendEmailFn {
@@ -43,9 +47,10 @@ export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): H
   Variables: AuthVars;
 }> {
   const route = new Hono<{ Variables: AuthVars }>();
-  route.use("*", clerkAuth());
-  route.use("*", requireAuth);
-  route.use("*", attachDbUser);
+  const middlewares = deps.authMiddlewares ?? [clerkAuth(), requireAuth, attachDbUser];
+  for (const mw of middlewares) {
+    route.use("*", mw);
+  }
 
   // List all bookings owned by the authed user.
   route.get("/", async (c) => {
