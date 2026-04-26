@@ -135,3 +135,35 @@ export function guestCancelEmail(ctx: CancelNotificationContext): EmailMessage {
     html: `<p>${escapeHtml(actor)} が予約をキャンセルしました。</p><p><strong>${escapeHtml(ctx.linkTitle)}</strong><br/>${escapeHtml(when)} (${escapeHtml(tz)})</p>`,
   };
 }
+
+// ISH-108: workspace invitation email.
+export type WorkspaceInviteContext = {
+  to: string;
+  workspaceName: string;
+  acceptUrl: string;
+  expiresAt: Date;
+};
+
+export function workspaceInviteEmail(ctx: WorkspaceInviteContext): EmailMessage {
+  const expires = fmt(ctx.expiresAt, "Asia/Tokyo");
+  const text = [
+    `${ctx.workspaceName} へ招待されました`,
+    "",
+    `下記のリンクから参加してください:`,
+    ctx.acceptUrl,
+    "",
+    `有効期限: ${expires} (JST)`,
+  ].join("\n");
+  const html = `<!doctype html><html><body style="font-family:sans-serif">
+<h1 style="font-size:1.25rem">${escapeHtml(ctx.workspaceName)} へ招待されました</h1>
+<p>下記のリンクから参加してください:</p>
+<p><a href="${escapeHtml(ctx.acceptUrl)}">${escapeHtml(ctx.acceptUrl)}</a></p>
+<p style="font-size:0.875rem;color:#666">有効期限: ${escapeHtml(expires)} (JST)</p>
+</body></html>`;
+  return {
+    to: ctx.to,
+    subject: `${ctx.workspaceName} への招待`,
+    text,
+    html,
+  };
+}
