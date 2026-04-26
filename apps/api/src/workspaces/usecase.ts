@@ -2,13 +2,19 @@ import type { db as DbClient } from "@/db/client";
 import { workspaceInviteEmail } from "@/notifications/templates";
 import type { SendEmailFn } from "@/notifications/types";
 import {
+  type CreateWorkspaceResult,
   createInvitation,
+  createWorkspaceWithOwnerMembership,
   deleteInvitation,
   findMembership,
   findOpenInvitationForEmail,
   findWorkspaceById,
+  getWorkspaceForMember,
   type InvitationRow,
+  listMembershipsForUser,
+  type WorkspaceWithRole,
 } from "./repo";
+import type { CreateWorkspaceInput } from "./schemas";
 
 type Database = typeof DbClient;
 
@@ -80,6 +86,52 @@ export async function issueInvitation(
   }
 
   return { kind: "ok", invitation };
+}
+
+// ---------- ISH-107: workspace create / list / get ----------
+
+/**
+ * Create a workspace and add the caller as the `owner` membership atomically.
+ * Slug uniqueness is enforced by a DB UNIQUE index on workspaces.slug; the
+ * repo layer translates the constraint violation into `slug_taken` so the
+ * route can map that to a 409. This avoids a TOCTOU window where two
+ * concurrent requests both see the slug "available" and try to insert.
+ */
+export async function createWorkspaceForUser(
+  database: Database,
+  ownerUserId: string,
+  input: CreateWorkspaceInput,
+): Promise<CreateWorkspaceResult> {
+  return createWorkspaceWithOwnerMembership(database, {
+    name: input.name,
+    slug: input.slug,
+    ownerUserId,
+  });
+}
+
+export async function listWorkspacesForUser(
+  database: Database,
+  userId: string,
+): Promise<WorkspaceWithRole[]> {
+  return listMembershipsForUser(database, userId);
+}
+
+export type GetWorkspaceResult =
+  | { kind: "ok"; workspace: WorkspaceWithRole }
+  | { kind: "not_found" };
+
+/**
+ * Returns the workspace + caller's role iff the caller is a member. Non-members
+ * (and unknown workspace ids) are indistinguishable to avoid leaking existence.
+ */
+export async function getWorkspaceForUser(
+  database: Database,
+  userId: string,
+  workspaceId: string,
+): Promise<GetWorkspaceResult> {
+  const row = await getWorkspaceForMember(database, workspaceId, userId);
+  if (!row) return { kind: "not_found" };
+  return { kind: "ok", workspace: row };
 }
 
 export type RevokeInvitationResult = { kind: "ok" } | { kind: "forbidden" } | { kind: "not_found" };

@@ -26,3 +26,26 @@ describe("/workspaces auth gate (ISH-108)", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("/workspaces auth gate (ISH-107)", () => {
+  test("GET /workspaces → 401 unauth", async () => {
+    const res = await app.request("/workspaces", { method: "GET" });
+    expect(res.status).toBe(401);
+  });
+
+  test("POST /workspaces → 401 unauth", async () => {
+    const res = await app.request("/workspaces", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "X", slug: "x" }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("GET /workspaces/:id → 401 unauth", async () => {
+    const res = await app.request("/workspaces/00000000-0000-0000-0000-000000000000", {
+      method: "GET",
+    });
+    expect(res.status).toBe(401);
+  });
+});

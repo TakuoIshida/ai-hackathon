@@ -1,0 +1,179 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { clearDbForTests, db, setDbForTests } from "@/db/client";
+import { memberships, workspaces } from "@/db/schema/workspaces";
+import { createTestDb, type TestDb } from "@/test/integration-db";
+import { insertUser } from "@/users/repo";
+import {
+  createWorkspaceWithOwnerMembership,
+  findMembership,
+  findWorkspaceById,
+  getWorkspaceForMember,
+  listMembershipsForUser,
+} from "./repo";
+
+let testDb: TestDb;
+
+beforeAll(async () => {
+  testDb = await createTestDb();
+  setDbForTests(testDb);
+}, 30_000);
+
+afterAll(async () => {
+  clearDbForTests();
+  await testDb.$client.close();
+});
+
+beforeEach(async () => {
+  await testDb.$client.exec(
+    `TRUNCATE TABLE invitations, memberships, workspaces, users RESTART IDENTITY CASCADE;`,
+  );
+});
+
+async function seedUser(email = `u-${randomUUID()}@x.com`) {
+  return insertUser(db, { clerkId: `c_${randomUUID()}`, email, name: null });
+}
+
+describe("workspaces/repo: createWorkspaceWithOwnerMembership (ISH-107)", () => {
+  test("inserts the workspace and the owner membership atomically", async () => {
+    const owner = await seedUser();
+    const result = await createWorkspaceWithOwnerMembership(db, {
+      name: "Acme Inc.",
+      slug: "acme",
+      ownerUserId: owner.id,
+    });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.workspace.name).toBe("Acme Inc.");
+    expect(result.workspace.slug).toBe("acme");
+    expect(result.workspace.ownerUserId).toBe(owner.id);
+
+    const ws = await findWorkspaceById(db, result.workspace.id);
+    expect(ws?.id).toBe(result.workspace.id);
+
+    const ms = await findMembership(db, result.workspace.id, owner.id);
+    expect(ms?.role).toBe("owner");
+  });
+
+  test("returns slug_taken when slug already exists; no orphan workspace row remains", async () => {
+    const a = await seedUser();
+    const b = await seedUser();
+    const first = await createWorkspaceWithOwnerMembership(db, {
+      name: "First",
+      slug: "duplicate",
+      ownerUserId: a.id,
+    });
+    expect(first.kind).toBe("ok");
+    const second = await createWorkspaceWithOwnerMembership(db, {
+      name: "Second",
+      slug: "duplicate",
+      ownerUserId: b.id,
+    });
+    expect(second.kind).toBe("slug_taken");
+    // exactly one workspace row exists for the slug
+    const rows = await testDb.select().from(workspaces).where(eq(workspaces.slug, "duplicate"));
+    expect(rows.length).toBe(1);
+    // and its owner is user a, not b — confirms the failed batch did not leak a row
+    expect(rows[0]?.ownerUserId).toBe(a.id);
+    // user b should have NO membership rows
+    const bMemberships = await testDb
+      .select()
+      .from(memberships)
+      .where(eq(memberships.userId, b.id));
+    expect(bMemberships.length).toBe(0);
+  });
+
+  test("two distinct slugs from the same user both succeed", async () => {
+    const owner = await seedUser();
+    const r1 = await createWorkspaceWithOwnerMembership(db, {
+      name: "One",
+      slug: "ws-one",
+      ownerUserId: owner.id,
+    });
+    const r2 = await createWorkspaceWithOwnerMembership(db, {
+      name: "Two",
+      slug: "ws-two",
+      ownerUserId: owner.id,
+    });
+    expect(r1.kind).toBe("ok");
+    expect(r2.kind).toBe("ok");
+  });
+});
+
+describe("workspaces/repo: listMembershipsForUser (ISH-107)", () => {
+  test("returns only workspaces the user is a member of, with role", async () => {
+    const userA = await seedUser();
+    const userB = await seedUser();
+    const a1 = await createWorkspaceWithOwnerMembership(db, {
+      name: "A1",
+      slug: "a-1",
+      ownerUserId: userA.id,
+    });
+    if (a1.kind !== "ok") throw new Error("seed a1");
+    const a2 = await createWorkspaceWithOwnerMembership(db, {
+      name: "A2",
+      slug: "a-2",
+      ownerUserId: userA.id,
+    });
+    if (a2.kind !== "ok") throw new Error("seed a2");
+    const b1 = await createWorkspaceWithOwnerMembership(db, {
+      name: "B1",
+      slug: "b-1",
+      ownerUserId: userB.id,
+    });
+    if (b1.kind !== "ok") throw new Error("seed b1");
+    // make userA also a (regular) member of b1
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: b1.workspace.id, userId: userA.id, role: "member" });
+
+    const list = await listMembershipsForUser(db, userA.id);
+    expect(list.length).toBe(3);
+    const slugs = list.map((w) => w.slug).sort();
+    expect(slugs).toEqual(["a-1", "a-2", "b-1"]);
+
+    const b1Row = list.find((w) => w.slug === "b-1");
+    expect(b1Row?.role).toBe("member");
+    const a1Row = list.find((w) => w.slug === "a-1");
+    expect(a1Row?.role).toBe("owner");
+  });
+
+  test("returns [] when user has no memberships", async () => {
+    const lonely = await seedUser();
+    expect(await listMembershipsForUser(db, lonely.id)).toEqual([]);
+  });
+});
+
+describe("workspaces/repo: getWorkspaceForMember (ISH-107)", () => {
+  test("returns the row when caller is a member", async () => {
+    const owner = await seedUser();
+    const created = await createWorkspaceWithOwnerMembership(db, {
+      name: "Owned",
+      slug: "owned",
+      ownerUserId: owner.id,
+    });
+    if (created.kind !== "ok") throw new Error("seed");
+    const got = await getWorkspaceForMember(db, created.workspace.id, owner.id);
+    expect(got?.id).toBe(created.workspace.id);
+    expect(got?.role).toBe("owner");
+  });
+
+  test("returns null when caller is NOT a member", async () => {
+    const owner = await seedUser();
+    const stranger = await seedUser();
+    const created = await createWorkspaceWithOwnerMembership(db, {
+      name: "Owned",
+      slug: "owned-2",
+      ownerUserId: owner.id,
+    });
+    if (created.kind !== "ok") throw new Error("seed");
+    const got = await getWorkspaceForMember(db, created.workspace.id, stranger.id);
+    expect(got).toBeNull();
+  });
+
+  test("returns null when workspace id does not exist", async () => {
+    const owner = await seedUser();
+    expect(await getWorkspaceForMember(db, randomUUID(), owner.id)).toBeNull();
+  });
+});
