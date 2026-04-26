@@ -27,7 +27,7 @@ describe("loadGoogleConfig", () => {
       GOOGLE_OAUTH_REDIRECT_URI: "https://x/cb",
       ENCRYPTION_KEY: validKey,
     } as NodeJS.ProcessEnv);
-    expect(cfg.appBaseUrl).toBe("http://localhost:5173");
+    expect(cfg.appBaseUrl).toBe("http://localhost:6173");
   });
 
   test("throws when OAuth env missing", () => {

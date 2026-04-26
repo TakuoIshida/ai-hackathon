@@ -31,7 +31,7 @@ services:
         VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
     image: ai-hackathon-web:local
     ports:
-      - "5173:80"
+      - "6173:80"
     depends_on:
       api:
         condition: service_healthy
