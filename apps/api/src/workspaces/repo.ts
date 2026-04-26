@@ -98,6 +98,11 @@ export async function deleteInvitation(database: Database, id: string): Promise<
  * workspace) AND marks the invitation as accepted in a single batch so partial
  * failures cannot leave the system half-redeemed.
  *
+ * The UPDATE has a `accepted_at IS NULL` guard so a concurrent second accept
+ * (which the read-then-write window in the usecase cannot itself prevent on
+ * neon-http) becomes a no-op rather than overwriting the original
+ * acceptance timestamp. The membership ON CONFLICT covers double-insert.
+ *
  * neon-http does not support callback transactions; `db.batch` is the atomic
  * unit (see `links/repo.ts::createLink`). The PGlite test harness in
  * `test/integration-db.ts` shims `batch` to sequential awaits.
@@ -118,7 +123,7 @@ export async function acceptInvitationAtomic(
     database
       .update(invitations)
       .set({ acceptedAt: params.now })
-      .where(eq(invitations.id, params.invitationId)),
+      .where(and(eq(invitations.id, params.invitationId), isNull(invitations.acceptedAt))),
   ];
   await database.batch(queries as [BatchQuery, ...BatchQuery[]]);
 }

@@ -256,6 +256,35 @@ describe("workspaces/usecase: acceptInvitation (ISH-109)", () => {
     });
     expect(result.kind).toBe("expired");
   });
+
+  // Pins the WHERE accepted_at IS NULL guard on acceptInvitationAtomic. Without
+  // it, a concurrent second redemption (which the read-then-write window in
+  // acceptInvitation cannot itself prevent on neon-http) would overwrite the
+  // first acceptance timestamp.
+  test("acceptedAt is preserved across a racing second accept", async () => {
+    const { invitation, email } = await seedOpenInvitation();
+    const invitee = await seedUser(email);
+    const t1 = new Date("2026-04-26T01:00:00.000Z");
+    const t2 = new Date("2026-04-26T02:00:00.000Z");
+
+    // First accept lands at t1.
+    const r1 = await acceptInvitation(db, invitee.id, invitee.email, invitation.token, {
+      now: () => t1.getTime(),
+    });
+    expect(r1.kind).toBe("ok");
+    const after1 = await findInvitationByToken(db, invitation.token);
+    expect(after1?.acceptedAt?.toISOString()).toBe(t1.toISOString());
+
+    // Second accept tries to land at t2. Usecase short-circuits on
+    // already_accepted, but even if a racy caller bypassed that and called
+    // the repo directly, the partial-WHERE guard keeps the original timestamp.
+    const r2 = await acceptInvitation(db, invitee.id, invitee.email, invitation.token, {
+      now: () => t2.getTime(),
+    });
+    expect(r2.kind).toBe("already_accepted");
+    const after2 = await findInvitationByToken(db, invitation.token);
+    expect(after2?.acceptedAt?.toISOString()).toBe(t1.toISOString());
+  });
 });
 
 describe("workspaces/usecase: revokeInvitation (ISH-108)", () => {
