@@ -99,15 +99,17 @@ describe("getClerkUserId", () => {
   test("returns the userId when set", async () => {
     const app = new Hono();
     app.use("*", fakeClerkSession("user_xyz"));
-    let captured: string | null = null;
+    // Wrap in object so TS doesn't narrow to `null` (handler mutation is opaque
+    // to control-flow analysis).
+    const captured: { value: string | null } = { value: null };
     app.get("/probe", (c) => {
-      captured = getClerkUserId(c);
-      return c.json({ id: captured });
+      captured.value = getClerkUserId(c);
+      return c.json({ id: captured.value });
     });
 
     const res = await app.request("/probe");
     expect(res.status).toBe(200);
-    expect(captured).toBe("user_xyz");
+    expect(captured.value).toBe("user_xyz");
   });
 
   test("throws 401 HTTPException when no userId", async () => {

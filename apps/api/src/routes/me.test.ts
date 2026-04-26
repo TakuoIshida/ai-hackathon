@@ -38,7 +38,7 @@ beforeEach(async () => {
  */
 function fakeClerkSession(userId: string | null): MiddlewareHandler {
   return async (c, next) => {
-    c.set("clerkAuth", userId ? { userId } : { userId: null });
+    c.set("clerkAuth", (userId ? { userId } : { userId: null }) as never);
     await next();
   };
 }
