@@ -1,5 +1,14 @@
 import { sql } from "drizzle-orm";
-import { check, index, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
+import {
+  check,
+  index,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
 import { availabilityLinks } from "./links";
 
 export const bookingStatusValues = ["confirmed", "canceled"] as const;
@@ -29,6 +38,11 @@ export const bookings = pgTable(
   (t) => [
     index("idx_bookings_link_start").on(t.linkId, t.startAt),
     index("idx_bookings_status_start").on(t.status, t.startAt),
+    // Dual-booking guard: at most one confirmed booking per (link, slot start).
+    // Canceled rows do not block re-booking the same slot.
+    uniqueIndex("uniq_bookings_active_slot")
+      .on(t.linkId, t.startAt)
+      .where(sql`${t.status} = 'confirmed'`),
     check("status_values", sql`${t.status} IN ('confirmed', 'canceled')`),
     check("end_after_start", sql`${t.endAt} > ${t.startAt}`),
   ],
