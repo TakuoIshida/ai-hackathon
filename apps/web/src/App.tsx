@@ -6,6 +6,7 @@ import Bookings from "@/routes/Bookings";
 import CancelBooking from "@/routes/CancelBooking";
 import DashboardHome from "@/routes/DashboardHome";
 import Landing from "@/routes/Landing";
+import LinkForm from "@/routes/LinkForm";
 import Links from "@/routes/Links";
 import NotFound from "@/routes/NotFound";
 import PublicLink from "@/routes/PublicLink";
@@ -35,6 +36,8 @@ export default function App() {
       <Route path="/dashboard" element={<ProtectedDashboard />}>
         <Route index element={<DashboardHome />} />
         <Route path="links" element={<Links />} />
+        <Route path="links/new" element={<LinkForm />} />
+        <Route path="links/:id/edit" element={<LinkForm />} />
         <Route path="bookings" element={<Bookings />} />
         <Route path="settings" element={<Settings />} />
       </Route>
