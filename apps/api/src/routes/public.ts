@@ -6,10 +6,10 @@ import { type CreateEventFn, confirmBooking, type GetAccessTokenFn } from "@/boo
 import { bookingInputSchema } from "@/bookings/schemas";
 import { db } from "@/db/client";
 import { getValidAccessToken } from "@/google/access-token";
-import { createEvent } from "@/google/calendar";
+import { createEvent, queryFreeBusy } from "@/google/calendar";
 import { type GoogleConfig, loadGoogleConfig } from "@/google/config";
 import { findPublishedLinkBySlug } from "@/links/repo";
-import { computePublicSlots } from "@/links/usecase";
+import { computePublicSlots, type GooglePort } from "@/links/usecase";
 import { createResendSender, loadResendConfig } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
 
@@ -44,6 +44,20 @@ const productionDeps: PublicRouteDeps = {
   appBaseUrl: process.env.APP_BASE_URL ?? "http://localhost:6173",
 };
 
+/**
+ * Build a `GooglePort` for `computePublicSlots` from the route's deps.
+ * Returns `undefined` when no Google config is loaded (env vars unset),
+ * which signals `computePublicSlots` to skip the busy lookup entirely.
+ */
+function buildGooglePort(deps: PublicRouteDeps): GooglePort | undefined {
+  const cfg = deps.loadCfg();
+  if (!cfg) return undefined;
+  return {
+    getValidAccessToken: (oauthAccountId) => deps.getAccessToken(db, cfg, oauthAccountId),
+    getFreeBusy: (input) => queryFreeBusy(input),
+  };
+}
+
 export function createPublicRoute(deps: PublicRouteDeps = productionDeps): Hono {
   const route = new Hono();
 
@@ -75,7 +89,7 @@ export function createPublicRoute(deps: PublicRouteDeps = productionDeps): Hono 
       return c.json({ error: "invalid_range" }, 400);
     }
 
-    const result = await computePublicSlots(db, link, { fromMs, toMs });
+    const result = await computePublicSlots(db, link, { fromMs, toMs }, buildGooglePort(deps));
     return c.json({
       durationMinutes: link.durationMinutes,
       timeZone: link.timeZone,

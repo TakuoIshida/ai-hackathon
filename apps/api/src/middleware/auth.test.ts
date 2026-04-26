@@ -192,7 +192,7 @@ describe("attachDbUser", () => {
     const clerkId = `clerk_lazy_${randomUUID()}`;
 
     const created = await ensureUserByClerkId(testDb as never, clerkId, {
-      fetchClerkUser: async (id) => ({
+      fetchUser: async (id) => ({
         id,
         email_addresses: [{ id: "e1", email_address: `${id}@example.com` }],
         primary_email_address_id: "e1",
