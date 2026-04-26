@@ -26,12 +26,27 @@ describe("encryptSecret / decryptSecret", () => {
     expect(() => decryptSecret(enc, wrong)).toThrow();
   });
 
+  test("rejects decryption with a different 32-byte key (mismatched key)", () => {
+    const otherKey = randomBytes(32);
+    const enc = encryptSecret("topsecret", key);
+    expect(() => decryptSecret(enc, otherKey)).toThrow();
+  });
+
   test("rejects tampered ciphertext", () => {
     const enc = encryptSecret("secret", key);
     const tampered = {
       ...enc,
       ciphertext: Buffer.from("Y29ycnVwdGVk", "base64").toString("base64"),
     };
+    expect(() => decryptSecret(tampered, key)).toThrow();
+  });
+
+  test("rejects ciphertext with a single byte flipped", () => {
+    const enc = encryptSecret("secret-payload", key);
+    const raw = Buffer.from(enc.ciphertext, "base64");
+    // Flip the first byte
+    raw[0] = (raw[0] ?? 0) ^ 0x01;
+    const tampered = { ...enc, ciphertext: raw.toString("base64") };
     expect(() => decryptSecret(tampered, key)).toThrow();
   });
 
@@ -56,5 +71,20 @@ describe("loadEncryptionKey", () => {
   test("rejects wrong length", () => {
     const env = randomBytes(16).toString("base64");
     expect(() => loadEncryptionKey(env)).toThrow();
+  });
+
+  test("works when read from process.env (parity with config loader)", () => {
+    const prev = process.env.ENCRYPTION_KEY;
+    try {
+      process.env.ENCRYPTION_KEY = randomBytes(32).toString("base64");
+      const k = loadEncryptionKey(process.env.ENCRYPTION_KEY);
+      expect(k.length).toBe(32);
+      // round-trip with this key proves it is wired correctly
+      const enc = encryptSecret("via-env", k);
+      expect(decryptSecret(enc, k)).toBe("via-env");
+    } finally {
+      if (prev === undefined) delete process.env.ENCRYPTION_KEY;
+      else process.env.ENCRYPTION_KEY = prev;
+    }
   });
 });
