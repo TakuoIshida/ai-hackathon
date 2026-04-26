@@ -176,3 +176,24 @@ describe("<Settings /> calendar flag toggles (pessimistic)", () => {
     resolveUpdate({ calendar: { ...calA, usedForBusy: false } });
   });
 });
+
+describe("<Settings /> Google connection display", () => {
+  test("connected: shows the linked account email", async () => {
+    mockedApi.getGoogleConnection.mockResolvedValue(connected());
+
+    render(<Settings />);
+
+    expect(await screen.findByText("owner@example.com")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Google アカウントを連携/ })).toBeNull();
+  });
+
+  test("disconnected: shows the Google connect button pointing at the API connect URL", async () => {
+    mockedApi.getGoogleConnection.mockResolvedValue({ connected: false, calendars: [] });
+
+    render(<Settings />);
+
+    const connectLink = await screen.findByRole("link", { name: /Google アカウントを連携/ });
+    expect(connectLink).toBeInTheDocument();
+    expect(connectLink.getAttribute("href")).toContain("/google/connect");
+  });
+});
