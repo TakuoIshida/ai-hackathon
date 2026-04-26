@@ -75,7 +75,10 @@ async function seedPublishedLink(
       .insert(availabilityRules)
       .values({ linkId: linkRow.id, weekday, startMinute: 9 * 60, endMinute: 17 * 60 });
   }
-  const link = await findPublishedLinkBySlug(db, slug);
+  // Use the @/db/client singleton (already swapped via setDbForTests) so the
+  // Database type matches usecase signatures.
+  const { db: clientDb } = await import("@/db/client");
+  const link = await findPublishedLinkBySlug(clientDb, slug);
   if (!link) throw new Error("seed: published link not found after insert");
   return { userId: user.id, link };
 }
@@ -226,7 +229,7 @@ describe("confirmBooking — Google integration", () => {
       },
     });
 
-    const result = await confirmBooking(testDb, seed.link, validInput(), sinks, notifications);
+    const result = await confirmBooking(db, seed.link, validInput(), sinks, notifications);
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("unexpected kind");
@@ -256,7 +259,7 @@ describe("confirmBooking — Google integration", () => {
       },
     });
 
-    const result = await confirmBooking(testDb, seed.link, validInput(), sinks, notifications);
+    const result = await confirmBooking(db, seed.link, validInput(), sinks, notifications);
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("unexpected kind");
@@ -283,7 +286,7 @@ describe("confirmBooking — Google integration", () => {
       },
     });
 
-    const result = await confirmBooking(testDb, seed.link, validInput(), sinks, notifications);
+    const result = await confirmBooking(db, seed.link, validInput(), sinks, notifications);
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("unexpected kind");
@@ -319,7 +322,7 @@ describe("confirmBooking — Google integration", () => {
       },
     });
 
-    const result = await confirmBooking(testDb, seed.link, validInput(), sinks, notifications);
+    const result = await confirmBooking(db, seed.link, validInput(), sinks, notifications);
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("unexpected kind");
@@ -333,7 +336,7 @@ describe("confirmBooking — notifications resilience", () => {
   test("sendEmail throws — booking is still committed (best-effort policy)", async () => {
     const seed = await seedPublishedLink(testDb);
 
-    const result = await confirmBooking(testDb, seed.link, validInput(), noGoogleSinks, {
+    const result = await confirmBooking(db, seed.link, validInput(), noGoogleSinks, {
       sendEmail: async () => {
         throw new Error("smtp boom");
       },
@@ -353,7 +356,7 @@ describe("confirmBooking — slot conflict / availability guards", () => {
     // Sunday 2026-12-13 — outside Mon-Fri windows.
     const sundayMs = Date.parse("2026-12-13T05:00:00.000Z");
     const result = await confirmBooking(
-      testDb,
+      db,
       seed.link,
       {
         startAt: "2026-12-13T05:00:00.000Z",
@@ -374,17 +377,11 @@ describe("confirmBooking — slot conflict / availability guards", () => {
   test("dual-booking same slot → kind:'race_lost' (409 shape) and only one row exists", async () => {
     const seed = await seedPublishedLink(testDb);
 
-    const first = await confirmBooking(
-      testDb,
-      seed.link,
-      validInput(),
-      noGoogleSinks,
-      notifications,
-    );
+    const first = await confirmBooking(db, seed.link, validInput(), noGoogleSinks, notifications);
     expect(first.kind).toBe("ok");
 
     const second: ConfirmResult = await confirmBooking(
-      testDb,
+      db,
       seed.link,
       { ...validInput(), guestEmail: "different@example.com" },
       noGoogleSinks,

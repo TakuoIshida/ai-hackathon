@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { clearDbForTests, setDbForTests } from "@/db/client";
+import { clearDbForTests, db, setDbForTests } from "@/db/client";
 import {
   availabilityLinks,
   bookings,
@@ -141,7 +141,7 @@ describe("cancelBookingByToken", () => {
     const seed = await seedConfirmedBooking();
 
     const result = await cancelBookingByToken(
-      testDb,
+      db,
       seed.cancellationToken,
       noGoogleSinks,
       notifications,
@@ -164,7 +164,7 @@ describe("cancelBookingByToken", () => {
   });
 
   test("unknown token → kind:'not_found'", async () => {
-    const result = await cancelBookingByToken(testDb, randomUUID(), noGoogleSinks, notifications);
+    const result = await cancelBookingByToken(db, randomUUID(), noGoogleSinks, notifications);
     expect(result.kind).toBe("not_found");
     expect(sentEmails.length).toBe(0);
   });
@@ -173,7 +173,7 @@ describe("cancelBookingByToken", () => {
     const seed = await seedConfirmedBooking();
 
     const first = await cancelBookingByToken(
-      testDb,
+      db,
       seed.cancellationToken,
       noGoogleSinks,
       notifications,
@@ -183,7 +183,7 @@ describe("cancelBookingByToken", () => {
 
     sentEmails = [];
     const second = await cancelBookingByToken(
-      testDb,
+      db,
       seed.cancellationToken,
       noGoogleSinks,
       notifications,
@@ -198,7 +198,7 @@ describe("cancelBookingByOwner", () => {
     const seed = await seedConfirmedBooking();
 
     const result = await cancelBookingByOwner(
-      testDb,
+      db,
       seed.bookingId,
       seed.userId,
       noGoogleSinks,
@@ -220,7 +220,7 @@ describe("cancelBookingByOwner", () => {
 
   test("unknown bookingId → kind:'not_found'", async () => {
     const result = await cancelBookingByOwner(
-      testDb,
+      db,
       randomUUID(),
       randomUUID(),
       noGoogleSinks,
@@ -240,7 +240,7 @@ describe("cancelBookingByOwner", () => {
     if (!intruder) throw new Error("seed intruder");
 
     const result = await cancelBookingByOwner(
-      testDb,
+      db,
       seed.bookingId,
       intruder.id,
       noGoogleSinks,
@@ -258,7 +258,7 @@ describe("cancelBookingByOwner", () => {
     const seed = await seedConfirmedBooking();
 
     const first = await cancelBookingByOwner(
-      testDb,
+      db,
       seed.bookingId,
       seed.userId,
       noGoogleSinks,
@@ -269,7 +269,7 @@ describe("cancelBookingByOwner", () => {
 
     sentEmails = [];
     const second = await cancelBookingByOwner(
-      testDb,
+      db,
       seed.bookingId,
       seed.userId,
       noGoogleSinks,
@@ -320,14 +320,9 @@ describe("cancel side-effects — Google delete resilience", () => {
       fetchCalled += 1;
       // Surface a 500 — deleteEvent throws on non-2xx (and not 404/410).
       return new Response("kaboom", { status: 500 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
-    const result = await cancelBookingByToken(
-      testDb,
-      seed.cancellationToken,
-      withCfg(),
-      notifications,
-    );
+    const result = await cancelBookingByToken(db, seed.cancellationToken, withCfg(), notifications);
 
     expect(result.kind).toBe("ok");
     expect(fetchCalled).toBeGreaterThan(0);
@@ -346,10 +341,10 @@ describe("cancel side-effects — Google delete resilience", () => {
 
     globalThis.fetch = (async () => {
       throw new Error("network down");
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result = await cancelBookingByOwner(
-      testDb,
+      db,
       seed.bookingId,
       seed.userId,
       withCfg(),
@@ -367,7 +362,7 @@ describe("cancel side-effects — email resilience", () => {
   test("sendEmail throws — cancellation is still committed (best-effort)", async () => {
     const seed = await seedConfirmedBooking();
 
-    const result = await cancelBookingByToken(testDb, seed.cancellationToken, noGoogleSinks, {
+    const result = await cancelBookingByToken(db, seed.cancellationToken, noGoogleSinks, {
       sendEmail: async () => {
         throw new Error("smtp boom");
       },
