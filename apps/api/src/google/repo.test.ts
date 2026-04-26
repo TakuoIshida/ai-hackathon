@@ -6,14 +6,14 @@ import { googleCalendars } from "@/db/schema/google";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
 import {
+  clearWritesFlagOnSiblings,
   findCalendarById,
   listUserCalendars,
-  updateCalendarFlags,
-  upsertOauthAccount,
+  updateCalendarFlagsRow,
+  upsertOauthAccountRaw,
 } from "./repo";
 
 let testDb: TestDb;
-const ENC_KEY = Buffer.alloc(32, 7);
 
 beforeAll(async () => {
   testDb = await createTestDb();
@@ -38,15 +38,16 @@ async function seedAccount(): Promise<{ userId: string; accountId: string }> {
     email: "owner@example.com",
     name: null,
   });
-  const account = await upsertOauthAccount(db, {
+  const account = await upsertOauthAccountRaw(db, {
     userId: u.id,
     googleUserId: `g_${randomUUID()}`,
     email: "owner@example.com",
-    refreshToken: "refresh-test",
+    encryptedRefreshToken: "ct",
+    refreshTokenIv: "iv",
+    refreshTokenAuthTag: "tag",
     accessToken: "access-test",
     accessTokenExpiresAt: new Date(Date.now() + 3600_000),
     scope: "calendar.events",
-    encryptionKey: ENC_KEY,
   });
   return { userId: u.id, accountId: account.id };
 }
@@ -72,7 +73,7 @@ async function seedCalendar(
   return row;
 }
 
-describe("google/repo: updateCalendarFlags", () => {
+describe("google/repo: updateCalendarFlagsRow", () => {
   test("updates usedForBusy without touching usedForWrites", async () => {
     const { accountId } = await seedAccount();
     const cal = await seedCalendar(accountId, "primary@a.com", {
@@ -81,35 +82,54 @@ describe("google/repo: updateCalendarFlags", () => {
       usedForWrites: true,
     });
 
-    const updated = await updateCalendarFlags(db, cal, { usedForBusy: false });
-    expect(updated?.usedForBusy).toBe(false);
-    expect(updated?.usedForWrites).toBe(true);
+    await updateCalendarFlagsRow(db, cal.id, { usedForBusy: false });
+    const reloaded = await findCalendarById(db, cal.id);
+    expect(reloaded?.usedForBusy).toBe(false);
+    expect(reloaded?.usedForWrites).toBe(true);
   });
 
-  test("setting usedForWrites=true clears it on other calendars in same account", async () => {
+  test("updates usedForWrites without touching siblings (single-row only)", async () => {
     const { accountId } = await seedAccount();
     const a = await seedCalendar(accountId, "a@x.com", { usedForWrites: true });
     const b = await seedCalendar(accountId, "b@x.com", { usedForWrites: false });
-    const c = await seedCalendar(accountId, "c@x.com", { usedForWrites: false });
 
-    const updated = await updateCalendarFlags(db, b, { usedForWrites: true });
-    expect(updated?.usedForWrites).toBe(true);
-
+    await updateCalendarFlagsRow(db, b.id, { usedForWrites: true });
     const aReloaded = await findCalendarById(db, a.id);
-    const cReloaded = await findCalendarById(db, c.id);
-    expect(aReloaded?.usedForWrites).toBe(false);
-    expect(cReloaded?.usedForWrites).toBe(false);
+    const bReloaded = await findCalendarById(db, b.id);
+    // repo primitive does NOT enforce exclusivity — both can be true here.
+    expect(aReloaded?.usedForWrites).toBe(true);
+    expect(bReloaded?.usedForWrites).toBe(true);
   });
 
-  test("setting usedForWrites=false leaves other calendars untouched", async () => {
+  test("update bumps updatedAt", async () => {
     const { accountId } = await seedAccount();
-    const a = await seedCalendar(accountId, "a@x.com", { usedForWrites: false });
-    const b = await seedCalendar(accountId, "b@x.com", { usedForWrites: true });
+    const cal = await seedCalendar(accountId, "x@a.com");
+    const before = cal.updatedAt;
+    await new Promise((r) => setTimeout(r, 5));
+    await updateCalendarFlagsRow(db, cal.id, { usedForBusy: false });
+    const [reloaded] = await testDb
+      .select()
+      .from(googleCalendars)
+      .where(eq(googleCalendars.id, cal.id));
+    expect(reloaded?.updatedAt.getTime()).toBeGreaterThan(before.getTime());
+  });
+});
 
-    const updated = await updateCalendarFlags(db, b, { usedForWrites: false });
-    expect(updated?.usedForWrites).toBe(false);
+describe("google/repo: clearWritesFlagOnSiblings", () => {
+  test("clears usedForWrites on every calendar in the same account except the target", async () => {
+    const { accountId } = await seedAccount();
+    const a = await seedCalendar(accountId, "a@x.com", { usedForWrites: true });
+    const b = await seedCalendar(accountId, "b@x.com", { usedForWrites: true });
+    const c = await seedCalendar(accountId, "c@x.com", { usedForWrites: true });
+
+    await clearWritesFlagOnSiblings(db, accountId, b.id);
+
     const aReloaded = await findCalendarById(db, a.id);
+    const bReloaded = await findCalendarById(db, b.id);
+    const cReloaded = await findCalendarById(db, c.id);
     expect(aReloaded?.usedForWrites).toBe(false);
+    expect(bReloaded?.usedForWrites).toBe(true); // target preserved
+    expect(cReloaded?.usedForWrites).toBe(false);
   });
 
   test("does not affect calendars on a different oauth account", async () => {
@@ -118,11 +138,13 @@ describe("google/repo: updateCalendarFlags", () => {
     const calA = await seedCalendar(accountA, "x@a.com", { usedForWrites: true });
     const calB = await seedCalendar(accountB, "x@b.com", { usedForWrites: true });
 
-    await updateCalendarFlags(db, calA, { usedForWrites: true });
+    await clearWritesFlagOnSiblings(db, accountA, calA.id);
     const reloadedB = await findCalendarById(db, calB.id);
     expect(reloadedB?.usedForWrites).toBe(true);
   });
+});
 
+describe("google/repo: queries", () => {
   test("findCalendarById returns null for missing", async () => {
     expect(await findCalendarById(db, randomUUID())).toBeNull();
   });
@@ -133,18 +155,5 @@ describe("google/repo: updateCalendarFlags", () => {
     await seedCalendar(accountId, "y@a.com");
     const list = await listUserCalendars(db, accountId);
     expect(list.length).toBe(2);
-  });
-
-  test("update bumps updatedAt", async () => {
-    const { accountId } = await seedAccount();
-    const cal = await seedCalendar(accountId, "x@a.com");
-    const before = cal.updatedAt;
-    await new Promise((r) => setTimeout(r, 5));
-    await updateCalendarFlags(db, cal, { usedForBusy: false });
-    const [reloaded] = await testDb
-      .select()
-      .from(googleCalendars)
-      .where(eq(googleCalendars.id, cal.id));
-    expect(reloaded && reloaded.updatedAt.getTime()).toBeGreaterThan(before.getTime());
   });
 });

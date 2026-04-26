@@ -14,14 +14,16 @@ import {
   revokeToken,
 } from "@/google/oauth";
 import {
-  decryptRefreshToken,
   deleteOauthAccount,
   getOauthAccountByUser,
   listUserCalendars,
   syncCalendars,
-  upsertOauthAccount,
 } from "@/google/repo";
-import { updateCalendarFlagsForUser } from "@/google/usecase";
+import {
+  decryptOauthRefreshToken,
+  updateCalendarFlagsForUser,
+  upsertOauthAccountWithEncryption,
+} from "@/google/usecase";
 import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
 
 const STATE_COOKIE = "google_oauth_state";
@@ -69,16 +71,19 @@ googleRoute.get("/callback", async (c) => {
   const userInfo = await fetchUserInfo(tokens.accessToken);
   const dbUser = getDbUser(c);
 
-  const account = await upsertOauthAccount(db, {
-    userId: dbUser.id,
-    googleUserId: userInfo.sub,
-    email: userInfo.email,
-    refreshToken: tokens.refreshToken,
-    accessToken: tokens.accessToken,
-    accessTokenExpiresAt: new Date(Date.now() + tokens.expiresInSeconds * 1000),
-    scope: tokens.scope,
-    encryptionKey: cfg.encryptionKey,
-  });
+  const account = await upsertOauthAccountWithEncryption(
+    db,
+    {
+      userId: dbUser.id,
+      googleUserId: userInfo.sub,
+      email: userInfo.email,
+      refreshToken: tokens.refreshToken,
+      accessToken: tokens.accessToken,
+      accessTokenExpiresAt: new Date(Date.now() + tokens.expiresInSeconds * 1000),
+      scope: tokens.scope,
+    },
+    cfg.encryptionKey,
+  );
 
   const calendarList = await listCalendars(tokens.accessToken);
   await syncCalendars(db, account.id, calendarList);
@@ -93,7 +98,7 @@ googleRoute.post("/disconnect", async (c) => {
   if (!account) return c.json({ ok: true, alreadyDisconnected: true });
 
   try {
-    const refresh = decryptRefreshToken(account, cfg.encryptionKey);
+    const refresh = decryptOauthRefreshToken(account, cfg.encryptionKey);
     await revokeToken(refresh);
   } catch (err) {
     console.warn("[google] revoke failed (will still delete row):", err);

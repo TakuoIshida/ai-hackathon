@@ -2,38 +2,43 @@ import { and, eq, sql } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
 import { googleCalendars, googleOauthAccounts } from "@/db/schema/google";
 import type { CalendarListItem } from "./calendar";
-import { decryptSecret, encryptSecret } from "./crypto";
 
 type Database = typeof DbClient;
 
 export type OauthAccountRow = typeof googleOauthAccounts.$inferSelect;
 export type CalendarRow = typeof googleCalendars.$inferSelect;
 
-export type StoreOauthAccountInput = {
+/**
+ * Pre-encrypted refresh-token payload + the rest of the OAuth account row.
+ *
+ * Encryption happens in the usecase layer; this repo function only knows
+ * how to persist the already-encrypted bytes.
+ */
+export type StoreOauthAccountRawInput = {
   userId: string;
   googleUserId: string;
   email: string;
-  refreshToken: string;
+  encryptedRefreshToken: string;
+  refreshTokenIv: string;
+  refreshTokenAuthTag: string;
   accessToken: string;
   accessTokenExpiresAt: Date;
   scope: string;
-  encryptionKey: Buffer;
 };
 
-export async function upsertOauthAccount(
+export async function upsertOauthAccountRaw(
   database: Database,
-  input: StoreOauthAccountInput,
+  input: StoreOauthAccountRawInput,
 ): Promise<OauthAccountRow> {
-  const enc = encryptSecret(input.refreshToken, input.encryptionKey);
   const [row] = await database
     .insert(googleOauthAccounts)
     .values({
       userId: input.userId,
       googleUserId: input.googleUserId,
       email: input.email,
-      encryptedRefreshToken: enc.ciphertext,
-      refreshTokenIv: enc.iv,
-      refreshTokenAuthTag: enc.authTag,
+      encryptedRefreshToken: input.encryptedRefreshToken,
+      refreshTokenIv: input.refreshTokenIv,
+      refreshTokenAuthTag: input.refreshTokenAuthTag,
       accessToken: input.accessToken,
       accessTokenExpiresAt: input.accessTokenExpiresAt,
       scope: input.scope,
@@ -42,9 +47,9 @@ export async function upsertOauthAccount(
       target: [googleOauthAccounts.userId, googleOauthAccounts.googleUserId],
       set: {
         email: input.email,
-        encryptedRefreshToken: enc.ciphertext,
-        refreshTokenIv: enc.iv,
-        refreshTokenAuthTag: enc.authTag,
+        encryptedRefreshToken: input.encryptedRefreshToken,
+        refreshTokenIv: input.refreshTokenIv,
+        refreshTokenAuthTag: input.refreshTokenAuthTag,
         accessToken: input.accessToken,
         accessTokenExpiresAt: input.accessTokenExpiresAt,
         scope: input.scope,
@@ -66,17 +71,6 @@ export async function getOauthAccountByUser(
     .where(eq(googleOauthAccounts.userId, userId))
     .limit(1);
   return row ?? null;
-}
-
-export function decryptRefreshToken(row: OauthAccountRow, encryptionKey: Buffer): string {
-  return decryptSecret(
-    {
-      ciphertext: row.encryptedRefreshToken,
-      iv: row.refreshTokenIv,
-      authTag: row.refreshTokenAuthTag,
-    },
-    encryptionKey,
-  );
 }
 
 export async function deleteOauthAccount(
@@ -152,45 +146,38 @@ export type CalendarFlagsPatch = {
 };
 
 /**
- * Atomically update flags for a single calendar. When usedForWrites is set
- * to true, all other calendars on the same oauth account get usedForWrites
- * cleared so the "write target" is exclusive (radio behavior in the UI).
- *
- * neon-http does not support callback transactions, so we batch.
+ * Plain single-row UPDATE for the flag columns. Does not enforce any
+ * cross-row invariants (the "writes is exclusive within an account" rule
+ * lives in usecase).
  */
-export async function updateCalendarFlags(
+export async function updateCalendarFlagsRow(
   database: Database,
-  calendar: CalendarRow,
+  calendarId: string,
   patch: CalendarFlagsPatch,
-): Promise<CalendarRow | null> {
-  type BatchQuery = Parameters<Database["batch"]>[0][number];
-  const queries: BatchQuery[] = [];
-
-  if (patch.usedForWrites === true) {
-    queries.push(
-      database
-        .update(googleCalendars)
-        .set({ usedForWrites: false, updatedAt: new Date() })
-        .where(
-          and(
-            eq(googleCalendars.oauthAccountId, calendar.oauthAccountId),
-            // every row in the same account except the target one
-            sql`${googleCalendars.id} <> ${calendar.id}`,
-          ),
-        ),
-    );
-  }
-
+): Promise<void> {
   const set: Record<string, unknown> = { updatedAt: new Date() };
   if (patch.usedForBusy !== undefined) set.usedForBusy = patch.usedForBusy;
   if (patch.usedForWrites !== undefined) set.usedForWrites = patch.usedForWrites;
+  await database.update(googleCalendars).set(set).where(eq(googleCalendars.id, calendarId));
+}
 
-  queries.push(
-    database.update(googleCalendars).set(set).where(eq(googleCalendars.id, calendar.id)),
-  );
-
-  if (queries.length > 0) {
-    await database.batch(queries as [BatchQuery, ...BatchQuery[]]);
-  }
-  return findCalendarById(database, calendar.id);
+/**
+ * Clear `usedForWrites` on every calendar in the given oauth account
+ * EXCEPT the one identified by `exceptCalendarId`. Used by the usecase
+ * layer to keep "write target" exclusive within an account.
+ */
+export async function clearWritesFlagOnSiblings(
+  database: Database,
+  oauthAccountId: string,
+  exceptCalendarId: string,
+): Promise<void> {
+  await database
+    .update(googleCalendars)
+    .set({ usedForWrites: false, updatedAt: new Date() })
+    .where(
+      and(
+        eq(googleCalendars.oauthAccountId, oauthAccountId),
+        sql`${googleCalendars.id} <> ${exceptCalendarId}`,
+      ),
+    );
 }

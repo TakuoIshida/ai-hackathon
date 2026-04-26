@@ -7,7 +7,7 @@ import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
 import { getValidAccessToken } from "./access-token";
 import type { GoogleConfig } from "./config";
-import { upsertOauthAccount } from "./repo";
+import { upsertOauthAccountWithEncryption } from "./usecase";
 
 let testDb: TestDb;
 const ENC_KEY = randomBytes(32);
@@ -66,17 +66,20 @@ async function seedAccount(opts: {
     email: "owner@example.com",
     name: null,
   });
-  const account = await upsertOauthAccount(db, {
-    userId: u.id,
-    googleUserId: `g_${randomUUID()}`,
-    email: "owner@example.com",
-    refreshToken: opts.refreshToken ?? "1//refresh-secret",
-    accessToken: opts.accessToken ?? "ya29.cached",
-    accessTokenExpiresAt: opts.expiresAt,
-    scope: "https://www.googleapis.com/auth/calendar.events",
-    encryptionKey: ENC_KEY,
-  });
-  // upsertOauthAccount always sets accessToken; if test wants null we override.
+  const account = await upsertOauthAccountWithEncryption(
+    db,
+    {
+      userId: u.id,
+      googleUserId: `g_${randomUUID()}`,
+      email: "owner@example.com",
+      refreshToken: opts.refreshToken ?? "1//refresh-secret",
+      accessToken: opts.accessToken ?? "ya29.cached",
+      accessTokenExpiresAt: opts.expiresAt,
+      scope: "https://www.googleapis.com/auth/calendar.events",
+    },
+    ENC_KEY,
+  );
+  // upsertOauthAccountWithEncryption always sets accessToken; if test wants null we override.
   if (opts.accessToken === null) {
     await db
       .update(googleOauthAccounts)
