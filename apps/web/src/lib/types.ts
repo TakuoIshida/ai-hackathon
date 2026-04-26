@@ -80,7 +80,10 @@ export type BookingSummary = {
 };
 
 export type GoogleCalendarSummary = {
+  // DB row UUID — stable id for PATCH /google/calendars/:id and React keys
   id: string;
+  // Google's calendar identifier (e.g. "primary@example.com") — for display
+  googleCalendarId: string;
   summary: string | null;
   timeZone: string | null;
   isPrimary: boolean;
