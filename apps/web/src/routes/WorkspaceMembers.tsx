@@ -1,6 +1,7 @@
 import { useAuth, useUser } from "@clerk/clerk-react";
 import * as stylex from "@stylexjs/stylex";
 import { useCallback, useEffect, useState } from "react";
+import { MemberRoleSelect } from "@/components/MemberRoleSelect";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
 import type { WorkspaceMember, WorkspaceRole } from "@/lib/types";
@@ -25,14 +26,6 @@ const styles = stylex.create({
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-  },
-  badge: {
-    display: "inline-block",
-    fontSize: "0.7rem",
-    padding: "0.125rem 0.4rem",
-    borderRadius: "999px",
-    backgroundColor: colors.accent,
-    color: colors.accentFg,
   },
   empty: { fontSize: "0.875rem", color: colors.muted },
   error: { color: colors.destructive, fontSize: "0.875rem" },
@@ -109,6 +102,10 @@ export default function WorkspaceMembers({ workspaceId }: WorkspaceMembersProps)
         {data.members.map((m) => {
           const isSelf = callerEmail !== null && m.email.toLowerCase() === callerEmail;
           const canDelete = data.callerRole === "owner" && !isSelf;
+          // ISH-111 integration: owners can change anyone else's role; their
+          // own row stays read-only (use the dedicated PATCH-self flow when
+          // it exists). Members never see the editor.
+          const canEditRole = data.callerRole === "owner" && !isSelf;
           const removing = removingUserId === m.userId;
           return (
             <div key={m.userId} {...stylex.props(styles.row)}>
@@ -116,7 +113,14 @@ export default function WorkspaceMembers({ workspaceId }: WorkspaceMembersProps)
                 <span {...stylex.props(styles.rowTitle)}>{m.name ?? m.email}</span>
                 <span {...stylex.props(styles.rowSub)}>{m.email}</span>
               </div>
-              <span {...stylex.props(styles.badge)}>{m.role}</span>
+              <MemberRoleSelect
+                workspaceId={workspaceId}
+                member={{ userId: m.userId, role: m.role }}
+                canEdit={canEditRole}
+                onChanged={() => {
+                  void load();
+                }}
+              />
               {canDelete ? (
                 <Button variant="destructive" onClick={() => onRemove(m)} disabled={removing}>
                   {removing ? "削除中..." : "削除"}
