@@ -116,6 +116,17 @@ export type WorkspaceSummary = {
 
 export type WorkspaceDetail = WorkspaceSummary;
 
+// ISH-110: members of a workspace returned by GET /workspaces/:id/members.
+// `createdAt` is the membership createdAt (when this user joined), serialized
+// as ISO string in transit.
+export type WorkspaceMember = {
+  userId: string;
+  email: string;
+  name: string | null;
+  role: WorkspaceRole;
+  createdAt: string;
+};
+
 // ISH-109: invitation acceptance.
 export type InvitationSummary = {
   workspaceName: string;

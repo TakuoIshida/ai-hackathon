@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
+import { users } from "@/db/schema/users";
 import {
   type Invitation,
   invitations,
@@ -170,9 +171,58 @@ export async function updateMembershipRole(
   return result.length > 0;
 }
 
+export type WorkspaceMemberRow = {
+  userId: string;
+  email: string;
+  name: string | null;
+  role: MembershipRole;
+  createdAt: Date;
+};
+
 /**
- * ISH-111: number of `owner` memberships in the workspace. Used to block
- * demoting the only remaining owner.
+ * ISH-110: list members of a workspace, joined with their user info. Ordered
+ * by `memberships.createdAt` ASC so the original owner appears first and
+ * subsequent joiners follow in the order they accepted.
+ */
+export async function listMembersWithUserInfo(
+  database: Database,
+  workspaceId: string,
+): Promise<WorkspaceMemberRow[]> {
+  const rows = await database
+    .select({
+      userId: memberships.userId,
+      email: users.email,
+      name: users.name,
+      role: memberships.role,
+      createdAt: memberships.createdAt,
+    })
+    .from(memberships)
+    .innerJoin(users, eq(memberships.userId, users.id))
+    .where(eq(memberships.workspaceId, workspaceId))
+    .orderBy(asc(memberships.createdAt));
+  return rows;
+}
+
+/**
+ * ISH-110: delete a single (workspace, user) membership row.
+ * Returns true when a row was actually deleted, false otherwise — the
+ * usecase layer maps the latter to `not_found`.
+ */
+export async function removeMembership(
+  database: Database,
+  workspaceId: string,
+  userId: string,
+): Promise<boolean> {
+  const deleted = await database
+    .delete(memberships)
+    .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
+    .returning({ id: memberships.id });
+  return deleted.length > 0;
+}
+
+/**
+ * Number of `owner` memberships in the workspace. Used by both ISH-110
+ * (block last-owner removal) and ISH-111 (block last-owner demotion).
  */
 export async function countOwnersForWorkspace(
   database: Database,

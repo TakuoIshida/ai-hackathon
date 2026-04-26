@@ -16,7 +16,10 @@ import {
   getWorkspaceForMember,
   type InvitationRow,
   listMembershipsForUser,
+  listMembersWithUserInfo,
+  removeMembership,
   updateMembershipRole,
+  type WorkspaceMemberRow,
   type WorkspaceRow,
   type WorkspaceWithRole,
 } from "./repo";
@@ -156,7 +159,80 @@ export async function revokeInvitation(
   return { kind: "ok" };
 }
 
-// ISH-111: role management (owner ↔ member).
+// ---------- ISH-110: workspace members list / remove ----------
+
+export type WorkspaceMember = {
+  userId: string;
+  email: string;
+  name: string | null;
+  role: "owner" | "member";
+  createdAt: Date;
+};
+
+export type ListMembersResult =
+  | { kind: "ok"; members: WorkspaceMember[]; callerRole: "owner" | "member" }
+  | { kind: "not_found" };
+
+/**
+ * List members of a workspace. The caller must be a member of the workspace
+ * (any role). Non-members and missing workspace ids are indistinguishable
+ * (`not_found`) so we don't leak workspace existence.
+ */
+export async function listWorkspaceMembers(
+  database: Database,
+  callerUserId: string,
+  workspaceId: string,
+): Promise<ListMembersResult> {
+  const callerMembership = await findMembership(database, workspaceId, callerUserId);
+  if (!callerMembership) return { kind: "not_found" };
+  const members = await listMembersWithUserInfo(database, workspaceId);
+  return { kind: "ok", members, callerRole: callerMembership.role };
+}
+
+export type RemoveMemberResult =
+  | { kind: "ok" }
+  | { kind: "not_found" }
+  | { kind: "forbidden" }
+  | { kind: "last_owner" }
+  | { kind: "cannot_remove_self_owner" };
+
+/**
+ * Remove a member from a workspace. Owner-only.
+ *
+ * - Caller is not a member (or workspace doesn't exist) → `not_found` (no leak).
+ * - Caller is a member but not an owner → `forbidden`.
+ * - Caller is the owner trying to delete themselves → `cannot_remove_self_owner`.
+ *   Owners must demote themselves first (ISH-111) — gating that here keeps the
+ *   "leave workspace" flow out of this route.
+ * - Removing the only remaining owner is rejected with `last_owner`. The
+ *   workspace must always have at least one owner.
+ * - Otherwise, delete the row. If the row didn't exist, `not_found`.
+ */
+export async function removeMember(
+  database: Database,
+  callerUserId: string,
+  workspaceId: string,
+  targetUserId: string,
+): Promise<RemoveMemberResult> {
+  const callerMembership = await findMembership(database, workspaceId, callerUserId);
+  if (!callerMembership) return { kind: "not_found" };
+  if (callerMembership.role !== "owner") return { kind: "forbidden" };
+  if (targetUserId === callerUserId) return { kind: "cannot_remove_self_owner" };
+
+  const targetMembership = await findMembership(database, workspaceId, targetUserId);
+  if (!targetMembership) return { kind: "not_found" };
+
+  if (targetMembership.role === "owner") {
+    const ownerCount = await countOwnersForWorkspace(database, workspaceId);
+    if (ownerCount <= 1) return { kind: "last_owner" };
+  }
+
+  const deleted = await removeMembership(database, workspaceId, targetUserId);
+  if (!deleted) return { kind: "not_found" };
+  return { kind: "ok" };
+}
+
+// ---------- ISH-111: role management (owner ↔ member) ----------
 
 export type ChangeMemberRoleResult =
   | { kind: "ok" }
