@@ -15,6 +15,13 @@
       "when": 1777167812769,
       "tag": "0001_flawless_tag",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777184150771,
+      "tag": "0002_workspaces_memberships",
+      "breakpoints": true
     }
   ]
 }
