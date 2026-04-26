@@ -9,7 +9,8 @@ import {
   googleOauthAccounts,
   users,
 } from "@/db/schema";
-import type { EmailMessage } from "@/notifications/types";
+import { createBookingNotifier } from "@/notifications/booking-notifier";
+import type { BookingEvent, EmailMessage, SendEmailFn } from "@/notifications/types";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { cancelBookingByOwner, cancelBookingByToken } from "./cancel";
 import type { GoogleSinks, NotificationSinks } from "./confirm";
@@ -18,10 +19,32 @@ const TZ = "Asia/Tokyo";
 
 let testDb: TestDb;
 let sentEmails: EmailMessage[];
+let notifyCalls: BookingEvent[];
 
-const captureSendEmail = async (msg: EmailMessage) => {
+const captureSendEmail: SendEmailFn = async (msg: EmailMessage) => {
   sentEmails.push(msg);
 };
+
+/**
+ * Build a `NotificationSinks` whose `notifier` records every event AND
+ * dispatches via the real `createBookingNotifier` adapter — same approach as
+ * `confirm.test.ts` so we can assert on both the published event shape and
+ * the rendered email envelopes.
+ */
+function buildNotifications(
+  sendEmail: SendEmailFn = captureSendEmail,
+  appBaseUrl = "https://app.test",
+): NotificationSinks {
+  const adapter = createBookingNotifier({ sendEmail, appBaseUrl });
+  return {
+    notifier: {
+      async notify(event) {
+        notifyCalls.push(event);
+        await adapter.notify(event);
+      },
+    },
+  };
+}
 
 const noGoogleSinks: GoogleSinks = {
   cfg: null,
@@ -33,10 +56,7 @@ const noGoogleSinks: GoogleSinks = {
   },
 };
 
-const notifications: NotificationSinks = {
-  sendEmail: captureSendEmail,
-  appBaseUrl: "https://app.test",
-};
+const notifications: NotificationSinks = buildNotifications();
 
 beforeAll(async () => {
   testDb = await createTestDb();
@@ -50,6 +70,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   sentEmails = [];
+  notifyCalls = [];
   await testDb.$client.exec(`
     TRUNCATE TABLE bookings, availability_excludes, availability_rules,
     availability_links, google_calendars, google_oauth_accounts, users
@@ -161,6 +182,15 @@ describe("cancelBookingByToken", () => {
     // canceledBy = "guest" path: guest mail mirrors actor.
     const guestMail = sentEmails.find((e) => e.to === "guest@example.com");
     expect(guestMail?.text).toContain("あなた");
+
+    // ISH-123: usecase published exactly one domain event of the right shape.
+    expect(notifyCalls.length).toBe(1);
+    const event = notifyCalls[0];
+    expect(event?.kind).toBe("booking_canceled");
+    if (event?.kind !== "booking_canceled") throw new Error("unexpected event kind");
+    expect(event.canceledBy).toBe("guest");
+    expect(event.booking.id).toBe(seed.bookingId);
+    expect(event.owner.email).toBe("owner@example.com");
   });
 
   test("unknown token → kind:'not_found'", async () => {
@@ -362,11 +392,30 @@ describe("cancel side-effects — email resilience", () => {
   test("sendEmail throws — cancellation is still committed (best-effort)", async () => {
     const seed = await seedConfirmedBooking();
 
+    const failingNotifications = buildNotifications(async () => {
+      throw new Error("smtp boom");
+    });
+    const result = await cancelBookingByToken(
+      db,
+      seed.cancellationToken,
+      noGoogleSinks,
+      failingNotifications,
+    );
+
+    expect(result.kind).toBe("ok");
+    const [row] = await testDb.select().from(bookings).where(eq(bookings.id, seed.bookingId));
+    expect(row?.status).toBe("canceled");
+  });
+
+  test("notifier.notify throws — cancellation is still committed (usecase swallows)", async () => {
+    const seed = await seedConfirmedBooking();
+
     const result = await cancelBookingByToken(db, seed.cancellationToken, noGoogleSinks, {
-      sendEmail: async () => {
-        throw new Error("smtp boom");
+      notifier: {
+        notify: async () => {
+          throw new Error("notifier boom");
+        },
       },
-      appBaseUrl: "https://app.test",
     });
 
     expect(result.kind).toBe("ok");

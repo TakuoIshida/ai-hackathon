@@ -7,6 +7,7 @@ import { getValidAccessToken } from "@/google/access-token";
 import { createEvent } from "@/google/calendar";
 import { type GoogleConfig, loadGoogleConfig } from "@/google/config";
 import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
+import { createBookingNotifier } from "@/notifications/booking-notifier";
 import { createResendSender, loadResendConfig } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
 
@@ -70,8 +71,10 @@ export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): H
         getAccessToken: deps.getAccessToken,
       },
       {
-        sendEmail: deps.sendEmail,
-        appBaseUrl: deps.appBaseUrl,
+        notifier: createBookingNotifier({
+          sendEmail: deps.sendEmail,
+          appBaseUrl: deps.appBaseUrl,
+        }),
       },
     );
     if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
