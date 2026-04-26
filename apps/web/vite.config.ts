@@ -4,11 +4,20 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import styleX from "vite-plugin-stylex";
 
+// E2E-only Clerk bypass. When VITE_E2E_BYPASS_AUTH=1 is set on the build/dev
+// command (apps/e2e/playwright.config.ts), every import of @clerk/clerk-react
+// resolves to a stub that treats the user as signed-in. Production builds do
+// not set this env, so the alias is inert.
+const e2eBypassAuth = process.env.VITE_E2E_BYPASS_AUTH === "1";
+
 export default defineConfig({
   plugins: [react(), styleX()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      ...(e2eBypassAuth
+        ? { "@clerk/clerk-react": path.resolve(__dirname, "./src/test/clerk-e2e-shim.tsx") }
+        : {}),
     },
   },
   server: {
