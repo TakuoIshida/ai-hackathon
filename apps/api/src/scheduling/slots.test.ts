@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { expandWeeklyAvailability } from "./availability";
 import { computeAvailableSlots } from "./slots";
-import { localToUtcMs } from "./timezone";
+import { localPartsOf, localToUtcMs } from "./timezone";
 import type { AvailabilityWindow, Interval, WeeklyAvailability } from "./types";
 
 const empty: WeeklyAvailability = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
@@ -178,6 +178,92 @@ describe("computeAvailableSlots", () => {
       durationMinutes: 30,
     });
     expect(slots).toEqual([]);
+  });
+
+  test("DST spring-forward: slot anchor stays UTC-spaced and local 02:00 is skipped", () => {
+    // Window: 2026-03-08 00:00 → 24:00 LA. The day is 23h long because 02:00 → 03:00.
+    const LA = "America/Los_Angeles";
+    const dayStart = localToUtcMs(2026, 3, 8, 0, 0, LA);
+    const dayEnd = localToUtcMs(2026, 3, 9, 0, 0, LA);
+    const w: AvailabilityWindow = {
+      start: dayStart,
+      end: dayEnd,
+      localDate: "2026-03-08",
+    };
+    const slots = computeAvailableSlots({
+      rangeStart: dayStart,
+      rangeEnd: dayEnd,
+      windows: [w],
+      busy: [],
+      durationMinutes: 60,
+    });
+    // 23h window / 60min step = 23 slots
+    expect(slots.length).toBe(23);
+    // Slot starts are equally spaced in UTC by exactly 60 min.
+    for (let i = 1; i < slots.length; i++) {
+      expect((slots[i]?.start ?? 0) - (slots[i - 1]?.start ?? 0)).toBe(60 * 60 * 1000);
+    }
+    // Local hours: slots drift past the gap, so 02:00 local never appears.
+    const localHours = slots.map((s) => localPartsOf(s.start, LA).hour);
+    expect(localHours).not.toContain(2);
+    expect(localHours[0]).toBe(0);
+    expect(localHours[1]).toBe(1);
+    // Third slot (UTC 10:00) lands on 03:00 PDT — the gap is skipped.
+    expect(localHours[2]).toBe(3);
+    expect(localHours.at(-1)).toBe(23);
+  });
+
+  test("DST fall-back: 01:00 local appears twice (once PDT, once PST)", () => {
+    // Window: 2026-11-01 00:00 → 24:00 LA. The day is 25h long because 02:00 → 01:00.
+    const LA = "America/Los_Angeles";
+    const dayStart = localToUtcMs(2026, 11, 1, 0, 0, LA);
+    const dayEnd = localToUtcMs(2026, 11, 2, 0, 0, LA);
+    const w: AvailabilityWindow = {
+      start: dayStart,
+      end: dayEnd,
+      localDate: "2026-11-01",
+    };
+    const slots = computeAvailableSlots({
+      rangeStart: dayStart,
+      rangeEnd: dayEnd,
+      windows: [w],
+      busy: [],
+      durationMinutes: 60,
+    });
+    // 25h window / 60min step = 25 slots
+    expect(slots.length).toBe(25);
+    const localHours = slots.map((s) => localPartsOf(s.start, LA).hour);
+    expect(localHours[0]).toBe(0);
+    expect(localHours[1]).toBe(1); // 01:00 PDT (first occurrence)
+    expect(localHours[2]).toBe(1); // 01:00 PST (second occurrence after fall-back)
+    expect(localHours[3]).toBe(2);
+    // 23:00 is the final slot (24th hour of a 25h day).
+    expect(localHours.at(-1)).toBe(23);
+    // The two 01:00 slots are exactly 1 hour apart in UTC.
+    expect((slots[2]?.start ?? 0) - (slots[1]?.start ?? 0)).toBe(60 * 60 * 1000);
+  });
+
+  test("DST spring-forward with maxPerDay still buckets by localDate", () => {
+    // Same all-day window but capped at 5 slots/day.
+    const LA = "America/Los_Angeles";
+    const dayStart = localToUtcMs(2026, 3, 8, 0, 0, LA);
+    const dayEnd = localToUtcMs(2026, 3, 9, 0, 0, LA);
+    const w: AvailabilityWindow = {
+      start: dayStart,
+      end: dayEnd,
+      localDate: "2026-03-08",
+    };
+    const slots = computeAvailableSlots({
+      rangeStart: dayStart,
+      rangeEnd: dayEnd,
+      windows: [w],
+      busy: [],
+      durationMinutes: 60,
+      maxPerDay: 5,
+    });
+    expect(slots.length).toBe(5);
+    expect(slots[0]?.start).toBe(dayStart);
+    expect(slots[4]?.start).toBe(dayStart + 4 * 60 * 60 * 1000);
   });
 
   test("integrates with expandWeeklyAvailability", () => {
