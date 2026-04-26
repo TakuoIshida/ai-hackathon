@@ -3,7 +3,7 @@ import type { db as DbClient } from "@/db/client";
 import { googleOauthAccounts } from "@/db/schema/google";
 import type { GoogleConfig } from "./config";
 import { refreshAccessToken } from "./oauth";
-import { decryptRefreshToken } from "./repo";
+import { decryptOauthRefreshToken } from "./usecase";
 
 type Database = typeof DbClient;
 
@@ -26,7 +26,7 @@ export async function getValidAccessToken(
     return account.accessToken;
   }
 
-  const refresh = decryptRefreshToken(account, cfg.encryptionKey);
+  const refresh = decryptOauthRefreshToken(account, cfg.encryptionKey);
   const refreshed = await refreshAccessToken(cfg, refresh);
   await database
     .update(googleOauthAccounts)
