@@ -101,11 +101,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
 
-      - name: Download web dist
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist
-          path: apps/web/dist
+      # The shared `build` artifact is produced WITHOUT the E2E auth bypass,
+      # so it can't drive the dashboard specs. apps/e2e/playwright.config.ts
+      # rebuilds the web bundle with VITE_E2E_BYPASS_AUTH=1 before serving it
+      # via `vite preview` — see ISH-139. We still depend on `build` so the
+      # tsc -b cache is warm when the rebuild runs.
 
       - name: Cache Playwright browsers
         id: pw-cache
