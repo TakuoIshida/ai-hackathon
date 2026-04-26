@@ -8,6 +8,8 @@ import type {
   LinkInput,
   LinkSummary,
   WorkspaceDetail,
+  WorkspaceMember,
+  WorkspaceRole,
   WorkspaceSummary,
 } from "./types";
 
@@ -128,6 +130,19 @@ export const api = {
 
   getWorkspace: (id: string, getToken: AuthTokenGetter) =>
     request<{ workspace: WorkspaceDetail }>(`/workspaces/${id}`, { getToken }),
+
+  // ISH-110: members.
+  listMembers: (workspaceId: string, getToken: AuthTokenGetter) =>
+    request<{ members: WorkspaceMember[]; callerRole: WorkspaceRole }>(
+      `/workspaces/${workspaceId}/members`,
+      { getToken },
+    ),
+
+  removeMember: (workspaceId: string, userId: string, getToken: AuthTokenGetter) =>
+    request<{ ok: boolean }>(`/workspaces/${workspaceId}/members/${userId}`, {
+      method: "DELETE",
+      getToken,
+    }),
 
   // ISH-109: invitation acceptance.
   // GET is intentionally unauthenticated — the unauth landing page calls it

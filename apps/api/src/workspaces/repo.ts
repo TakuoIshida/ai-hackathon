@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
+import { users } from "@/db/schema/users";
 import {
   type Invitation,
   invitations,
@@ -149,6 +150,70 @@ export async function findMembership(
     .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
     .limit(1);
   return row ?? null;
+}
+
+export type WorkspaceMemberRow = {
+  userId: string;
+  email: string;
+  name: string | null;
+  role: MembershipRole;
+  createdAt: Date;
+};
+
+/**
+ * ISH-110: list members of a workspace, joined with their user info. Ordered
+ * by `memberships.createdAt` ASC so the original owner appears first and
+ * subsequent joiners follow in the order they accepted.
+ */
+export async function listMembersWithUserInfo(
+  database: Database,
+  workspaceId: string,
+): Promise<WorkspaceMemberRow[]> {
+  const rows = await database
+    .select({
+      userId: memberships.userId,
+      email: users.email,
+      name: users.name,
+      role: memberships.role,
+      createdAt: memberships.createdAt,
+    })
+    .from(memberships)
+    .innerJoin(users, eq(memberships.userId, users.id))
+    .where(eq(memberships.workspaceId, workspaceId))
+    .orderBy(asc(memberships.createdAt));
+  return rows;
+}
+
+/**
+ * ISH-110: delete a single (workspace, user) membership row.
+ * Returns true when a row was actually deleted, false otherwise — the
+ * usecase layer maps the latter to `not_found`.
+ */
+export async function removeMembership(
+  database: Database,
+  workspaceId: string,
+  userId: string,
+): Promise<boolean> {
+  const deleted = await database
+    .delete(memberships)
+    .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
+    .returning({ id: memberships.id });
+  return deleted.length > 0;
+}
+
+/**
+ * ISH-110: count owners for a workspace. Used for the last-owner safeguard
+ * so the workspace cannot end up ownerless via member removal.
+ */
+export async function countOwnersForWorkspace(
+  database: Database,
+  workspaceId: string,
+): Promise<number> {
+  const [row] = await database
+    .select({ count: sql<number>`count(*)::int` })
+    .from(memberships)
+    .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.role, "owner")));
+  return row?.count ?? 0;
 }
 
 export async function findOpenInvitationForEmail(

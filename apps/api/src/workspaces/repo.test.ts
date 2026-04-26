@@ -1,16 +1,19 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
 import { memberships, workspaces } from "@/db/schema/workspaces";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
 import {
+  countOwnersForWorkspace,
   createWorkspaceWithOwnerMembership,
   findMembership,
   findWorkspaceById,
   getWorkspaceForMember,
   listMembershipsForUser,
+  listMembersWithUserInfo,
+  removeMembership,
 } from "./repo";
 
 let testDb: TestDb;
@@ -175,5 +178,123 @@ describe("workspaces/repo: getWorkspaceForMember (ISH-107)", () => {
   test("returns null when workspace id does not exist", async () => {
     const owner = await seedUser();
     expect(await getWorkspaceForMember(db, randomUUID(), owner.id)).toBeNull();
+  });
+});
+
+describe("workspaces/repo: listMembersWithUserInfo (ISH-110)", () => {
+  test("returns rows joined with user info, ordered by membership createdAt ASC", async () => {
+    const owner = await seedUser("owner@x.com");
+    const created = await createWorkspaceWithOwnerMembership(db, {
+      name: "X",
+      slug: `ws-${randomUUID()}`,
+      ownerUserId: owner.id,
+    });
+    if (created.kind !== "ok") throw new Error("seed");
+
+    // Insert two more members with explicit timestamps so we can pin ordering.
+    const memberA = await seedUser("a@x.com");
+    const memberB = await seedUser("b@x.com");
+    const t0 = new Date("2026-04-01T00:00:00.000Z");
+    const t1 = new Date("2026-04-02T00:00:00.000Z");
+    const t2 = new Date("2026-04-03T00:00:00.000Z");
+
+    // Reset the owner's membership timestamp to t0 so it lands first.
+    await testDb
+      .update(memberships)
+      .set({ createdAt: t0 })
+      .where(
+        and(eq(memberships.workspaceId, created.workspace.id), eq(memberships.userId, owner.id)),
+      );
+    await testDb.insert(memberships).values({
+      workspaceId: created.workspace.id,
+      userId: memberB.id,
+      role: "member",
+      createdAt: t2,
+    });
+    await testDb.insert(memberships).values({
+      workspaceId: created.workspace.id,
+      userId: memberA.id,
+      role: "member",
+      createdAt: t1,
+    });
+
+    const rows = await listMembersWithUserInfo(db, created.workspace.id);
+    expect(rows.map((r) => r.email)).toEqual(["owner@x.com", "a@x.com", "b@x.com"]);
+    expect(rows[0]?.role).toBe("owner");
+    expect(rows[1]?.role).toBe("member");
+    expect(rows[2]?.role).toBe("member");
+    expect(rows[0]?.userId).toBe(owner.id);
+    // join carries name (null in our seeds)
+    expect(rows[0]?.name).toBeNull();
+  });
+
+  test("returns [] for a workspace with no memberships (and unknown ids)", async () => {
+    expect(await listMembersWithUserInfo(db, randomUUID())).toEqual([]);
+  });
+});
+
+describe("workspaces/repo: removeMembership (ISH-110)", () => {
+  test("returns true when a row was deleted; the row is gone", async () => {
+    const owner = await seedUser();
+    const created = await createWorkspaceWithOwnerMembership(db, {
+      name: "X",
+      slug: `ws-${randomUUID()}`,
+      ownerUserId: owner.id,
+    });
+    if (created.kind !== "ok") throw new Error("seed");
+    const member = await seedUser();
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: created.workspace.id, userId: member.id, role: "member" });
+
+    const ok = await removeMembership(db, created.workspace.id, member.id);
+    expect(ok).toBe(true);
+    const rows = await testDb.select().from(memberships).where(eq(memberships.userId, member.id));
+    expect(rows.length).toBe(0);
+  });
+
+  test("returns false when no membership row matched", async () => {
+    const owner = await seedUser();
+    const created = await createWorkspaceWithOwnerMembership(db, {
+      name: "X",
+      slug: `ws-${randomUUID()}`,
+      ownerUserId: owner.id,
+    });
+    if (created.kind !== "ok") throw new Error("seed");
+    const ghost = await seedUser();
+    const ok = await removeMembership(db, created.workspace.id, ghost.id);
+    expect(ok).toBe(false);
+  });
+});
+
+describe("workspaces/repo: countOwnersForWorkspace (ISH-110)", () => {
+  test("returns the number of owner memberships for the workspace", async () => {
+    const ownerA = await seedUser();
+    const created = await createWorkspaceWithOwnerMembership(db, {
+      name: "X",
+      slug: `ws-${randomUUID()}`,
+      ownerUserId: ownerA.id,
+    });
+    if (created.kind !== "ok") throw new Error("seed");
+
+    expect(await countOwnersForWorkspace(db, created.workspace.id)).toBe(1);
+
+    // Add a second owner and confirm it ticks up.
+    const ownerB = await seedUser();
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: created.workspace.id, userId: ownerB.id, role: "owner" });
+    expect(await countOwnersForWorkspace(db, created.workspace.id)).toBe(2);
+
+    // Members should not be counted.
+    const memberC = await seedUser();
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: created.workspace.id, userId: memberC.id, role: "member" });
+    expect(await countOwnersForWorkspace(db, created.workspace.id)).toBe(2);
+  });
+
+  test("returns 0 for an unknown workspace id", async () => {
+    expect(await countOwnersForWorkspace(db, randomUUID())).toBe(0);
   });
 });

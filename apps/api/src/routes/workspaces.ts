@@ -11,7 +11,9 @@ import {
   createWorkspaceForUser,
   getWorkspaceForUser,
   issueInvitation,
+  listWorkspaceMembers,
   listWorkspacesForUser,
+  removeMember,
   revokeInvitation,
 } from "@/workspaces/usecase";
 
@@ -114,6 +116,41 @@ export function createWorkspacesRoute(deps: WorkspacesRouteDeps = productionDeps
       },
       201,
     );
+  });
+
+  // ISH-110: list members of a workspace. Members-only; non-members get 404.
+  route.get("/:id/members", async (c) => {
+    const result = await listWorkspaceMembers(db, getDbUser(c).id, c.req.param("id"));
+    if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
+    return c.json({
+      members: result.members.map((m) => ({
+        userId: m.userId,
+        email: m.email,
+        name: m.name,
+        role: m.role,
+        createdAt: m.createdAt,
+      })),
+      callerRole: result.callerRole,
+    });
+  });
+
+  // ISH-110: remove a member from a workspace. Owner-only.
+  route.delete("/:id/members/:userId", async (c) => {
+    const result = await removeMember(
+      db,
+      getDbUser(c).id,
+      c.req.param("id"),
+      c.req.param("userId"),
+    );
+    if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
+    if (result.kind === "forbidden") return c.json({ error: "forbidden" }, 403);
+    if (result.kind === "last_owner") {
+      throw new HTTPException(409, { message: "last_owner" });
+    }
+    if (result.kind === "cannot_remove_self_owner") {
+      throw new HTTPException(409, { message: "cannot_remove_self_owner" });
+    }
+    return c.json({ ok: true });
   });
 
   // Helper for owners to revoke a still-open invitation. Useful when the

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
@@ -12,7 +12,9 @@ import {
   createWorkspaceForUser,
   getWorkspaceForUser,
   issueInvitation,
+  listWorkspaceMembers,
   listWorkspacesForUser,
+  removeMember,
   revokeInvitation,
 } from "./usecase";
 
@@ -345,6 +347,119 @@ describe("workspaces/usecase: acceptInvitation (ISH-109)", () => {
     expect(r2.kind).toBe("already_accepted");
     const after2 = await findInvitationByToken(db, invitation.token);
     expect(after2?.acceptedAt?.toISOString()).toBe(t1.toISOString());
+  });
+});
+
+describe("workspaces/usecase: listWorkspaceMembers (ISH-110)", () => {
+  test("ok: caller is a member; returns members + caller's role", async () => {
+    const { owner, workspace } = await seedWorkspace();
+    const otherUser = await seedUser("member@x.com");
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: workspace.id, userId: otherUser.id, role: "member" });
+
+    const result = await listWorkspaceMembers(db, owner.id, workspace.id);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.callerRole).toBe("owner");
+    expect(result.members.length).toBe(2);
+    const userIds = result.members.map((m) => m.userId).sort();
+    expect(userIds).toEqual([owner.id, otherUser.id].sort());
+  });
+
+  test("not_found: caller is not a member of the workspace (no leak)", async () => {
+    const { workspace } = await seedWorkspace();
+    const stranger = await seedUser();
+    const result = await listWorkspaceMembers(db, stranger.id, workspace.id);
+    expect(result.kind).toBe("not_found");
+  });
+
+  test("not_found: workspace id does not exist", async () => {
+    const stranger = await seedUser();
+    const result = await listWorkspaceMembers(db, stranger.id, randomUUID());
+    expect(result.kind).toBe("not_found");
+  });
+});
+
+describe("workspaces/usecase: removeMember (ISH-110)", () => {
+  test("ok: owner removes a regular member; the row is gone", async () => {
+    const { owner, workspace } = await seedWorkspace();
+    const member = await seedUser("m@x.com");
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: workspace.id, userId: member.id, role: "member" });
+
+    const result = await removeMember(db, owner.id, workspace.id, member.id);
+    expect(result.kind).toBe("ok");
+    const rows = await testDb.select().from(memberships).where(eq(memberships.userId, member.id));
+    expect(rows.length).toBe(0);
+  });
+
+  test("forbidden: caller is a member (not an owner)", async () => {
+    const { workspace } = await seedWorkspace();
+    const memberA = await seedUser("a@x.com");
+    const memberB = await seedUser("b@x.com");
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: workspace.id, userId: memberA.id, role: "member" });
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: workspace.id, userId: memberB.id, role: "member" });
+
+    const result = await removeMember(db, memberA.id, workspace.id, memberB.id);
+    expect(result.kind).toBe("forbidden");
+  });
+
+  test("not_found: caller is a stranger to the workspace", async () => {
+    const { workspace } = await seedWorkspace();
+    const stranger = await seedUser();
+    const result = await removeMember(db, stranger.id, workspace.id, randomUUID());
+    expect(result.kind).toBe("not_found");
+  });
+
+  test("not_found: target is not a member of the workspace", async () => {
+    const { owner, workspace } = await seedWorkspace();
+    const ghost = await seedUser();
+    const result = await removeMember(db, owner.id, workspace.id, ghost.id);
+    expect(result.kind).toBe("not_found");
+  });
+
+  test("ok: removing an owner when a co-owner exists succeeds", async () => {
+    // Pins the "target is owner AND ownerCount > 1 → ok" branch.
+    const { owner, workspace } = await seedWorkspace();
+    const coOwner = await seedUser("co-owner@x.com");
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: workspace.id, userId: coOwner.id, role: "owner" });
+    const result = await removeMember(db, owner.id, workspace.id, coOwner.id);
+    expect(result.kind).toBe("ok");
+  });
+
+  // `last_owner` is defense-in-depth against a concurrent owner-demotion:
+  // the caller's owner role was confirmed at request start but the
+  // workspace's owner count dropped to 1 between the two repo reads. We
+  // trigger that state deterministically with a `spyOn` that forces the
+  // count query to return 1.
+  test("last_owner: count guard fires when target is the only remaining owner", async () => {
+    const { owner, workspace } = await seedWorkspace();
+    const coOwner = await seedUser("co-owner@x.com");
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: workspace.id, userId: coOwner.id, role: "owner" });
+    const repoModule = await import("./repo");
+    const countSpy = spyOn(repoModule, "countOwnersForWorkspace").mockResolvedValue(1);
+    try {
+      const result = await removeMember(db, owner.id, workspace.id, coOwner.id);
+      expect(result.kind).toBe("last_owner");
+    } finally {
+      countSpy.mockRestore();
+    }
+  });
+
+  test("cannot_remove_self_owner: owner attempts to delete themselves", async () => {
+    const { owner, workspace } = await seedWorkspace();
+    const result = await removeMember(db, owner.id, workspace.id, owner.id);
+    expect(result.kind).toBe("cannot_remove_self_owner");
   });
 });
 
