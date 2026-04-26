@@ -1,6 +1,7 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
+import { cancelBookingByToken } from "@/bookings/cancel";
 import { type CreateEventFn, confirmBooking, type GetAccessTokenFn } from "@/bookings/confirm";
 import { bookingInputSchema } from "@/bookings/schemas";
 import { db } from "@/db/client";
@@ -133,6 +134,30 @@ export function createPublicRoute(deps: PublicRouteDeps = productionDeps): Hono 
       },
       201,
     );
+  });
+
+  // Guest-side cancel via the cancellation_token issued at booking time.
+  route.post("/cancel/:token", async (c) => {
+    const token = c.req.param("token");
+    if (!/^[0-9a-f-]{36}$/i.test(token)) {
+      return c.json({ error: "invalid_token" }, 400);
+    }
+    const result = await cancelBookingByToken(
+      db,
+      token,
+      {
+        cfg: deps.loadCfg(),
+        createEvent: deps.createEvent,
+        getAccessToken: deps.getAccessToken,
+      },
+      {
+        sendEmail: deps.sendEmail,
+        appBaseUrl: deps.appBaseUrl,
+      },
+    );
+    if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
+    if (result.kind === "already_canceled") return c.json({ ok: true, alreadyCanceled: true });
+    return c.json({ ok: true, bookingId: result.booking.id });
   });
 
   return route;

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
 import { bookings } from "@/db/schema/bookings";
 
@@ -51,4 +51,32 @@ export async function findActiveBookingsForLink(
   linkId: string,
 ): Promise<BookingRow[]> {
   return database.select().from(bookings).where(eq(bookings.linkId, linkId));
+}
+
+export async function findBookingByCancellationToken(
+  database: Database,
+  token: string,
+): Promise<BookingRow | null> {
+  const [row] = await database
+    .select()
+    .from(bookings)
+    .where(eq(bookings.cancellationToken, token))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Marks a confirmed booking as canceled. Idempotent: if the booking is already
+ * canceled, returns null so the caller can still respond 200 / skip side effects.
+ */
+export async function markBookingCanceled(
+  database: Database,
+  bookingId: string,
+): Promise<BookingRow | null> {
+  const [row] = await database
+    .update(bookings)
+    .set({ status: "canceled", canceledAt: new Date() })
+    .where(and(eq(bookings.id, bookingId), eq(bookings.status, "confirmed")))
+    .returning();
+  return row ?? null;
 }

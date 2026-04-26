@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { logger } from "hono/logger";
+import { bookingsRoute } from "@/routes/bookings";
 import { clerkWebhookRoute } from "@/routes/clerk-webhook";
 import { googleRoute } from "@/routes/google";
 import { linksRoute } from "@/routes/links";
@@ -32,6 +33,7 @@ app.get("/health", (c) => c.json({ ok: true, service: "api" }));
 app.route("/me", meRoute);
 app.route("/google", googleRoute);
 app.route("/links", linksRoute);
+app.route("/bookings", bookingsRoute);
 app.route("/public", publicRoute);
 app.route("/webhooks", clerkWebhookRoute);
 
