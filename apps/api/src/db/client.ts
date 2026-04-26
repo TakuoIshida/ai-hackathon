@@ -15,9 +15,13 @@ function getDb() {
   return cachedDb;
 }
 
+// Bind methods to the underlying drizzle instance so any internal `this` access
+// (e.g. drizzle reaching its own session/dialect) works through the proxy.
 export const db = new Proxy({} as ReturnType<typeof getDb>, {
-  get(_target, prop, receiver) {
-    return Reflect.get(getDb(), prop, receiver);
+  get(_target, prop) {
+    const target = getDb();
+    const value = Reflect.get(target, prop);
+    return typeof value === "function" ? value.bind(target) : value;
   },
 });
 

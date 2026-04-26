@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
 import { availabilityExcludes, availabilityLinks, availabilityRules } from "@/db/schema/links";
@@ -50,43 +51,50 @@ async function loadRelations(
   return { rules, excludes: excludes.map((e) => e.localDate) };
 }
 
+// neon-http does not support callback transactions, so we use db.batch (atomic, single HTTP req).
+type BatchQuery = Parameters<Database["batch"]>[0][number];
+
 export async function createLink(
   database: Database,
   userId: string,
   input: LinkInput,
 ): Promise<LinkWithRelations> {
-  return database.transaction(async (tx) => {
-    const [link] = await tx
-      .insert(availabilityLinks)
-      .values({
-        userId,
-        slug: input.slug,
-        title: input.title,
-        description: input.description ?? null,
-        durationMinutes: input.durationMinutes,
-        bufferBeforeMinutes: input.bufferBeforeMinutes,
-        bufferAfterMinutes: input.bufferAfterMinutes,
-        slotIntervalMinutes: input.slotIntervalMinutes ?? null,
-        maxPerDay: input.maxPerDay ?? null,
-        leadTimeHours: input.leadTimeHours,
-        rangeDays: input.rangeDays,
-        timeZone: input.timeZone,
-        isPublished: input.isPublished,
-      })
-      .returning();
-    if (!link) throw new Error("failed to insert link");
-    if (input.rules.length > 0) {
-      await tx
-        .insert(availabilityRules)
-        .values(input.rules.map((r) => ({ ...r, linkId: link.id })));
-    }
-    if (input.excludes.length > 0) {
-      await tx
+  const linkId = randomUUID();
+  const queries: BatchQuery[] = [
+    database.insert(availabilityLinks).values({
+      id: linkId,
+      userId,
+      slug: input.slug,
+      title: input.title,
+      description: input.description ?? null,
+      durationMinutes: input.durationMinutes,
+      bufferBeforeMinutes: input.bufferBeforeMinutes,
+      bufferAfterMinutes: input.bufferAfterMinutes,
+      slotIntervalMinutes: input.slotIntervalMinutes ?? null,
+      maxPerDay: input.maxPerDay ?? null,
+      leadTimeHours: input.leadTimeHours,
+      rangeDays: input.rangeDays,
+      timeZone: input.timeZone,
+      isPublished: input.isPublished,
+    }),
+  ];
+  if (input.rules.length > 0) {
+    queries.push(
+      database.insert(availabilityRules).values(input.rules.map((r) => ({ ...r, linkId }))),
+    );
+  }
+  if (input.excludes.length > 0) {
+    queries.push(
+      database
         .insert(availabilityExcludes)
-        .values(input.excludes.map((d) => ({ linkId: link.id, localDate: d })));
-    }
-    return { ...link, rules: input.rules, excludes: input.excludes };
-  });
+        .values(input.excludes.map((d) => ({ linkId, localDate: d }))),
+    );
+  }
+  await database.batch(queries as [BatchQuery, ...BatchQuery[]]);
+
+  const reloaded = await getLinkForUser(database, userId, linkId);
+  if (!reloaded) throw new Error("link disappeared after insert");
+  return reloaded;
 }
 
 export async function listLinksForUser(database: Database, userId: string): Promise<LinkRow[]> {
@@ -114,41 +122,47 @@ export async function updateLink(
   linkId: string,
   patch: LinkUpdateInput,
 ): Promise<LinkWithRelations | null> {
-  return database.transaction(async (tx) => {
-    const cols = linkColumnsForUpsert(patch);
-    if (Object.keys(cols).length > 0) {
-      const updated = await tx
+  // Existence + ownership check happens outside the batch — neon-http cannot
+  // return rows from a write inside a multi-statement HTTP transaction.
+  const existing = await getLinkForUser(database, userId, linkId);
+  if (!existing) return null;
+
+  const queries: BatchQuery[] = [];
+  const cols = linkColumnsForUpsert(patch);
+  if (Object.keys(cols).length > 0) {
+    queries.push(
+      database
         .update(availabilityLinks)
         .set({ ...cols, updatedAt: new Date() })
-        .where(and(eq(availabilityLinks.id, linkId), eq(availabilityLinks.userId, userId)))
-        .returning({ id: availabilityLinks.id });
-      if (updated.length === 0) {
-        return null;
-      }
-    } else {
-      const [exists] = await tx
-        .select({ id: availabilityLinks.id })
-        .from(availabilityLinks)
-        .where(and(eq(availabilityLinks.id, linkId), eq(availabilityLinks.userId, userId)))
-        .limit(1);
-      if (!exists) return null;
+        .where(and(eq(availabilityLinks.id, linkId), eq(availabilityLinks.userId, userId))),
+    );
+  }
+  if (patch.rules !== undefined) {
+    queries.push(database.delete(availabilityRules).where(eq(availabilityRules.linkId, linkId)));
+    if (patch.rules.length > 0) {
+      queries.push(
+        database.insert(availabilityRules).values(patch.rules.map((r) => ({ ...r, linkId }))),
+      );
     }
-    if (patch.rules !== undefined) {
-      await tx.delete(availabilityRules).where(eq(availabilityRules.linkId, linkId));
-      if (patch.rules.length > 0) {
-        await tx.insert(availabilityRules).values(patch.rules.map((r) => ({ ...r, linkId })));
-      }
-    }
-    if (patch.excludes !== undefined) {
-      await tx.delete(availabilityExcludes).where(eq(availabilityExcludes.linkId, linkId));
-      if (patch.excludes.length > 0) {
-        await tx
+  }
+  if (patch.excludes !== undefined) {
+    queries.push(
+      database.delete(availabilityExcludes).where(eq(availabilityExcludes.linkId, linkId)),
+    );
+    if (patch.excludes.length > 0) {
+      queries.push(
+        database
           .insert(availabilityExcludes)
-          .values(patch.excludes.map((d) => ({ linkId, localDate: d })));
-      }
+          .values(patch.excludes.map((d) => ({ linkId, localDate: d }))),
+      );
     }
-    return getLinkForUser(tx as unknown as Database, userId, linkId);
-  });
+  }
+
+  if (queries.length > 0) {
+    await database.batch(queries as [BatchQuery, ...BatchQuery[]]);
+  }
+
+  return getLinkForUser(database, userId, linkId);
 }
 
 export async function deleteLink(

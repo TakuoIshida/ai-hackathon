@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
 import { googleCalendars, googleOauthAccounts } from "@/db/schema/google";
 import type { CalendarListItem } from "./calendar";
@@ -115,7 +115,12 @@ export async function syncCalendars(
     )
     .onConflictDoUpdate({
       target: [googleCalendars.oauthAccountId, googleCalendars.googleCalendarId],
-      set: { summary: googleCalendars.summary, updatedAt: new Date() },
+      set: {
+        summary: sql`excluded.summary`,
+        timeZone: sql`excluded.time_zone`,
+        isPrimary: sql`excluded.is_primary`,
+        updatedAt: new Date(),
+      },
     });
 }
 
