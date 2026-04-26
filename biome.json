@@ -16,7 +16,8 @@
       "!**/coverage",
       "!**/drizzle",
       "!**/*.gen.ts",
-      "!bun.lock"
+      "!bun.lock",
+      "!.claude"
     ]
   },
   "formatter": {
