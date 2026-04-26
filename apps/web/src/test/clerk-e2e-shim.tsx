@@ -29,6 +29,13 @@ export function SignInButton({ children }: { children?: ReactNode; mode?: string
   return <>{children}</>;
 }
 
+// AcceptInvite (ISH-109) imports SignUpButton alongside SignInButton.
+// Without this export the e2e production build fails with a rollup
+// "ExportDefaultDeclaration.bind" error during shim resolution.
+export function SignUpButton({ children }: { children?: ReactNode; mode?: string }) {
+  return <>{children}</>;
+}
+
 export function RedirectToSignIn() {
   return null;
 }
