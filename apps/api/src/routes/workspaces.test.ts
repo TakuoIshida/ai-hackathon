@@ -27,6 +27,21 @@ describe("/workspaces auth gate (ISH-108)", () => {
   });
 });
 
+describe("/workspaces auth gate (ISH-110)", () => {
+  const wsId = "00000000-0000-0000-0000-000000000000";
+  const userId = "11111111-1111-1111-1111-111111111111";
+
+  test("GET /workspaces/:id/members → 401 unauth", async () => {
+    const res = await app.request(`/workspaces/${wsId}/members`, { method: "GET" });
+    expect(res.status).toBe(401);
+  });
+
+  test("DELETE /workspaces/:id/members/:userId → 401 unauth", async () => {
+    const res = await app.request(`/workspaces/${wsId}/members/${userId}`, { method: "DELETE" });
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("/workspaces auth gate (ISH-107)", () => {
   test("GET /workspaces → 401 unauth", async () => {
     const res = await app.request("/workspaces", { method: "GET" });

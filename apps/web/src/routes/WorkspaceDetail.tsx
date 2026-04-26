@@ -7,6 +7,7 @@ import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/compon
 import { ApiError, api } from "@/lib/api";
 import type { WorkspaceDetail } from "@/lib/types";
 import { colors, space } from "@/styles/tokens.stylex";
+import WorkspaceMembers from "./WorkspaceMembers";
 
 const styles = stylex.create({
   page: { display: "flex", flexDirection: "column", gap: space.lg, maxWidth: "40rem" },
@@ -100,10 +101,9 @@ export default function WorkspaceDetailRoute() {
           <Card>
             <CardHeader>
               <CardTitle>メンバー</CardTitle>
-              <CardDescription>メンバー管理は今後のアップデートで対応します。</CardDescription>
             </CardHeader>
             <CardBody>
-              <p {...stylex.props(styles.empty)}>メンバー一覧 UI は ISH-110 で対応予定。</p>
+              <WorkspaceMembers workspaceId={workspace.id} />
             </CardBody>
           </Card>
         </>
