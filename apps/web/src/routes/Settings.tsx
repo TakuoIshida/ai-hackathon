@@ -95,10 +95,6 @@ export default function Settings() {
 
   const [savingCalendarId, setSavingCalendarId] = useState<string | null>(null);
 
-  const updateLocalCalendars = (mapper: (cal: GoogleCalendarSummary) => GoogleCalendarSummary) => {
-    setConn((prev) => (prev ? { ...prev, calendars: prev.calendars.map(mapper) } : prev));
-  };
-
   const onChangeFlag = async (
     calendar: GoogleCalendarSummary,
     field: "usedForBusy" | "usedForWrites",
@@ -106,18 +102,13 @@ export default function Settings() {
   ) => {
     setSavingCalendarId(calendar.id);
     setError(null);
-    // Optimistic update — including exclusivity for usedForWrites.
-    updateLocalCalendars((cal) => {
-      if (cal.id === calendar.id) return { ...cal, [field]: next };
-      if (field === "usedForWrites" && next) return { ...cal, usedForWrites: false };
-      return cal;
-    });
     try {
       await api.updateCalendarFlags(calendar.id, { [field]: next }, () => getToken());
+      // Re-fetch so the canonical server state — including the exclusivity
+      // side effect on usedForWrites for sibling calendars — is reflected.
+      await load();
     } catch (err) {
       setError(err instanceof ApiError ? `${err.status} ${err.code}` : "failed");
-      // Revert by reloading from server.
-      await load();
     } finally {
       setSavingCalendarId(null);
     }
