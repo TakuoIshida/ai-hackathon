@@ -152,6 +152,25 @@ export async function findMembership(
   return row ?? null;
 }
 
+/**
+ * ISH-111: change a member's role. Returns true iff a row matched and was
+ * updated. The caller (usecase) is responsible for the role-policy checks
+ * (caller is owner; not the last owner being demoted; etc.).
+ */
+export async function updateMembershipRole(
+  database: Database,
+  workspaceId: string,
+  userId: string,
+  role: MembershipRole,
+): Promise<boolean> {
+  const result = await database
+    .update(memberships)
+    .set({ role })
+    .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
+    .returning({ id: memberships.id });
+  return result.length > 0;
+}
+
 export type WorkspaceMemberRow = {
   userId: string;
   email: string;
@@ -202,8 +221,8 @@ export async function removeMembership(
 }
 
 /**
- * ISH-110: count owners for a workspace. Used for the last-owner safeguard
- * so the workspace cannot end up ownerless via member removal.
+ * Number of `owner` memberships in the workspace. Used by both ISH-110
+ * (block last-owner removal) and ISH-111 (block last-owner demotion).
  */
 export async function countOwnersForWorkspace(
   database: Database,

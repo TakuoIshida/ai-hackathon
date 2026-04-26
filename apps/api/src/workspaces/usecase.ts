@@ -1,4 +1,5 @@
 import type { db as DbClient } from "@/db/client";
+import type { MembershipRole } from "@/db/schema/workspaces";
 import { workspaceInviteEmail } from "@/notifications/templates";
 import type { SendEmailFn } from "@/notifications/types";
 import {
@@ -17,6 +18,8 @@ import {
   listMembershipsForUser,
   listMembersWithUserInfo,
   removeMembership,
+  updateMembershipRole,
+  type WorkspaceMemberRow,
   type WorkspaceRow,
   type WorkspaceWithRole,
 } from "./repo";
@@ -226,6 +229,55 @@ export async function removeMember(
 
   const deleted = await removeMembership(database, workspaceId, targetUserId);
   if (!deleted) return { kind: "not_found" };
+  return { kind: "ok" };
+}
+
+// ---------- ISH-111: role management (owner ↔ member) ----------
+
+export type ChangeMemberRoleResult =
+  | { kind: "ok" }
+  | { kind: "not_found" }
+  | { kind: "forbidden" }
+  | { kind: "last_owner" }
+  | { kind: "noop" };
+
+/**
+ * Change a member's role within a workspace.
+ *
+ * Rules:
+ * - Caller must be a member of the workspace AND have role=owner. Otherwise
+ *   `forbidden` (member caller) or `not_found` (caller not in the workspace —
+ *   indistinguishable from "workspace does not exist" to avoid leaking).
+ * - Target must already be a member of the workspace; else `not_found`.
+ * - If the target's current role equals `newRole`, returns `noop` (idempotent).
+ * - Demoting the only remaining owner is blocked with `last_owner`. The
+ *   "last owner cannot leave" guarantee from the issue is satisfied here for
+ *   self-demotion as well — counting owners is symmetric for self vs. other.
+ */
+export async function changeMemberRole(
+  database: Database,
+  callerUserId: string,
+  workspaceId: string,
+  targetUserId: string,
+  newRole: MembershipRole,
+): Promise<ChangeMemberRoleResult> {
+  const callerMembership = await findMembership(database, workspaceId, callerUserId);
+  if (!callerMembership) return { kind: "not_found" };
+  if (callerMembership.role !== "owner") return { kind: "forbidden" };
+
+  const targetMembership = await findMembership(database, workspaceId, targetUserId);
+  if (!targetMembership) return { kind: "not_found" };
+
+  if (targetMembership.role === newRole) return { kind: "noop" };
+
+  if (targetMembership.role === "owner" && newRole === "member") {
+    const owners = await countOwnersForWorkspace(database, workspaceId);
+    if (owners <= 1) return { kind: "last_owner" };
+  }
+
+  const updated = await updateMembershipRole(database, workspaceId, targetUserId, newRole);
+  // Row vanished between the read and the write — treat as not_found.
+  if (!updated) return { kind: "not_found" };
   return { kind: "ok" };
 }
 

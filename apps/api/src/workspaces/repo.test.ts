@@ -14,6 +14,7 @@ import {
   listMembershipsForUser,
   listMembersWithUserInfo,
   removeMembership,
+  updateMembershipRole,
 } from "./repo";
 
 let testDb: TestDb;
@@ -181,6 +182,41 @@ describe("workspaces/repo: getWorkspaceForMember (ISH-107)", () => {
   });
 });
 
+describe("workspaces/repo: updateMembershipRole (ISH-111)", () => {
+  test("returns true and persists the new role on hit", async () => {
+    const owner = await seedUser();
+    const created = await createWorkspaceWithOwnerMembership(db, {
+      name: "Acme",
+      slug: "acme-update",
+      ownerUserId: owner.id,
+    });
+    if (created.kind !== "ok") throw new Error("seed");
+    const member = await seedUser();
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: created.workspace.id, userId: member.id, role: "member" });
+
+    const updated = await updateMembershipRole(db, created.workspace.id, member.id, "owner");
+    expect(updated).toBe(true);
+    const reloaded = await findMembership(db, created.workspace.id, member.id);
+    expect(reloaded?.role).toBe("owner");
+  });
+
+  test("returns false when no membership row matches", async () => {
+    const owner = await seedUser();
+    const created = await createWorkspaceWithOwnerMembership(db, {
+      name: "Acme",
+      slug: "acme-miss",
+      ownerUserId: owner.id,
+    });
+    if (created.kind !== "ok") throw new Error("seed");
+    const stranger = await seedUser();
+
+    const updated = await updateMembershipRole(db, created.workspace.id, stranger.id, "owner");
+    expect(updated).toBe(false);
+  });
+});
+
 describe("workspaces/repo: listMembersWithUserInfo (ISH-110)", () => {
   test("returns rows joined with user info, ordered by membership createdAt ASC", async () => {
     const owner = await seedUser("owner@x.com");
@@ -267,31 +303,39 @@ describe("workspaces/repo: removeMembership (ISH-110)", () => {
   });
 });
 
-describe("workspaces/repo: countOwnersForWorkspace (ISH-110)", () => {
-  test("returns the number of owner memberships for the workspace", async () => {
+describe("workspaces/repo: countOwnersForWorkspace (ISH-110/111)", () => {
+  test("counts only owner rows scoped to the workspace", async () => {
     const ownerA = await seedUser();
-    const created = await createWorkspaceWithOwnerMembership(db, {
-      name: "X",
-      slug: `ws-${randomUUID()}`,
+    const ownerB = await seedUser();
+    const wsA = await createWorkspaceWithOwnerMembership(db, {
+      name: "A",
+      slug: "ws-count-a",
       ownerUserId: ownerA.id,
     });
-    if (created.kind !== "ok") throw new Error("seed");
+    const wsB = await createWorkspaceWithOwnerMembership(db, {
+      name: "B",
+      slug: "ws-count-b",
+      ownerUserId: ownerB.id,
+    });
+    if (wsA.kind !== "ok" || wsB.kind !== "ok") throw new Error("seed");
 
-    expect(await countOwnersForWorkspace(db, created.workspace.id)).toBe(1);
+    expect(await countOwnersForWorkspace(db, wsA.workspace.id)).toBe(1);
+    expect(await countOwnersForWorkspace(db, wsB.workspace.id)).toBe(1);
 
-    // Add a second owner and confirm it ticks up.
-    const ownerB = await seedUser();
+    // Add a second owner to wsA — wsB count should be unaffected.
+    const second = await seedUser();
     await testDb
       .insert(memberships)
-      .values({ workspaceId: created.workspace.id, userId: ownerB.id, role: "owner" });
-    expect(await countOwnersForWorkspace(db, created.workspace.id)).toBe(2);
+      .values({ workspaceId: wsA.workspace.id, userId: second.id, role: "owner" });
+    expect(await countOwnersForWorkspace(db, wsA.workspace.id)).toBe(2);
+    expect(await countOwnersForWorkspace(db, wsB.workspace.id)).toBe(1);
 
-    // Members should not be counted.
-    const memberC = await seedUser();
+    // Members are not counted.
+    const memberOnly = await seedUser();
     await testDb
       .insert(memberships)
-      .values({ workspaceId: created.workspace.id, userId: memberC.id, role: "member" });
-    expect(await countOwnersForWorkspace(db, created.workspace.id)).toBe(2);
+      .values({ workspaceId: wsA.workspace.id, userId: memberOnly.id, role: "member" });
+    expect(await countOwnersForWorkspace(db, wsA.workspace.id)).toBe(2);
   });
 
   test("returns 0 for an unknown workspace id", async () => {

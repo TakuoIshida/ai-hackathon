@@ -8,6 +8,7 @@ import { createResendSender, loadResendConfig } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
 import { createWorkspaceInputSchema } from "@/workspaces/schemas";
 import {
+  changeMemberRole,
   createWorkspaceForUser,
   getWorkspaceForUser,
   issueInvitation,
@@ -34,6 +35,10 @@ const productionDeps: WorkspacesRouteDeps = {
 
 const inviteBodySchema = z.object({
   email: z.string().email().max(254),
+});
+
+const changeRoleBodySchema = z.object({
+  role: z.enum(["owner", "member"]),
 });
 
 export function createWorkspacesRoute(deps: WorkspacesRouteDeps = productionDeps) {
@@ -164,6 +169,26 @@ export function createWorkspacesRoute(deps: WorkspacesRouteDeps = productionDeps
     );
     if (result.kind === "forbidden") return c.json({ error: "forbidden" }, 403);
     if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
+    return c.json({ ok: true });
+  });
+
+  // ISH-111: change a member's role (owner ↔ member). Owner-only. Blocks
+  // demoting the last remaining owner with 409 last_owner so the workspace
+  // cannot end up ownerless.
+  route.patch("/:id/members/:userId", zValidator("json", changeRoleBodySchema), async (c) => {
+    const result = await changeMemberRole(
+      db,
+      getDbUser(c).id,
+      c.req.param("id"),
+      c.req.param("userId"),
+      c.req.valid("json").role,
+    );
+    if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
+    if (result.kind === "forbidden") return c.json({ error: "forbidden" }, 403);
+    if (result.kind === "last_owner") {
+      throw new HTTPException(409, { message: "last_owner" });
+    }
+    if (result.kind === "noop") return c.json({ ok: true, noop: true });
     return c.json({ ok: true });
   });
 

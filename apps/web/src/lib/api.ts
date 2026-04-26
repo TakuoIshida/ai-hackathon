@@ -7,6 +7,7 @@ import type {
   LinkDetail,
   LinkInput,
   LinkSummary,
+  MembershipRole,
   WorkspaceDetail,
   WorkspaceMember,
   WorkspaceRole,
@@ -158,6 +159,20 @@ export const api = {
     request<{ workspace: AcceptedInvitationWorkspace }>(
       `/invitations/${encodeURIComponent(token)}/accept`,
       { method: "POST", getToken },
+    ),
+
+  // ISH-111: change a member's role within a workspace. Owner-only on the
+  // server. Returns `{ ok: true }` (or `{ ok: true, noop: true }` if the new
+  // role equals the current role).
+  changeMemberRole: (
+    workspaceId: string,
+    userId: string,
+    role: MembershipRole,
+    getToken: AuthTokenGetter,
+  ) =>
+    request<{ ok: true; noop?: boolean }>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(userId)}`,
+      { method: "PATCH", body: JSON.stringify({ role }), getToken },
     ),
 };
 
