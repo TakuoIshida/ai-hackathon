@@ -48,7 +48,7 @@ function fakeAuthMiddlewares(): MiddlewareHandler[] {
     // drizzle instance, not PGlite.
     const dbUser = await ensureUserByClerkId(db, clerkId, {
       // Avoid hitting the real Clerk API: synthesize a payload from the header.
-      fetchClerkUser: async (id) => ({
+      fetchUser: async (id) => ({
         id,
         email_addresses: [{ id: "e1", email_address: `${id}@example.com` }],
         primary_email_address_id: "e1",
