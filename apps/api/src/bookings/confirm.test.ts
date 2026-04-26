@@ -12,7 +12,8 @@ import {
 } from "@/db/schema";
 import type { LinkWithRelations } from "@/links/repo";
 import { findPublishedLinkBySlug } from "@/links/repo";
-import type { EmailMessage } from "@/notifications/types";
+import { createBookingNotifier } from "@/notifications/booking-notifier";
+import type { BookingEvent, EmailMessage, SendEmailFn } from "@/notifications/types";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import {
   type ConfirmInput,
@@ -33,10 +34,36 @@ const SLOT_END_MS = SLOT_START_MS + 30 * 60_000;
 
 let testDb: TestDb;
 let sentEmails: EmailMessage[];
+let notifyCalls: BookingEvent[];
 
-const captureSendEmail = async (msg: EmailMessage) => {
+const captureSendEmail: SendEmailFn = async (msg: EmailMessage) => {
   sentEmails.push(msg);
 };
+
+/**
+ * Build a `NotificationSinks` whose `notifier` records every event it
+ * receives AND dispatches via the real `createBookingNotifier` adapter so the
+ * SendEmail pipeline + template rendering is also exercised end-to-end.
+ *
+ * Tests can therefore assert on:
+ *   - the published domain event shape (`notifyCalls[0].kind === "booking_confirmed"`)
+ *   - the rendered email envelopes (`sentEmails`)
+ * without re-implementing the templates in the test file.
+ */
+function buildNotifications(
+  sendEmail: SendEmailFn = captureSendEmail,
+  appBaseUrl = "https://app.test",
+): NotificationSinks {
+  const adapter = createBookingNotifier({ sendEmail, appBaseUrl });
+  return {
+    notifier: {
+      async notify(event) {
+        notifyCalls.push(event);
+        await adapter.notify(event);
+      },
+    },
+  };
+}
 
 type SeededLink = {
   userId: string;
@@ -144,10 +171,7 @@ function googleSinksWith(overrides: {
   };
 }
 
-const notifications: NotificationSinks = {
-  sendEmail: captureSendEmail,
-  appBaseUrl: "https://app.test",
-};
+const notifications: NotificationSinks = buildNotifications();
 
 const validInput = (): ConfirmInput => ({
   startAt: SLOT_START_ISO,
@@ -168,6 +192,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   sentEmails = [];
+  notifyCalls = [];
   await testDb.$client.exec(`
     TRUNCATE TABLE bookings, availability_excludes, availability_rules,
     availability_links, google_calendars, google_oauth_accounts, users
@@ -179,10 +204,7 @@ describe("confirmBooking — happy path without Google", () => {
   test("inserts a confirmed booking and fires both confirmation emails", async () => {
     const seed = await seedPublishedLink(testDb);
 
-    const result = await confirmBooking(db, seed.link, validInput(), noGoogleSinks, {
-      sendEmail: captureSendEmail,
-      appBaseUrl: "https://app.test",
-    });
+    const result = await confirmBooking(db, seed.link, validInput(), noGoogleSinks, notifications);
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("unexpected kind");
@@ -198,10 +220,21 @@ describe("confirmBooking — happy path without Google", () => {
     const rows = await testDb.select().from(bookings);
     expect(rows.length).toBe(1);
 
-    // Owner + guest email.
+    // ISH-123: usecase publishes a single domain event; the notifier adapter
+    // is what fans it out to owner + guest emails.
+    expect(notifyCalls.length).toBe(1);
+    const event = notifyCalls[0];
+    expect(event?.kind).toBe("booking_confirmed");
+    if (event?.kind !== "booking_confirmed") throw new Error("unexpected event kind");
+    expect(event.booking.id).toBe(result.booking.id);
+    expect(event.cancellationToken).toBe(result.booking.cancellationToken);
+    expect(event.owner.email).toBe("owner@example.com");
+    expect(event.link.title).toBe("30 min meeting");
+
+    // Owner + guest email rendered by the adapter.
     expect(sentEmails.length).toBe(2);
     expect(sentEmails.map((e) => e.to).sort()).toEqual(["guest@example.com", "owner@example.com"]);
-    // Cancel URL is built from notifications.appBaseUrl + token.
+    // Cancel URL is built from the notifier's appBaseUrl + token.
     const guestEmail = sentEmails.find((e) => e.to === "guest@example.com");
     expect(guestEmail).toBeDefined();
     expect(guestEmail?.text).toContain(
@@ -336,11 +369,32 @@ describe("confirmBooking — notifications resilience", () => {
   test("sendEmail throws — booking is still committed (best-effort policy)", async () => {
     const seed = await seedPublishedLink(testDb);
 
+    const failingNotifications = buildNotifications(async () => {
+      throw new Error("smtp boom");
+    });
+    const result = await confirmBooking(
+      db,
+      seed.link,
+      validInput(),
+      noGoogleSinks,
+      failingNotifications,
+    );
+
+    expect(result.kind).toBe("ok");
+    const rows = await testDb.select().from(bookings);
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.status).toBe("confirmed");
+  });
+
+  test("notifier.notify throws — booking is still committed (usecase swallows)", async () => {
+    const seed = await seedPublishedLink(testDb);
+
     const result = await confirmBooking(db, seed.link, validInput(), noGoogleSinks, {
-      sendEmail: async () => {
-        throw new Error("smtp boom");
+      notifier: {
+        notify: async () => {
+          throw new Error("notifier boom");
+        },
       },
-      appBaseUrl: "https://app.test",
     });
 
     expect(result.kind).toBe("ok");

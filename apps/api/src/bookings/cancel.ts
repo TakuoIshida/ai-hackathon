@@ -4,7 +4,6 @@ import { availabilityLinks } from "@/db/schema/links";
 import { deleteEvent } from "@/google/calendar";
 import { getOauthAccountByUser, listUserCalendars } from "@/google/repo";
 import { findPublishedLinkBySlug } from "@/links/repo";
-import { guestCancelEmail, ownerCancelEmail } from "@/notifications/templates";
 import { getUserById } from "@/users/usecase";
 import type { GoogleSinks, NotificationSinks } from "./confirm";
 import {
@@ -63,34 +62,27 @@ async function fireCancelSideEffects(
     }
   }
 
-  // Best-effort cancel emails.
+  // Best-effort cancel notification. Templates / transport are owned by the
+  // notifier adapter — usecase only publishes the domain event.
   try {
     const owner = await getUserById(database, link.userId);
     if (owner) {
-      const cancelUrl = `${notifications.appBaseUrl}/cancel/${booking.cancellationToken}`;
-      const ctx = {
-        linkTitle: link.title,
-        linkDescription: link.description,
-        startAt: booking.startAt,
-        endAt: booking.endAt,
-        ownerEmail: owner.email,
-        ownerName: owner.name,
-        guestEmail: booking.guestEmail,
-        guestName: booking.guestName,
-        guestNote: booking.guestNote,
-        guestTimeZone: booking.guestTimeZone,
-        ownerTimeZone: link.timeZone,
-        meetUrl: booking.meetUrl,
-        cancelUrl,
+      await notifications.notifier.notify({
+        kind: "booking_canceled",
+        booking,
+        link: {
+          id: link.id,
+          title: link.title,
+          description: link.description,
+          timeZone: link.timeZone,
+        },
+        owner: { email: owner.email, name: owner.name },
+        cancellationToken: booking.cancellationToken,
         canceledBy,
-      };
-      await Promise.all([
-        notifications.sendEmail(ownerCancelEmail(ctx)),
-        notifications.sendEmail(guestCancelEmail(ctx)),
-      ]);
+      });
     }
   } catch (err) {
-    console.warn("[cancel] cancel email send failed:", err);
+    console.warn("[cancel] cancel notification failed:", err);
   }
 }
 

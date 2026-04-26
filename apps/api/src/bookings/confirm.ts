@@ -4,8 +4,7 @@ import type { GoogleConfig } from "@/google/config";
 import { getOauthAccountByUser, listUserCalendars } from "@/google/repo";
 import { type LinkWithRelations, listLinkCoOwnerUserIds } from "@/links/repo";
 import { computePublicSlots } from "@/links/usecase";
-import { guestConfirmEmail, ownerConfirmEmail } from "@/notifications/templates";
-import type { SendEmailFn } from "@/notifications/types";
+import type { BookingNotifier } from "@/notifications/types";
 import { getUserById } from "@/users/usecase";
 import { attachGoogleEvent, type BookingRow, tryInsertConfirmedBooking } from "./repo";
 import type { BookingInput } from "./schemas";
@@ -25,9 +24,15 @@ export type GoogleSinks = {
   getAccessToken: GetAccessTokenFn;
 };
 
+/**
+ * Presentation port for booking notifications (ISH-123). The usecase only
+ * publishes domain events; the adapter (see `@/notifications/booking-notifier`)
+ * decides how to deliver them. Wrapped naming for backward compatibility with
+ * existing `NotificationSinks` callsites — the field name `notifier` keeps the
+ * dependency-shape pattern used by `GoogleSinks`.
+ */
 export type NotificationSinks = {
-  sendEmail: SendEmailFn;
-  appBaseUrl: string;
+  notifier: BookingNotifier;
 };
 
 export type ConfirmResult =
@@ -133,34 +138,28 @@ export async function confirmBooking(
     }
   }
 
-  // Best-effort email notifications. Same policy: log on failure, do not
-  // roll back the booking. ISH-91/92/93/96 — owner + guest confirm.
+  // Best-effort notification. Same policy: log on failure, do not roll back
+  // the booking. The presentation concern (templates / transport) lives in
+  // the notifier adapter — the usecase only publishes the domain event.
+  // ISH-91/92/93/96 — owner + guest confirm.
   try {
     const owner = await getUserById(database, link.userId);
     if (owner) {
-      const cancelUrl = `${notifications.appBaseUrl}/cancel/${booking.cancellationToken}`;
-      const ctx = {
-        linkTitle: link.title,
-        linkDescription: link.description,
-        startAt: booking.startAt,
-        endAt: booking.endAt,
-        ownerEmail: owner.email,
-        ownerName: owner.name,
-        guestEmail: booking.guestEmail,
-        guestName: booking.guestName,
-        guestNote: booking.guestNote,
-        guestTimeZone: booking.guestTimeZone,
-        ownerTimeZone: link.timeZone,
-        meetUrl: booking.meetUrl,
-        cancelUrl,
-      };
-      await Promise.all([
-        notifications.sendEmail(ownerConfirmEmail(ctx)),
-        notifications.sendEmail(guestConfirmEmail(ctx)),
-      ]);
+      await notifications.notifier.notify({
+        kind: "booking_confirmed",
+        booking,
+        link: {
+          id: link.id,
+          title: link.title,
+          description: link.description,
+          timeZone: link.timeZone,
+        },
+        owner: { email: owner.email, name: owner.name },
+        cancellationToken: booking.cancellationToken,
+      });
     }
   } catch (err) {
-    console.warn("[booking] confirmation email send failed:", err);
+    console.warn("[booking] confirmation notification failed:", err);
   }
 
   return { kind: "ok", booking };
