@@ -2,11 +2,11 @@ import type { db as DbClient } from "@/db/client";
 import type { CreatedEvent, EventCreateInput } from "@/google/calendar";
 import type { GoogleConfig } from "@/google/config";
 import { getOauthAccountByUser, listUserCalendars } from "@/google/repo";
-import { computePublicSlots } from "@/links/public-slots";
 import type { LinkWithRelations } from "@/links/repo";
+import { computePublicSlots } from "@/links/usecase";
 import { guestConfirmEmail, ownerConfirmEmail } from "@/notifications/templates";
 import type { SendEmailFn } from "@/notifications/types";
-import { getUserById } from "@/users/lookup";
+import { getUserById } from "@/users/usecase";
 import { attachGoogleEvent, type BookingRow, tryInsertConfirmedBooking } from "./repo";
 import type { BookingInput } from "./schemas";
 

@@ -9,29 +9,92 @@ import {
   expandWeeklyAvailability,
   type Interval,
   type Slot,
-  type Weekday,
-  type WeeklyAvailability,
 } from "@/scheduling";
-import type { LinkWithRelations } from "./repo";
+import { type LinkWithRelations, rulesToWeekly } from "./domain";
+import {
+  createLink,
+  deleteLink,
+  getLinkForUser,
+  isSlugTaken,
+  type LinkRow,
+  listLinksForUser,
+  updateLink,
+} from "./repo";
+import type { LinkInput, LinkUpdateInput } from "./schemas";
 
 type Database = typeof DbClient;
 
 const HOUR_MS = 3600 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
-export function rulesToWeekly(
-  rules: ReadonlyArray<{ weekday: number; startMinute: number; endMinute: number }>,
-): WeeklyAvailability {
-  const weekly: WeeklyAvailability = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
-  for (const r of rules) {
-    if (r.weekday < 0 || r.weekday > 6) continue;
-    weekly[r.weekday as Weekday].push({
-      startMinute: r.startMinute,
-      endMinute: r.endMinute,
-    });
-  }
-  return weekly;
+// ---------- CRUD use cases ----------
+
+export type CreateLinkResult = { kind: "ok"; link: LinkWithRelations } | { kind: "slug_taken" };
+
+export type UpdateLinkResult =
+  | { kind: "ok"; link: LinkWithRelations }
+  | { kind: "not_found" }
+  | { kind: "slug_taken" };
+
+export async function listLinks(database: Database, userId: string): Promise<LinkRow[]> {
+  return listLinksForUser(database, userId);
 }
+
+export async function getLink(
+  database: Database,
+  userId: string,
+  linkId: string,
+): Promise<LinkWithRelations | null> {
+  return getLinkForUser(database, userId, linkId);
+}
+
+export async function checkSlugAvailability(
+  database: Database,
+  slug: string,
+): Promise<{ slug: string; available: boolean }> {
+  const taken = await isSlugTaken(database, slug);
+  return { slug, available: !taken };
+}
+
+export async function createLinkForUser(
+  database: Database,
+  userId: string,
+  input: LinkInput,
+): Promise<CreateLinkResult> {
+  if (await isSlugTaken(database, input.slug)) {
+    return { kind: "slug_taken" };
+  }
+  const link = await createLink(database, userId, input);
+  return { kind: "ok", link };
+}
+
+export async function updateLinkForUser(
+  database: Database,
+  userId: string,
+  linkId: string,
+  patch: LinkUpdateInput,
+): Promise<UpdateLinkResult> {
+  if (patch.slug !== undefined) {
+    const existing = await getLinkForUser(database, userId, linkId);
+    if (!existing) return { kind: "not_found" };
+    if (existing.slug !== patch.slug && (await isSlugTaken(database, patch.slug))) {
+      return { kind: "slug_taken" };
+    }
+  }
+  const updated = await updateLink(database, userId, linkId, patch);
+  if (!updated) return { kind: "not_found" };
+  return { kind: "ok", link: updated };
+}
+
+export async function deleteLinkForUser(
+  database: Database,
+  userId: string,
+  linkId: string,
+): Promise<boolean> {
+  return deleteLink(database, userId, linkId);
+}
+
+// ---------- Public read use case (slots) ----------
 
 export type PublicSlotsParams = {
   fromMs: number;

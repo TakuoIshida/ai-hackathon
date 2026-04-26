@@ -61,3 +61,35 @@ export const WEEKDAY_LABELS: Record<Weekday, string> = {
 };
 
 export const DEFAULT_RANGE_DAYS = 60;
+
+export type BookingStatus = "confirmed" | "canceled";
+
+export type BookingSummary = {
+  id: string;
+  linkId: string;
+  linkSlug: string;
+  linkTitle: string;
+  startAt: string;
+  endAt: string;
+  guestName: string;
+  guestEmail: string;
+  status: BookingStatus;
+  meetUrl: string | null;
+  canceledAt: string | null;
+  createdAt: string;
+};
+
+export type GoogleCalendarSummary = {
+  id: string;
+  summary: string | null;
+  timeZone: string | null;
+  isPrimary: boolean;
+  usedForBusy: boolean;
+  usedForWrites: boolean;
+};
+
+export type GoogleConnection = {
+  connected: boolean;
+  accountEmail?: string;
+  calendars: GoogleCalendarSummary[];
+};

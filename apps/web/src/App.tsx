@@ -2,6 +2,7 @@ import { RedirectToSignIn, SignedIn, SignedOut } from "@clerk/clerk-react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { PublicLayout } from "@/components/layout/PublicLayout";
+import BookingDetail from "@/routes/BookingDetail";
 import Bookings from "@/routes/Bookings";
 import CancelBooking from "@/routes/CancelBooking";
 import DashboardHome from "@/routes/DashboardHome";
@@ -39,6 +40,7 @@ export default function App() {
         <Route path="links/new" element={<LinkForm />} />
         <Route path="links/:id/edit" element={<LinkForm />} />
         <Route path="bookings" element={<Bookings />} />
+        <Route path="bookings/:id" element={<BookingDetail />} />
         <Route path="settings" element={<Settings />} />
       </Route>
 

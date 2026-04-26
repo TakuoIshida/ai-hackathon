@@ -28,6 +28,17 @@ export async function createTestDb(): Promise<TestDb> {
   const client = new PGlite();
   await applyMigrations(client);
   const db = drizzle(client, { schema }) as TestDb;
+  // PGlite's drizzle adapter has no `batch` method; production uses neon-http
+  // which does. Provide a sequential shim so repo code (which assumes batch) works.
+  if (typeof (db as unknown as { batch?: unknown }).batch !== "function") {
+    Object.assign(db, {
+      batch: async (queries: ReadonlyArray<Promise<unknown>>) => {
+        const results: unknown[] = [];
+        for (const q of queries) results.push(await q);
+        return results;
+      },
+    });
+  }
   return db;
 }
 

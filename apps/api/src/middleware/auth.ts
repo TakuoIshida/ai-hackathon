@@ -1,6 +1,9 @@
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import type { Context, MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { db } from "@/db/client";
+import type { UserEntity } from "@/users/domain";
+import { ensureUserByClerkId } from "@/users/usecase";
 
 export const clerkAuth = clerkMiddleware;
 
@@ -18,4 +21,26 @@ export function getClerkUserId(c: Context): string {
     throw new HTTPException(401, { message: "unauthorized" });
   }
   return auth.userId;
+}
+
+// Hono's typed variables. Routes that mount `attachDbUser` can read
+// `c.get("dbUser")` with the correct type.
+export type AuthVars = { dbUser: UserEntity };
+
+// Resolves the Clerk user → DB user once per request and stashes it on the
+// context. Mount this AFTER `clerkAuth()` + `requireAuth` on routes that need
+// the local user record.
+export const attachDbUser: MiddlewareHandler<{ Variables: AuthVars }> = async (c, next) => {
+  const clerkId = getClerkUserId(c);
+  const dbUser = await ensureUserByClerkId(db, clerkId);
+  c.set("dbUser", dbUser);
+  await next();
+};
+
+export function getDbUser(c: Context<{ Variables: AuthVars }>): UserEntity {
+  const dbUser = c.get("dbUser");
+  if (!dbUser) {
+    throw new HTTPException(500, { message: "dbUser missing — attachDbUser not mounted" });
+  }
+  return dbUser;
 }
