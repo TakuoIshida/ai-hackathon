@@ -6,28 +6,31 @@ import { z } from "zod";
 import { db } from "@/db/client";
 import { listCalendars } from "@/google/calendar";
 import { loadGoogleConfig } from "@/google/config";
+import { exchangeCodeForTokens, fetchUserInfo, revokeToken } from "@/google/oauth";
+import { getOauthAccountByUser, listUserCalendars, syncCalendars } from "@/google/repo";
 import {
-  buildAuthUrl,
-  exchangeCodeForTokens,
-  fetchUserInfo,
-  hasRequiredScopes,
-  revokeToken,
-} from "@/google/oauth";
-import {
-  deleteOauthAccount,
-  getOauthAccountByUser,
-  listUserCalendars,
-  syncCalendars,
-} from "@/google/repo";
-import {
-  decryptOauthRefreshToken,
+  buildOauthAuthUrl,
+  completeOauthCallback,
+  disconnectGoogleAccount,
+  type OauthSinks,
   updateCalendarFlagsForUser,
-  upsertOauthAccountWithEncryption,
 } from "@/google/usecase";
 import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
 
 const STATE_COOKIE = "google_oauth_state";
 const STATE_TTL_SECONDS = 600;
+
+// Real Google ports wired here so the route stays a thin orchestration layer.
+// Tests for the OAuth flow live in @/google/usecase.test.ts and inject fakes
+// directly — the route layer only sees the parsed request, cookies, and the
+// usecase result.
+const oauthSinks: OauthSinks = {
+  exchangeCodeForTokens,
+  fetchUserInfo,
+  listCalendars,
+  syncCalendars,
+  revokeToken,
+};
 
 export const googleRoute = new Hono<{ Variables: AuthVars }>();
 
@@ -45,7 +48,7 @@ googleRoute.get("/connect", (c) => {
     maxAge: STATE_TTL_SECONDS,
     path: "/",
   });
-  return c.redirect(buildAuthUrl(cfg, state));
+  return c.redirect(buildOauthAuthUrl(cfg, state));
 });
 
 googleRoute.get("/callback", async (c) => {
@@ -53,57 +56,41 @@ googleRoute.get("/callback", async (c) => {
   const queryState = c.req.query("state");
   deleteCookie(c, STATE_COOKIE, { path: "/" });
 
-  if (!cookieState || !queryState || cookieState !== queryState) {
-    return c.json({ error: "invalid_state" }, 400);
-  }
-  const code = c.req.query("code");
-  if (!code) return c.json({ error: "missing_code" }, 400);
-
   const cfg = loadGoogleConfig();
-  const tokens = await exchangeCodeForTokens(cfg, code);
-  if (!tokens.refreshToken) {
-    return c.json({ error: "missing_refresh_token", hint: "force re-consent" }, 400);
-  }
-  if (!hasRequiredScopes(tokens.scope)) {
-    return c.json({ error: "missing_scopes" }, 400);
-  }
-
-  const userInfo = await fetchUserInfo(tokens.accessToken);
   const dbUser = getDbUser(c);
-
-  const account = await upsertOauthAccountWithEncryption(
+  const result = await completeOauthCallback(
     db,
+    cfg,
     {
+      cookieState,
+      queryState,
+      code: c.req.query("code"),
       userId: dbUser.id,
-      googleUserId: userInfo.sub,
-      email: userInfo.email,
-      refreshToken: tokens.refreshToken,
-      accessToken: tokens.accessToken,
-      accessTokenExpiresAt: new Date(Date.now() + tokens.expiresInSeconds * 1000),
-      scope: tokens.scope,
     },
-    cfg.encryptionKey,
+    oauthSinks,
   );
 
-  const calendarList = await listCalendars(tokens.accessToken);
-  await syncCalendars(db, account.id, calendarList);
-
-  return c.redirect(`${cfg.appBaseUrl}/dashboard/settings?google_connected=1`);
+  switch (result.kind) {
+    case "invalid_state":
+      return c.json({ error: "invalid_state" }, 400);
+    case "missing_code":
+      return c.json({ error: "missing_code" }, 400);
+    case "missing_refresh_token":
+      return c.json({ error: "missing_refresh_token", hint: "force re-consent" }, 400);
+    case "missing_scopes":
+      return c.json({ error: "missing_scopes" }, 400);
+    case "ok":
+      return c.redirect(result.redirectTo);
+  }
 });
 
 googleRoute.post("/disconnect", async (c) => {
   const cfg = loadGoogleConfig();
   const dbUser = getDbUser(c);
-  const account = await getOauthAccountByUser(db, dbUser.id);
-  if (!account) return c.json({ ok: true, alreadyDisconnected: true });
-
-  try {
-    const refresh = decryptOauthRefreshToken(account, cfg.encryptionKey);
-    await revokeToken(refresh);
-  } catch (err) {
-    console.warn("[google] revoke failed (will still delete row):", err);
+  const result = await disconnectGoogleAccount(db, cfg, dbUser.id, oauthSinks);
+  if (result.kind === "already_disconnected") {
+    return c.json({ ok: true, alreadyDisconnected: true });
   }
-  await deleteOauthAccount(db, dbUser.id, account.googleUserId);
   return c.json({ ok: true });
 });
 

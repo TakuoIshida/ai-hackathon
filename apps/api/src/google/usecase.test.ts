@@ -5,9 +5,16 @@ import { clearDbForTests, db, setDbForTests } from "@/db/client";
 import { googleCalendars, googleOauthAccounts } from "@/db/schema/google";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
-import { findCalendarById } from "./repo";
+import type { CalendarListItem } from "./calendar";
+import type { GoogleConfig } from "./config";
+import type { GoogleUserInfo, TokenResponse } from "./oauth";
+import { findCalendarById, getOauthAccountByUser } from "./repo";
 import {
+  buildOauthAuthUrl,
+  completeOauthCallback,
   decryptOauthRefreshToken,
+  disconnectGoogleAccount,
+  type OauthSinks,
   setCalendarFlags,
   updateCalendarFlagsForUser,
   upsertOauthAccountWithEncryption,
@@ -325,5 +332,451 @@ describe("google/usecase: updateCalendarFlagsForUser", () => {
     const primary = await findCalendarById(db, calendarId);
     expect(primary?.usedForWrites).toBe(false);
     if (result.kind === "ok") expect(result.calendar.usedForWrites).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OAuth flow usecases (ISH-127)
+// ---------------------------------------------------------------------------
+
+const TEST_CFG: GoogleConfig = {
+  clientId: "client-abc.apps.googleusercontent.com",
+  clientSecret: "secret-xyz",
+  redirectUri: "https://example.com/api/google/callback",
+  encryptionKey: randomBytes(32),
+  appBaseUrl: "https://app.example.com",
+};
+
+const okTokens: TokenResponse = {
+  accessToken: "ya29.fresh",
+  refreshToken: "1//refresh-secret",
+  expiresInSeconds: 3599,
+  scope: [
+    "openid",
+    "email",
+    "profile",
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+  ].join(" "),
+  idToken: "id-jwt",
+};
+
+const okUserInfo: GoogleUserInfo = {
+  sub: "g-sub-12345",
+  email: "owner@example.com",
+  name: "Owner",
+};
+
+const okCalendarList: CalendarListItem[] = [
+  { id: "primary@example.com", summary: "Primary", primary: true, timeZone: "Asia/Tokyo" },
+  { id: "team@example.com", summary: "Team", primary: false, timeZone: "Asia/Tokyo" },
+];
+
+type SinkOverrides = Partial<OauthSinks>;
+
+function makeSinks(overrides: SinkOverrides = {}): {
+  sinks: OauthSinks;
+  calls: {
+    exchange: number;
+    userinfo: number;
+    listCalendars: number;
+    syncCalendars: number;
+    revoke: string[];
+  };
+} {
+  const calls = {
+    exchange: 0,
+    userinfo: 0,
+    listCalendars: 0,
+    syncCalendars: 0,
+    revoke: [] as string[],
+  };
+  const sinks: OauthSinks = {
+    exchangeCodeForTokens:
+      overrides.exchangeCodeForTokens ??
+      (async () => {
+        calls.exchange++;
+        return okTokens;
+      }),
+    fetchUserInfo:
+      overrides.fetchUserInfo ??
+      (async () => {
+        calls.userinfo++;
+        return okUserInfo;
+      }),
+    listCalendars:
+      overrides.listCalendars ??
+      (async () => {
+        calls.listCalendars++;
+        return okCalendarList;
+      }),
+    syncCalendars:
+      overrides.syncCalendars ??
+      (async () => {
+        calls.syncCalendars++;
+      }),
+    revokeToken:
+      overrides.revokeToken ??
+      (async (token: string) => {
+        calls.revoke.push(token);
+      }),
+  };
+  return { sinks, calls };
+}
+
+describe("google/usecase: buildOauthAuthUrl", () => {
+  test("builds Google consent URL with state and required params", () => {
+    const url = new URL(buildOauthAuthUrl(TEST_CFG, "state-token-xyz"));
+    expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
+    expect(url.searchParams.get("client_id")).toBe(TEST_CFG.clientId);
+    expect(url.searchParams.get("redirect_uri")).toBe(TEST_CFG.redirectUri);
+    expect(url.searchParams.get("state")).toBe("state-token-xyz");
+    expect(url.searchParams.get("access_type")).toBe("offline");
+    expect(url.searchParams.get("prompt")).toBe("consent");
+  });
+});
+
+describe("google/usecase: completeOauthCallback", () => {
+  test("invalid_state when cookie/query mismatch", async () => {
+    const u = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u@example.com",
+      name: null,
+    });
+    const { sinks, calls } = makeSinks();
+    const result = await completeOauthCallback(
+      db,
+      TEST_CFG,
+      { cookieState: "a", queryState: "b", code: "code-1", userId: u.id },
+      sinks,
+    );
+    expect(result.kind).toBe("invalid_state");
+    // No side effects on bad state
+    expect(calls.exchange).toBe(0);
+    expect(calls.userinfo).toBe(0);
+  });
+
+  test("invalid_state when cookie is missing", async () => {
+    const u = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u@example.com",
+      name: null,
+    });
+    const { sinks } = makeSinks();
+    const result = await completeOauthCallback(
+      db,
+      TEST_CFG,
+      { cookieState: undefined, queryState: "b", code: "code-1", userId: u.id },
+      sinks,
+    );
+    expect(result.kind).toBe("invalid_state");
+  });
+
+  test("missing_code when state matches but code is absent", async () => {
+    const u = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u@example.com",
+      name: null,
+    });
+    const { sinks } = makeSinks();
+    const result = await completeOauthCallback(
+      db,
+      TEST_CFG,
+      { cookieState: "s", queryState: "s", code: undefined, userId: u.id },
+      sinks,
+    );
+    expect(result.kind).toBe("missing_code");
+  });
+
+  test("missing_refresh_token when Google omits refresh_token", async () => {
+    const u = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u@example.com",
+      name: null,
+    });
+    const { sinks } = makeSinks({
+      exchangeCodeForTokens: async () => ({ ...okTokens, refreshToken: undefined }),
+    });
+    const result = await completeOauthCallback(
+      db,
+      TEST_CFG,
+      { cookieState: "s", queryState: "s", code: "code-1", userId: u.id },
+      sinks,
+    );
+    expect(result.kind).toBe("missing_refresh_token");
+  });
+
+  test("missing_scopes when granted scope set is incomplete", async () => {
+    const u = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u@example.com",
+      name: null,
+    });
+    const { sinks } = makeSinks({
+      exchangeCodeForTokens: async () => ({ ...okTokens, scope: "openid email" }),
+    });
+    const result = await completeOauthCallback(
+      db,
+      TEST_CFG,
+      { cookieState: "s", queryState: "s", code: "code-1", userId: u.id },
+      sinks,
+    );
+    expect(result.kind).toBe("missing_scopes");
+  });
+
+  test("ok: persists oauth account, runs initial calendar sync, returns redirect URL", async () => {
+    const u = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u@example.com",
+      name: null,
+    });
+    const { sinks, calls } = makeSinks();
+    const result = await completeOauthCallback(
+      db,
+      TEST_CFG,
+      { cookieState: "s", queryState: "s", code: "code-1", userId: u.id },
+      sinks,
+    );
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.redirectTo).toBe(`${TEST_CFG.appBaseUrl}/dashboard/settings?google_connected=1`);
+    expect(result.account.userId).toBe(u.id);
+    expect(result.account.googleUserId).toBe(okUserInfo.sub);
+    expect(result.account.email).toBe(okUserInfo.email);
+
+    // Side effects fired in order
+    expect(calls.exchange).toBe(1);
+    expect(calls.userinfo).toBe(1);
+    expect(calls.listCalendars).toBe(1);
+    expect(calls.syncCalendars).toBe(1);
+
+    // Account row exists in DB
+    const stored = await getOauthAccountByUser(db, u.id);
+    expect(stored?.googleUserId).toBe(okUserInfo.sub);
+  });
+
+  test("ok even when initial calendar sync throws (best-effort)", async () => {
+    const u = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u@example.com",
+      name: null,
+    });
+    const { sinks } = makeSinks({
+      listCalendars: async () => {
+        throw new Error("calendarList 503");
+      },
+    });
+    const result = await completeOauthCallback(
+      db,
+      TEST_CFG,
+      { cookieState: "s", queryState: "s", code: "code-1", userId: u.id },
+      sinks,
+    );
+    expect(result.kind).toBe("ok");
+    // The row is still persisted
+    const stored = await getOauthAccountByUser(db, u.id);
+    expect(stored?.googleUserId).toBe(okUserInfo.sub);
+  });
+
+  test("upsert: re-running callback for the same google user updates the row", async () => {
+    const u = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u@example.com",
+      name: null,
+    });
+    const { sinks: s1 } = makeSinks();
+    const r1 = await completeOauthCallback(
+      db,
+      TEST_CFG,
+      { cookieState: "s", queryState: "s", code: "code-1", userId: u.id },
+      s1,
+    );
+    expect(r1.kind).toBe("ok");
+
+    const { sinks: s2 } = makeSinks({
+      exchangeCodeForTokens: async () => ({
+        ...okTokens,
+        accessToken: "ya29.second",
+        refreshToken: "1//refresh-second",
+      }),
+    });
+    const r2 = await completeOauthCallback(
+      db,
+      TEST_CFG,
+      { cookieState: "s2", queryState: "s2", code: "code-2", userId: u.id },
+      s2,
+    );
+    expect(r2.kind).toBe("ok");
+
+    // Still exactly one row
+    const rows = await testDb.select().from(googleOauthAccounts);
+    expect(rows.filter((r) => r.userId === u.id).length).toBe(1);
+    const reloaded = await getOauthAccountByUser(db, u.id);
+    expect(reloaded?.accessToken).toBe("ya29.second");
+  });
+});
+
+describe("google/usecase: disconnectGoogleAccount", () => {
+  test("already_disconnected when no oauth row exists", async () => {
+    const u = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u@example.com",
+      name: null,
+    });
+    const { sinks, calls } = makeSinks();
+    const result = await disconnectGoogleAccount(db, TEST_CFG, u.id, sinks);
+    expect(result.kind).toBe("already_disconnected");
+    expect(calls.revoke.length).toBe(0);
+  });
+
+  test("ok: revokes refresh token and deletes the row", async () => {
+    const u = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u@example.com",
+      name: null,
+    });
+    await upsertOauthAccountWithEncryption(
+      db,
+      {
+        userId: u.id,
+        googleUserId: `g_${randomUUID()}`,
+        email: "u@example.com",
+        refreshToken: "1//to-be-revoked",
+        accessToken: "ya29.x",
+        accessTokenExpiresAt: new Date(Date.now() + 3600_000),
+        scope: "openid email",
+      },
+      TEST_CFG.encryptionKey,
+    );
+    const { sinks, calls } = makeSinks();
+
+    const result = await disconnectGoogleAccount(db, TEST_CFG, u.id, sinks);
+    expect(result.kind).toBe("ok");
+    // The decrypted refresh token was passed to revoke
+    expect(calls.revoke).toEqual(["1//to-be-revoked"]);
+    // Row is gone
+    const reloaded = await getOauthAccountByUser(db, u.id);
+    expect(reloaded).toBeNull();
+  });
+
+  test("ok: still deletes row when revoke throws (best-effort)", async () => {
+    const u = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u@example.com",
+      name: null,
+    });
+    await upsertOauthAccountWithEncryption(
+      db,
+      {
+        userId: u.id,
+        googleUserId: `g_${randomUUID()}`,
+        email: "u@example.com",
+        refreshToken: "1//flaky",
+        accessToken: "ya29.x",
+        accessTokenExpiresAt: new Date(Date.now() + 3600_000),
+        scope: "openid email",
+      },
+      TEST_CFG.encryptionKey,
+    );
+    const { sinks } = makeSinks({
+      revokeToken: async () => {
+        throw new Error("Google revoke 500");
+      },
+    });
+
+    const result = await disconnectGoogleAccount(db, TEST_CFG, u.id, sinks);
+    expect(result.kind).toBe("ok");
+    const reloaded = await getOauthAccountByUser(db, u.id);
+    expect(reloaded).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E2E-style: drive the full callback flow with a fake fetch wired through the
+// REAL oauth/calendar modules. Proves the ports adapter contract holds and
+// guards against regressions in the URL contract or response mapping.
+// ---------------------------------------------------------------------------
+describe("google/usecase: completeOauthCallback (real adapters + fake fetch)", () => {
+  test("token exchange + userinfo + calendarList all wired correctly", async () => {
+    const u = await insertUser(db, {
+      clerkId: `c_${randomUUID()}`,
+      email: "u@example.com",
+      name: null,
+    });
+
+    const seenUrls: string[] = [];
+    const fakeFetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = typeof input === "string" ? input : (input as URL | Request).toString();
+      seenUrls.push(url);
+      if (url.startsWith("https://oauth2.googleapis.com/token")) {
+        return new Response(
+          JSON.stringify({
+            access_token: "ya29.real",
+            refresh_token: "1//real-refresh",
+            expires_in: 3599,
+            scope: okTokens.scope,
+            token_type: "Bearer",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.startsWith("https://www.googleapis.com/oauth2/v3/userinfo")) {
+        return new Response(JSON.stringify(okUserInfo), { status: 200 });
+      }
+      if (url.startsWith("https://www.googleapis.com/calendar/v3/users/me/calendarList")) {
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: "primary@example.com",
+                summary: "Primary",
+                primary: true,
+                timeZone: "Asia/Tokyo",
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected url ${url}`);
+    }) as typeof fetch;
+
+    // Wire the real adapters but route every fetch through the fake.
+    const oauthMod = await import("./oauth");
+    const calMod = await import("./calendar");
+    const repoMod = await import("./repo");
+    const sinks: OauthSinks = {
+      exchangeCodeForTokens: (cfg, code) => oauthMod.exchangeCodeForTokens(cfg, code, fakeFetch),
+      fetchUserInfo: (token) => oauthMod.fetchUserInfo(token, fakeFetch),
+      revokeToken: (token) => oauthMod.revokeToken(token, fakeFetch),
+      listCalendars: (token) => calMod.listCalendars(token, fakeFetch),
+      syncCalendars: repoMod.syncCalendars,
+    };
+
+    const result = await completeOauthCallback(
+      db,
+      TEST_CFG,
+      { cookieState: "s", queryState: "s", code: "code-real", userId: u.id },
+      sinks,
+    );
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+
+    expect(seenUrls.some((u) => u.startsWith("https://oauth2.googleapis.com/token"))).toBe(true);
+    expect(
+      seenUrls.some((u) => u.startsWith("https://www.googleapis.com/oauth2/v3/userinfo")),
+    ).toBe(true);
+    expect(
+      seenUrls.some((u) =>
+        u.startsWith("https://www.googleapis.com/calendar/v3/users/me/calendarList"),
+      ),
+    ).toBe(true);
+
+    const stored = await getOauthAccountByUser(db, u.id);
+    expect(stored?.accessToken).toBe("ya29.real");
+
+    // Calendar row was synced
+    const cals = await testDb.select().from(googleCalendars);
+    expect(cals.find((c) => c.googleCalendarId === "primary@example.com")).toBeTruthy();
   });
 });
