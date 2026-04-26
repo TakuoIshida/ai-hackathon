@@ -23,6 +23,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       listMembers: vi.fn(),
       removeMember: vi.fn(),
+      // MemberRoleSelect is embedded inline; the integration test surface
+      // doesn't trigger role change events, but we stub the method so any
+      // accidental render-time access is a no-op rather than undefined.
+      changeMemberRole: vi.fn(),
     },
   };
 });
@@ -76,9 +80,13 @@ describe("<WorkspaceMembers /> list rendering", () => {
     // memberB has no name → falls back to email as the title
     const matches = screen.getAllByText("b@example.com");
     expect(matches.length).toBeGreaterThan(0);
-    // role badges
-    expect(screen.getByText("owner")).toBeInTheDocument();
-    expect(screen.getAllByText("member").length).toBe(2);
+    // Owner self is shown as a read-only badge (cannot edit own role here).
+    expect(screen.getByTestId("role-badge")).toHaveTextContent("owner");
+    // The two non-self rows render editable role selects, each defaulting to
+    // "member" (the current role). MemberRoleSelect labels the select as "role".
+    const selects = screen.getAllByLabelText("role");
+    expect(selects).toHaveLength(2);
+    expect(selects.every((s) => (s as HTMLSelectElement).value === "member")).toBe(true);
   });
 
   test("shows an empty-state when there are no members", async () => {
