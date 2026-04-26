@@ -109,11 +109,28 @@ describe("refreshAccessToken", () => {
 });
 
 describe("revokeToken", () => {
-  test("posts to revoke endpoint and tolerates 400", async () => {
-    const { fetch: f, calls } = recordingFetch(() => new Response("", { status: 400 }));
+  test("posts to revoke endpoint with form-encoded body on 200", async () => {
+    const { fetch: f, calls } = recordingFetch(() => new Response("", { status: 200 }));
     await revokeToken("token-x", f);
     expect(calls[0]?.url).toBe("https://oauth2.googleapis.com/revoke");
+    expect(calls[0]?.init?.method).toBe("POST");
+    expect((calls[0]?.init?.headers as Record<string, string>)?.["Content-Type"]).toBe(
+      "application/x-www-form-urlencoded",
+    );
     expect(String(calls[0]?.init?.body)).toContain("token=token-x");
+  });
+
+  // Google returns 400 when the token has already been revoked / is invalid;
+  // we treat that as success so the local cleanup can proceed. Pinning the
+  // contract here so a regression breaks loudly.
+  test("tolerates 400 (already revoked / invalid token)", async () => {
+    const { fetch: f } = recordingFetch(() => new Response("invalid_token", { status: 400 }));
+    await expect(revokeToken("token-x", f)).resolves.toBeUndefined();
+  });
+
+  test("throws on other non-2xx (e.g. 500)", async () => {
+    const { fetch: f } = recordingFetch(() => new Response("oops", { status: 500 }));
+    await expect(revokeToken("token-x", f)).rejects.toThrow(/500/);
   });
 });
 
