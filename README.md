@@ -38,7 +38,7 @@ cp .env.example apps/web/.env        # fill VITE_*
 ## Run (local, no Docker)
 
 ```bash
-bun run dev          # starts web (5173) + api (8787) in parallel
+bun run dev          # starts web (6173) + api (8787) in parallel
 bun run typecheck    # tsc across both apps
 ```
 
@@ -89,7 +89,7 @@ On CI the dev servers are launched fresh.
 # write .env at repo root with DATABASE_URL, CLERK_*, VITE_*
 docker compose up --build
 # api  → http://localhost:8787
-# web  → http://localhost:5173
+# web  → http://localhost:6173
 ```
 
 ## Database (Drizzle + Neon)

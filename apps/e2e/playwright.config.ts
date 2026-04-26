@@ -11,7 +11,7 @@ export default defineConfig({
   reporter: isCI ? [["github"], ["blob"]] : [["list"], ["html", { open: "never" }]],
 
   use: {
-    baseURL: "http://localhost:5173",
+    baseURL: "http://localhost:6173",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
@@ -37,7 +37,7 @@ export default defineConfig({
       // workflow before this server starts, so we serve the production bundle
       // via `vite preview` instead of running a fresh dev build per shard.
       command: isCI ? "bun run --filter @app/web preview" : "bun run --filter @app/web dev",
-      url: "http://localhost:5173",
+      url: "http://localhost:6173",
       cwd: "../..",
       reuseExistingServer: !isCI,
       timeout: 30_000,

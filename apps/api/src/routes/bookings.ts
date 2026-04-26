@@ -37,7 +37,7 @@ const productionDeps: BookingsRouteDeps = {
   createEvent,
   getAccessToken: getValidAccessToken,
   sendEmail: productionSendEmail(),
-  appBaseUrl: process.env.APP_BASE_URL ?? "http://localhost:5173",
+  appBaseUrl: process.env.APP_BASE_URL ?? "http://localhost:6173",
 };
 
 export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): Hono {

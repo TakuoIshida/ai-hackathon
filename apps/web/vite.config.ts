@@ -12,10 +12,10 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: 6173,
   },
   preview: {
-    port: 5173,
+    port: 6173,
     strictPort: true,
   },
   test: {
