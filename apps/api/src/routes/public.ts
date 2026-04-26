@@ -8,8 +8,8 @@ import { db } from "@/db/client";
 import { getValidAccessToken } from "@/google/access-token";
 import { createEvent } from "@/google/calendar";
 import { type GoogleConfig, loadGoogleConfig } from "@/google/config";
-import { computePublicSlots } from "@/links/public-slots";
 import { findPublishedLinkBySlug } from "@/links/repo";
+import { computePublicSlots } from "@/links/usecase";
 import { createResendSender, loadResendConfig } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
 

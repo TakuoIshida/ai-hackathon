@@ -8,10 +8,9 @@ import { availabilityLinks } from "@/db/schema/links";
 import { getValidAccessToken } from "@/google/access-token";
 import { createEvent } from "@/google/calendar";
 import { type GoogleConfig, loadGoogleConfig } from "@/google/config";
-import { clerkAuth, getClerkUserId, requireAuth } from "@/middleware/auth";
+import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
 import { createResendSender, loadResendConfig } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
-import { ensureUserByClerkId } from "@/users/lookup";
 
 export type BookingsRouteDeps = {
   loadCfg: () => GoogleConfig | null;
@@ -40,14 +39,17 @@ const productionDeps: BookingsRouteDeps = {
   appBaseUrl: process.env.APP_BASE_URL ?? "http://localhost:6173",
 };
 
-export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): Hono {
-  const route = new Hono();
+export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): Hono<{
+  Variables: AuthVars;
+}> {
+  const route = new Hono<{ Variables: AuthVars }>();
   route.use("*", clerkAuth());
   route.use("*", requireAuth);
+  route.use("*", attachDbUser);
 
   // List all bookings owned by the authed user.
   route.get("/", async (c) => {
-    const dbUser = await ensureUserByClerkId(db, getClerkUserId(c));
+    const dbUser = getDbUser(c);
     // Subquery: link IDs owned by this user.
     const ownedLinks = await db
       .select({
@@ -85,7 +87,7 @@ export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): H
 
   // Owner-side cancel.
   route.delete("/:id", async (c) => {
-    const dbUser = await ensureUserByClerkId(db, getClerkUserId(c));
+    const dbUser = getDbUser(c);
     const result = await cancelBookingByOwner(
       db,
       c.req.param("id"),

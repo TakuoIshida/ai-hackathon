@@ -5,7 +5,7 @@ import { deleteEvent } from "@/google/calendar";
 import { getOauthAccountByUser, listUserCalendars } from "@/google/repo";
 import { findPublishedLinkBySlug } from "@/links/repo";
 import { guestCancelEmail, ownerCancelEmail } from "@/notifications/templates";
-import { getUserById } from "@/users/lookup";
+import { getUserById } from "@/users/usecase";
 import type { GoogleSinks, NotificationSinks } from "./confirm";
 import {
   type BookingRow,

@@ -19,16 +19,16 @@ import {
   syncCalendars,
   upsertOauthAccount,
 } from "@/google/repo";
-import { clerkAuth, getClerkUserId, requireAuth } from "@/middleware/auth";
-import { ensureUserByClerkId, getUserByClerkId } from "@/users/lookup";
+import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
 
 const STATE_COOKIE = "google_oauth_state";
 const STATE_TTL_SECONDS = 600;
 
-export const googleRoute = new Hono();
+export const googleRoute = new Hono<{ Variables: AuthVars }>();
 
 googleRoute.use("*", clerkAuth());
 googleRoute.use("*", requireAuth);
+googleRoute.use("*", attachDbUser);
 
 googleRoute.get("/connect", (c) => {
   const cfg = loadGoogleConfig();
@@ -64,7 +64,7 @@ googleRoute.get("/callback", async (c) => {
   }
 
   const userInfo = await fetchUserInfo(tokens.accessToken);
-  const dbUser = await ensureUserByClerkId(db, getClerkUserId(c));
+  const dbUser = getDbUser(c);
 
   const account = await upsertOauthAccount(db, {
     userId: dbUser.id,
@@ -85,8 +85,7 @@ googleRoute.get("/callback", async (c) => {
 
 googleRoute.post("/disconnect", async (c) => {
   const cfg = loadGoogleConfig();
-  const dbUser = await getUserByClerkId(db, getClerkUserId(c));
-  if (!dbUser) return c.json({ error: "user_not_found" }, 404);
+  const dbUser = getDbUser(c);
   const account = await getOauthAccountByUser(db, dbUser.id);
   if (!account) return c.json({ ok: true, alreadyDisconnected: true });
 
@@ -101,8 +100,7 @@ googleRoute.post("/disconnect", async (c) => {
 });
 
 googleRoute.get("/calendars", async (c) => {
-  const dbUser = await getUserByClerkId(db, getClerkUserId(c));
-  if (!dbUser) return c.json({ error: "user_not_found" }, 404);
+  const dbUser = getDbUser(c);
   const account = await getOauthAccountByUser(db, dbUser.id);
   if (!account) return c.json({ connected: false, calendars: [] });
   const calendars = await listUserCalendars(db, account.id);

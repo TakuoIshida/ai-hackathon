@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { buildDisplayName, type ClerkUserPayload, pickPrimaryEmail } from "./sync";
+import {
+  buildDisplayName,
+  type ClerkUserPayload,
+  deriveUserAttributes,
+  pickPrimaryEmail,
+} from "./domain";
 
 const payload = (overrides: Partial<ClerkUserPayload> = {}): ClerkUserPayload => ({
   id: "user_123",
@@ -54,5 +59,23 @@ describe("buildDisplayName", () => {
   });
   test("returns null when both are missing", () => {
     expect(buildDisplayName(payload())).toBeNull();
+  });
+});
+
+describe("deriveUserAttributes", () => {
+  test("derives email and name from a complete payload", () => {
+    const attrs = deriveUserAttributes(
+      payload({
+        primary_email_address_id: "e1",
+        email_addresses: [{ id: "e1", email_address: "a@b.com" }],
+        first_name: "Hana",
+        last_name: "Ko",
+      }),
+    );
+    expect(attrs).toEqual({ clerkId: "user_123", email: "a@b.com", name: "Hana Ko" });
+  });
+
+  test("throws when no email is available", () => {
+    expect(() => deriveUserAttributes(payload())).toThrow(/no email addresses/);
   });
 });
