@@ -103,7 +103,7 @@ export default function WorkspaceDetailRoute() {
               <CardDescription>メンバー管理は今後のアップデートで対応します。</CardDescription>
             </CardHeader>
             <CardBody>
-              <p {...stylex.props(styles.empty)}>メンバー数: 1 (あなた)</p>
+              <p {...stylex.props(styles.empty)}>メンバー一覧 UI は ISH-110 で対応予定。</p>
             </CardBody>
           </Card>
         </>
