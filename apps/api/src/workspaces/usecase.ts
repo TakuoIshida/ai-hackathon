@@ -2,12 +2,15 @@ import type { db as DbClient } from "@/db/client";
 import { workspaceInviteEmail } from "@/notifications/templates";
 import type { SendEmailFn } from "@/notifications/types";
 import {
+  acceptInvitationAtomic,
   createInvitation,
   deleteInvitation,
+  findInvitationByToken,
   findMembership,
   findOpenInvitationForEmail,
   findWorkspaceById,
   type InvitationRow,
+  type WorkspaceRow,
 } from "./repo";
 
 type Database = typeof DbClient;
@@ -96,4 +99,60 @@ export async function revokeInvitation(
   if (!existing) return { kind: "not_found" };
   await deleteInvitation(database, existing.id);
   return { kind: "ok" };
+}
+
+// ISH-109: invitation acceptance.
+
+export type AcceptInvitationDeps = {
+  // override-able for tests; defaults to Date.now()
+  now?: () => number;
+};
+
+export type AcceptInvitationResult =
+  | { kind: "ok"; workspace: WorkspaceRow }
+  | { kind: "not_found" }
+  | { kind: "expired" }
+  | { kind: "already_accepted" }
+  | { kind: "email_mismatch" };
+
+/**
+ * Accept a workspace invitation. The caller is the authenticated invitee
+ * (resolved by Clerk + attachDbUser); we re-check that their email matches
+ * the invitation row case-insensitively so a different signed-in user can't
+ * redeem someone else's link.
+ *
+ * Idempotent: if the user is already a member of the workspace (e.g. they
+ * were added directly before clicking accept), we still mark the invitation
+ * as accepted so it can no longer be re-used, but we don't double-insert
+ * the membership (handled at the repo layer via ON CONFLICT DO NOTHING).
+ */
+export async function acceptInvitation(
+  database: Database,
+  callerUserId: string,
+  callerEmail: string,
+  token: string,
+  deps?: AcceptInvitationDeps,
+): Promise<AcceptInvitationResult> {
+  const invitation = await findInvitationByToken(database, token);
+  if (!invitation) return { kind: "not_found" };
+  if (invitation.acceptedAt !== null) return { kind: "already_accepted" };
+
+  const now = deps?.now?.() ?? Date.now();
+  if (invitation.expiresAt.getTime() < now) return { kind: "expired" };
+
+  if (invitation.email.toLowerCase() !== callerEmail.toLowerCase()) {
+    return { kind: "email_mismatch" };
+  }
+
+  const workspace = await findWorkspaceById(database, invitation.workspaceId);
+  if (!workspace) return { kind: "not_found" };
+
+  await acceptInvitationAtomic(database, {
+    invitationId: invitation.id,
+    userId: callerUserId,
+    workspaceId: invitation.workspaceId,
+    now: new Date(now),
+  });
+
+  return { kind: "ok", workspace };
 }
