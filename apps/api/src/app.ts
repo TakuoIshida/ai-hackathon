@@ -8,6 +8,7 @@ import { googleRoute } from "@/routes/google";
 import { linksRoute } from "@/routes/links";
 import { meRoute } from "@/routes/me";
 import { publicRoute } from "@/routes/public";
+import { workspacesRoute } from "@/routes/workspaces";
 
 export const app = new Hono();
 
@@ -34,6 +35,7 @@ app.route("/me", meRoute);
 app.route("/google", googleRoute);
 app.route("/links", linksRoute);
 app.route("/bookings", bookingsRoute);
+app.route("/workspaces", workspacesRoute);
 app.route("/public", publicRoute);
 app.route("/webhooks", clerkWebhookRoute);
 
