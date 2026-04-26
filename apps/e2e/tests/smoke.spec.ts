@@ -10,10 +10,10 @@ test.describe("smoke", () => {
     await expect(page.getByText(/Google Calendar と連携/)).toBeVisible();
   });
 
-  test("public booking page renders given an arbitrary slug", async ({ page }) => {
+  test("public booking page surfaces the not_found shell when API is absent", async ({ page }) => {
     await page.goto("/intro-30min");
-    // The slug page is wired even before backend data exists; the heading echoes the slug.
-    await expect(page.getByRole("heading", { level: 1, name: "intro-30min" })).toBeVisible();
+    // No API in the e2e env, so the booking page falls through to its 404 card.
+    await expect(page.getByText("リンクが見つかりません")).toBeVisible();
   });
 
   test("unknown nested path falls through to the 404 page", async ({ page }) => {
