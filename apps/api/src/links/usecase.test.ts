@@ -9,6 +9,7 @@ import {
   computePublicSlots,
   createLinkForUser,
   deleteLinkForUser,
+  type GooglePort,
   getCoOwnersForLink,
   getLink,
   listLinks,
@@ -189,6 +190,100 @@ describe("links/usecase: computePublicSlots", () => {
     // 9:00-17:00 JST = 8 hours, 30-min slots = 16 slots
     expect(result.slots.length).toBe(16);
     expect(result.busy).toEqual([]);
+  });
+
+  test("GooglePort is skipped when the owner has no OAuth account row", async () => {
+    // The owner is not connected to Google → port is never invoked even though
+    // it's passed in. This is the "OAuth-not-connected" production path.
+    const userId = await seedUser();
+    const created = await createLinkForUser(
+      db,
+      userId,
+      baseInput({
+        slug: "no-oauth",
+        isPublished: true,
+        rules: [{ weekday: 1, startMinute: 9 * 60, endMinute: 17 * 60 }],
+      }),
+    );
+    if (created.kind !== "ok") throw new Error("seed failed");
+
+    let getTokenCalls = 0;
+    let getFreeBusyCalls = 0;
+    const port: GooglePort = {
+      getValidAccessToken: async () => {
+        getTokenCalls++;
+        return "fake-token";
+      },
+      getFreeBusy: async () => {
+        getFreeBusyCalls++;
+        return [];
+      },
+    };
+    const fromMs = Date.parse("2026-12-13T15:00:00.000Z");
+    const toMs = fromMs + 24 * 60 * 60_000;
+    const result = await computePublicSlots(
+      db,
+      created.link,
+      { fromMs, toMs, nowMs: fromMs - 24 * 60 * 60_000 },
+      port,
+    );
+    expect(getTokenCalls).toBe(0);
+    expect(getFreeBusyCalls).toBe(0);
+    expect(result.busy).toEqual([]);
+    expect(result.slots.length).toBe(16);
+  });
+
+  test("GooglePort failure for one owner is logged and skipped (slots still returned)", async () => {
+    // The recheck path's per-owner try/catch must keep the slot grid usable
+    // even if one owner's Google connection is broken. We seed an OAuth row
+    // for the owner so the port gets called, then make the port throw.
+    const userId = await seedUser();
+    const created = await createLinkForUser(
+      db,
+      userId,
+      baseInput({
+        slug: "broken-oauth",
+        isPublished: true,
+        rules: [{ weekday: 1, startMinute: 9 * 60, endMinute: 17 * 60 }],
+      }),
+    );
+    if (created.kind !== "ok") throw new Error("seed failed");
+
+    // Seed an OAuth row so `computePublicSlots` actually calls the port.
+    const { googleOauthAccounts } = await import("@/db/schema");
+    await testDb.insert(googleOauthAccounts).values({
+      userId,
+      googleUserId: `g_${randomUUID()}`,
+      email: "owner@example.com",
+      encryptedRefreshToken: "ct",
+      refreshTokenIv: "iv",
+      refreshTokenAuthTag: "tag",
+      accessToken: "at",
+      accessTokenExpiresAt: new Date(Date.now() + 3600_000),
+      scope: "calendar.events",
+    });
+
+    let getTokenCalls = 0;
+    const port: GooglePort = {
+      getValidAccessToken: async () => {
+        getTokenCalls++;
+        throw new Error("token boom");
+      },
+      getFreeBusy: async () => {
+        throw new Error("must not be called when token fetch fails");
+      },
+    };
+    const fromMs = Date.parse("2026-12-13T15:00:00.000Z");
+    const toMs = fromMs + 24 * 60 * 60_000;
+    const result = await computePublicSlots(
+      db,
+      created.link,
+      { fromMs, toMs, nowMs: fromMs - 24 * 60 * 60_000 },
+      port,
+    );
+    expect(getTokenCalls).toBe(1);
+    expect(result.busy).toEqual([]);
+    expect(result.slots.length).toBe(16);
   });
 });
 

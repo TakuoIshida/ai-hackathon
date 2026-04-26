@@ -1,7 +1,4 @@
 import type { db as DbClient } from "@/db/client";
-import { getValidAccessToken } from "@/google/access-token";
-import { queryFreeBusy } from "@/google/calendar";
-import { loadGoogleConfig } from "@/google/config";
 import { getOauthAccountByUser, listUserCalendars } from "@/google/repo";
 import {
   type AvailabilityWindow,
@@ -28,6 +25,30 @@ type Database = typeof DbClient;
 
 const HOUR_MS = 3600 * 1000;
 const DAY_MS = 24 * HOUR_MS;
+
+/**
+ * Port for the Google-Calendar-side reads `computePublicSlots` needs to merge
+ * a user's busy intervals into the public slot grid. The route layer assembles
+ * a production adapter (refreshes access tokens, calls Calendar API); tests
+ * inject a fake. Mirrors the `GoogleSinks` pattern in `bookings/confirm.ts`.
+ */
+export type GooglePort = {
+  /**
+   * Resolve a fresh, unexpired access token for a stored OAuth account row.
+   * Throws if refresh fails — callers handle the throw.
+   */
+  getValidAccessToken: (oauthAccountId: string) => Promise<string>;
+  /**
+   * Free/busy lookup across the given calendar IDs in `[rangeStart, rangeEnd)`.
+   * Returns an empty list when no calendars are passed.
+   */
+  getFreeBusy: (input: {
+    accessToken: string;
+    calendarIds: ReadonlyArray<string>;
+    rangeStart: number;
+    rangeEnd: number;
+  }) => Promise<Interval[]>;
+};
 
 // ---------- CRUD use cases ----------
 
@@ -150,10 +171,19 @@ export type PublicSlotsResult = {
   effectiveRange: Interval | null;
 };
 
+/**
+ * Compute the slot grid for a public booking link.
+ *
+ * `google` is optional: when omitted (or when the user has no OAuth row), busy
+ * intervals are skipped and the computation falls back to the link's
+ * availability rules only. This is what production hits when GOOGLE_OAUTH_*
+ * env vars are unset, and what tests pass to skip the SDK entirely.
+ */
 export async function computePublicSlots(
   database: Database,
   link: LinkWithRelations,
   params: PublicSlotsParams,
+  google?: GooglePort,
 ): Promise<PublicSlotsResult> {
   const now = params.nowMs ?? Date.now();
   const leadEnd = now + link.leadTimeHours * HOUR_MS;
@@ -178,24 +208,17 @@ export async function computePublicSlots(
   // even if one owner's Google connection is broken.
   const coOwnerIds = await listLinkCoOwnerUserIds(database, link.id);
   const ownerIds = [link.userId, ...coOwnerIds];
-  const cfg = (() => {
-    try {
-      return loadGoogleConfig();
-    } catch {
-      return null;
-    }
-  })();
 
   const busy: Interval[] = [];
-  if (cfg) {
+  if (google) {
     for (const ownerId of ownerIds) {
       const account = await getOauthAccountByUser(database, ownerId);
       if (!account) continue;
       try {
-        const accessToken = await getValidAccessToken(database, cfg, account.id);
+        const accessToken = await google.getValidAccessToken(account.id);
         const calendars = await listUserCalendars(database, account.id);
         const calendarIds = calendars.filter((c) => c.usedForBusy).map((c) => c.googleCalendarId);
-        const fb = await queryFreeBusy({ accessToken, calendarIds, rangeStart, rangeEnd });
+        const fb = await google.getFreeBusy({ accessToken, calendarIds, rangeStart, rangeEnd });
         busy.push(...fb);
       } catch (err) {
         console.warn(

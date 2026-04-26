@@ -6,7 +6,14 @@ import { db } from "@/db/client";
 import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
 import { createResendSender, loadResendConfig } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
-import { issueInvitation, revokeInvitation } from "@/workspaces/usecase";
+import { createWorkspaceInputSchema } from "@/workspaces/schemas";
+import {
+  createWorkspaceForUser,
+  getWorkspaceForUser,
+  issueInvitation,
+  listWorkspacesForUser,
+  revokeInvitation,
+} from "@/workspaces/usecase";
 
 export type WorkspacesRouteDeps = {
   sendEmail: SendEmailFn;
@@ -33,6 +40,55 @@ export function createWorkspacesRoute(deps: WorkspacesRouteDeps = productionDeps
   route.use("*", clerkAuth());
   route.use("*", requireAuth);
   route.use("*", attachDbUser);
+
+  // ISH-107: list workspaces the caller is a member of.
+  route.get("/", async (c) => {
+    const list = await listWorkspacesForUser(db, getDbUser(c).id);
+    return c.json({
+      workspaces: list.map((w) => ({
+        id: w.id,
+        name: w.name,
+        slug: w.slug,
+        role: w.role,
+        createdAt: w.createdAt,
+      })),
+    });
+  });
+
+  // ISH-107: create a workspace + owner membership atomically.
+  route.post("/", zValidator("json", createWorkspaceInputSchema), async (c) => {
+    const result = await createWorkspaceForUser(db, getDbUser(c).id, c.req.valid("json"));
+    if (result.kind === "slug_taken") {
+      throw new HTTPException(409, { message: "slug_already_taken" });
+    }
+    return c.json(
+      {
+        workspace: {
+          id: result.workspace.id,
+          name: result.workspace.name,
+          slug: result.workspace.slug,
+          createdAt: result.workspace.createdAt,
+        },
+      },
+      201,
+    );
+  });
+
+  // ISH-107: workspace detail (members-only). Returns 404 to non-members so
+  // we don't leak workspace existence.
+  route.get("/:id", async (c) => {
+    const result = await getWorkspaceForUser(db, getDbUser(c).id, c.req.param("id"));
+    if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
+    return c.json({
+      workspace: {
+        id: result.workspace.id,
+        name: result.workspace.name,
+        slug: result.workspace.slug,
+        role: result.workspace.role,
+        createdAt: result.workspace.createdAt,
+      },
+    });
+  });
 
   // ISH-108: issue an invitation. Owner-only.
   route.post("/:id/invitations", zValidator("json", inviteBodySchema), async (c) => {

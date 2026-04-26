@@ -1,4 +1,3 @@
-import { createClerkClient } from "@clerk/backend";
 import type { db as DbClient } from "@/db/client";
 import type { ClerkUserPayload, UserEntity } from "./domain";
 import {
@@ -11,26 +10,16 @@ import {
 
 type Database = typeof DbClient;
 
-export type FetchClerkUserFn = (clerkId: string) => Promise<ClerkUserPayload>;
-
-export type EnsureUserDeps = {
-  fetchClerkUser?: FetchClerkUserFn;
-  clerkSecretKey?: string;
+/**
+ * Port for fetching a Clerk user. Route layer is responsible for assembling
+ * an adapter that talks to `@clerk/backend` (or any other source) and passing
+ * it in. Keeping the SDK out of the usecase mirrors the Google sinks pattern
+ * in `bookings/confirm.ts` and lets unit tests inject a fake fetcher with no
+ * env-var fiddling.
+ */
+export type ClerkPort = {
+  fetchUser: (clerkId: string) => Promise<ClerkUserPayload>;
 };
-
-function defaultFetchClerkUser(clerkSecretKey: string): FetchClerkUserFn {
-  return async (clerkId) => {
-    const clerk = createClerkClient({ secretKey: clerkSecretKey });
-    const u = await clerk.users.getUser(clerkId);
-    return {
-      id: clerkId,
-      email_addresses: u.emailAddresses.map((e) => ({ id: e.id, email_address: e.emailAddress })),
-      primary_email_address_id: u.primaryEmailAddressId ?? null,
-      first_name: u.firstName ?? null,
-      last_name: u.lastName ?? null,
-    };
-  };
-}
 
 export async function getCurrentUserByClerkId(
   database: Database,
@@ -43,25 +32,23 @@ export async function getUserById(database: Database, id: string): Promise<UserE
   return findUserById(database, id);
 }
 
+/**
+ * Look up the local DB user for a Clerk subject. If the user has not been
+ * synced yet (no webhook received, fresh signup, etc.), the route-supplied
+ * `port` is used to lazy-fetch the Clerk profile and upsert a row.
+ *
+ * `port` is required: usecase no longer reaches for `process.env` or the SDK
+ * directly. Routes assemble a production adapter; tests inject a fake.
+ */
 export async function ensureUserByClerkId(
   database: Database,
   clerkId: string,
-  deps: EnsureUserDeps = {},
+  port: ClerkPort,
 ): Promise<UserEntity> {
   const existing = await findUserByClerkId(database, clerkId);
   if (existing) return existing;
 
-  const fetchClerkUser =
-    deps.fetchClerkUser ??
-    (() => {
-      const key = deps.clerkSecretKey ?? process.env.CLERK_SECRET_KEY;
-      if (!key) {
-        throw new Error("CLERK_SECRET_KEY is not set; cannot lazy-fetch user from Clerk");
-      }
-      return defaultFetchClerkUser(key);
-    })();
-
-  const payload = await fetchClerkUser(clerkId);
+  const payload = await port.fetchUser(clerkId);
   return upsertUserFromPayload(database, payload);
 }
 

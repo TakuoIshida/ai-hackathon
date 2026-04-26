@@ -7,6 +7,8 @@ import type {
   LinkDetail,
   LinkInput,
   LinkSummary,
+  WorkspaceDetail,
+  WorkspaceSummary,
 } from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8787";
@@ -112,6 +114,20 @@ export const api = {
       body: JSON.stringify(patch),
       getToken,
     }),
+
+  // ISH-107: workspaces.
+  listWorkspaces: (getToken: AuthTokenGetter) =>
+    request<{ workspaces: WorkspaceSummary[] }>("/workspaces", { getToken }),
+
+  createWorkspace: (input: { name: string; slug: string }, getToken: AuthTokenGetter) =>
+    request<{ workspace: WorkspaceDetail }>("/workspaces", {
+      method: "POST",
+      body: JSON.stringify(input),
+      getToken,
+    }),
+
+  getWorkspace: (id: string, getToken: AuthTokenGetter) =>
+    request<{ workspace: WorkspaceDetail }>(`/workspaces/${id}`, { getToken }),
 
   // ISH-109: invitation acceptance.
   // GET is intentionally unauthenticated — the unauth landing page calls it

@@ -2,6 +2,7 @@ import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import type { Context, MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { db } from "@/db/client";
+import { productionClerkPort } from "@/users/clerk-port";
 import type { UserEntity } from "@/users/domain";
 import { ensureUserByClerkId } from "@/users/usecase";
 
@@ -30,9 +31,13 @@ export type AuthVars = { dbUser: UserEntity };
 // Resolves the Clerk user → DB user once per request and stashes it on the
 // context. Mount this AFTER `clerkAuth()` + `requireAuth` on routes that need
 // the local user record.
+//
+// The Clerk SDK adapter is built on each request via `productionClerkPort()`;
+// the call is cheap (just a closure) and keeps the middleware stateless.
+// Test stacks bypass `attachDbUser` and inject their own clerk-id-aware mw.
 export const attachDbUser: MiddlewareHandler<{ Variables: AuthVars }> = async (c, next) => {
   const clerkId = getClerkUserId(c);
-  const dbUser = await ensureUserByClerkId(db, clerkId);
+  const dbUser = await ensureUserByClerkId(db, clerkId, productionClerkPort());
   c.set("dbUser", dbUser);
   await next();
 };

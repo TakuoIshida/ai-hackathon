@@ -7,6 +7,7 @@ import { findUserByClerkId, insertUser } from "./repo";
 import {
   applyClerkUserDelete,
   applyClerkUserUpsert,
+  type ClerkPort,
   ensureUserByClerkId,
   getCurrentUserByClerkId,
   getUserById,
@@ -35,6 +36,24 @@ const samplePayload = (id: string): ClerkUserPayload => ({
   first_name: "First",
   last_name: "Last",
 });
+
+/**
+ * Build a fake `ClerkPort` whose `fetchUser` returns the given payload (or
+ * the result of a builder fn). Counts invocations so tests can assert that
+ * the cached path doesn't hit the SDK.
+ */
+function fakeClerkPort(
+  fetcher: (clerkId: string) => Promise<ClerkUserPayload>,
+): ClerkPort & { calls: number } {
+  const port = {
+    calls: 0,
+    fetchUser: async (clerkId: string) => {
+      port.calls += 1;
+      return fetcher(clerkId);
+    },
+  };
+  return port;
+}
 
 describe("users/usecase (integration)", () => {
   test("getCurrentUserByClerkId returns the seeded user", async () => {
@@ -80,27 +99,17 @@ describe("users/usecase (integration)", () => {
   test("ensureUserByClerkId returns existing user without calling Clerk", async () => {
     const clerkId = `c_${randomUUID()}`;
     await insertUser(db, { clerkId, email: "exist@x.com", name: "Exist" });
-    let fetchCalled = 0;
-    const result = await ensureUserByClerkId(db, clerkId, {
-      fetchClerkUser: async () => {
-        fetchCalled++;
-        return samplePayload(clerkId);
-      },
-    });
-    expect(fetchCalled).toBe(0);
+    const port = fakeClerkPort(async () => samplePayload(clerkId));
+    const result = await ensureUserByClerkId(db, clerkId, port);
+    expect(port.calls).toBe(0);
     expect(result.email).toBe("exist@x.com");
   });
 
   test("ensureUserByClerkId lazy-fetches from Clerk and upserts when missing", async () => {
     const clerkId = `c_${randomUUID()}`;
-    let fetchCalled = 0;
-    const result = await ensureUserByClerkId(db, clerkId, {
-      fetchClerkUser: async (id) => {
-        fetchCalled++;
-        return samplePayload(id);
-      },
-    });
-    expect(fetchCalled).toBe(1);
+    const port = fakeClerkPort(async (id) => samplePayload(id));
+    const result = await ensureUserByClerkId(db, clerkId, port);
+    expect(port.calls).toBe(1);
     expect(result.email).toBe("u@example.com");
     expect(result.name).toBe("First Last");
     const found = await findUserByClerkId(db, clerkId);
@@ -108,12 +117,9 @@ describe("users/usecase (integration)", () => {
   });
 
   test("ensureUserByClerkId surfaces fetcher errors", async () => {
-    await expect(
-      ensureUserByClerkId(db, `c_${randomUUID()}`, {
-        fetchClerkUser: async () => {
-          throw new Error("clerk down");
-        },
-      }),
-    ).rejects.toThrow(/clerk down/);
+    const port = fakeClerkPort(async () => {
+      throw new Error("clerk down");
+    });
+    await expect(ensureUserByClerkId(db, `c_${randomUUID()}`, port)).rejects.toThrow(/clerk down/);
   });
 });

@@ -1,0 +1,49 @@
+import { expect, test } from "@playwright/test";
+
+// Scenario 1 of ISH-139:
+//   Sign in → dashboard renders.
+//
+// The web dev/preview server is started with VITE_E2E_BYPASS_AUTH=1
+// (apps/e2e/playwright.config.ts). Vite swaps @clerk/clerk-react for a stub
+// (apps/web/src/test/clerk-e2e-shim.tsx) that reports the user as signed-in.
+// VITE_CLERK_PUBLISHABLE_KEY is also set so HAS_CLERK is truthy and the
+// landing page shows the sign-in CTA instead of the "no Clerk configured"
+// notice.
+//
+// All API calls are mocked with page.route() so this spec runs hermetically.
+test.describe("signin → dashboard", () => {
+  test("landing shows sign-in CTA, dashboard renders the brand and nav", async ({ page }) => {
+    // The dashboard makes a /bookings call on mount; an empty list keeps the
+    // empty-state visible without surfacing a 401/500 banner.
+    await page.route("**/bookings", (route) =>
+      route.fulfill({ status: 200, body: JSON.stringify({ bookings: [] }) }),
+    );
+
+    await page.goto("/");
+
+    // With Clerk wired up (even via the shim), the SignIn CTA must render.
+    // The "no-Clerk" warning text would indicate a misconfigured webServer env.
+    await expect(
+      page.getByRole("heading", { level: 1, name: "SPIR 代替の社内日程調整" }),
+    ).toBeVisible();
+    await expect(page.getByText(/VITE_CLERK_PUBLISHABLE_KEY/)).toBeHidden();
+
+    // Navigate to /dashboard. With the bypass, ProtectedDashboard renders the
+    // DashboardLayout directly instead of redirecting to "/" or to Clerk.
+    await page.goto("/dashboard");
+
+    // Dashboard shell — sidebar brand + main nav links. The home page's
+    // "リンクを作成" button also matches getByRole("link", { name: "リンク" })
+    // without exact:true, so we anchor every nav assertion to exact match to
+    // disambiguate.
+    await expect(page.getByRole("heading", { level: 1, name: "AI Hackathon" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "ダッシュボード", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "リンク", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "予約", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "設定", exact: true })).toBeVisible();
+
+    // Dashboard home content.
+    await expect(page.getByRole("heading", { name: "ダッシュボード" })).toBeVisible();
+    await expect(page.getByText("はじめに")).toBeVisible();
+  });
+});

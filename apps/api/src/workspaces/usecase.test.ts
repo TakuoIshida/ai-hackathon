@@ -7,7 +7,14 @@ import type { EmailMessage, SendEmailFn } from "@/notifications/types";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
 import { findInvitationByToken, findOpenInvitationForEmail } from "./repo";
-import { acceptInvitation, issueInvitation, revokeInvitation } from "./usecase";
+import {
+  acceptInvitation,
+  createWorkspaceForUser,
+  getWorkspaceForUser,
+  issueInvitation,
+  listWorkspacesForUser,
+  revokeInvitation,
+} from "./usecase";
 
 let testDb: TestDb;
 
@@ -149,6 +156,60 @@ describe("workspaces/usecase: issueInvitation (ISH-108)", () => {
     expect(result.kind).toBe("ok");
     const row = await findOpenInvitationForEmail(db, workspace.id, "i@x.com");
     expect(row).not.toBeNull();
+  });
+});
+
+describe("workspaces/usecase: createWorkspaceForUser (ISH-107)", () => {
+  test("happy path: creates workspace + owner membership", async () => {
+    const user = await seedUser();
+    const result = await createWorkspaceForUser(db, user.id, { name: "Acme", slug: "acme-x" });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.workspace.slug).toBe("acme-x");
+    expect(result.workspace.ownerUserId).toBe(user.id);
+    // listMembershipsForUser should now show this workspace as owner
+    const list = await listWorkspacesForUser(db, user.id);
+    expect(list.length).toBe(1);
+    expect(list[0]?.role).toBe("owner");
+  });
+
+  test("returns slug_taken when another workspace already uses the slug", async () => {
+    const userA = await seedUser();
+    const userB = await seedUser();
+    const a = await createWorkspaceForUser(db, userA.id, { name: "A", slug: "shared" });
+    expect(a.kind).toBe("ok");
+    const b = await createWorkspaceForUser(db, userB.id, { name: "B", slug: "shared" });
+    expect(b.kind).toBe("slug_taken");
+  });
+});
+
+describe("workspaces/usecase: listWorkspacesForUser (ISH-107)", () => {
+  test("scopes to caller membership, includes role per row", async () => {
+    const userA = await seedUser();
+    const userB = await seedUser();
+    await createWorkspaceForUser(db, userA.id, { name: "A1", slug: "ws-a1" });
+    await createWorkspaceForUser(db, userB.id, { name: "B1", slug: "ws-b1" });
+
+    const aList = await listWorkspacesForUser(db, userA.id);
+    expect(aList.length).toBe(1);
+    expect(aList[0]?.slug).toBe("ws-a1");
+    expect(aList[0]?.role).toBe("owner");
+  });
+});
+
+describe("workspaces/usecase: getWorkspaceForUser (ISH-107)", () => {
+  test("ok when caller is a member; not_found otherwise", async () => {
+    const owner = await seedUser();
+    const stranger = await seedUser();
+    const created = await createWorkspaceForUser(db, owner.id, { name: "X", slug: "ws-x" });
+    if (created.kind !== "ok") throw new Error("seed");
+
+    const okRes = await getWorkspaceForUser(db, owner.id, created.workspace.id);
+    expect(okRes.kind).toBe("ok");
+    if (okRes.kind === "ok") expect(okRes.workspace.role).toBe("owner");
+
+    const strangerRes = await getWorkspaceForUser(db, stranger.id, created.workspace.id);
+    expect(strangerRes.kind).toBe("not_found");
   });
 });
 

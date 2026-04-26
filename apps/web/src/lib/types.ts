@@ -97,6 +97,21 @@ export type GoogleConnection = {
   calendars: GoogleCalendarSummary[];
 };
 
+// ISH-107: workspace summary returned by GET /workspaces and the workspace
+// detail screen. We deliberately keep `WorkspaceDetail` shape-identical to
+// `WorkspaceSummary` for now — member-management UI lives in a future ticket.
+export type WorkspaceRole = "owner" | "member";
+
+export type WorkspaceSummary = {
+  id: string;
+  slug: string;
+  name: string;
+  role: WorkspaceRole;
+  createdAt: string;
+};
+
+export type WorkspaceDetail = WorkspaceSummary;
+
 // ISH-109: invitation acceptance.
 export type InvitationSummary = {
   workspaceName: string;
