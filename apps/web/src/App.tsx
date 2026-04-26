@@ -2,6 +2,7 @@ import { RedirectToSignIn, SignedIn, SignedOut } from "@clerk/clerk-react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { PublicLayout } from "@/components/layout/PublicLayout";
+import AcceptInvite from "@/routes/AcceptInvite";
 import BookingDetail from "@/routes/BookingDetail";
 import Bookings from "@/routes/Bookings";
 import CancelBooking from "@/routes/CancelBooking";
@@ -50,6 +51,7 @@ export default function App() {
 
       <Route element={<PublicLayout />}>
         <Route path="cancel/:token" element={<CancelBooking />} />
+        <Route path="invite/:token" element={<AcceptInvite />} />
         <Route path=":slug" element={<PublicLink />} />
       </Route>
 

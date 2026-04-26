@@ -111,3 +111,17 @@ export type WorkspaceSummary = {
 };
 
 export type WorkspaceDetail = WorkspaceSummary;
+
+// ISH-109: invitation acceptance.
+export type InvitationSummary = {
+  workspaceName: string;
+  workspaceSlug: string;
+  email: string;
+  expired: boolean;
+};
+
+export type AcceptedInvitationWorkspace = {
+  id: string;
+  slug: string;
+  name: string;
+};

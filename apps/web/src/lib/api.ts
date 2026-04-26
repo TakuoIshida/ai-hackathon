@@ -1,7 +1,9 @@
 import type {
+  AcceptedInvitationWorkspace,
   BookingSummary,
   GoogleCalendarSummary,
   GoogleConnection,
+  InvitationSummary,
   LinkDetail,
   LinkInput,
   LinkSummary,
@@ -126,6 +128,24 @@ export const api = {
 
   getWorkspace: (id: string, getToken: AuthTokenGetter) =>
     request<{ workspace: WorkspaceDetail }>(`/workspaces/${id}`, { getToken }),
+
+  // ISH-109: invitation acceptance.
+  // GET is intentionally unauthenticated — the unauth landing page calls it
+  // before the user signs in. Pass NO `getToken` so we don't attach a header.
+  getInvitation: (token: string) =>
+    request<{
+      workspace: { name: string; slug: string };
+      email: string;
+      expired: boolean;
+    }>(`/invitations/${encodeURIComponent(token)}`),
+
+  acceptInvitation: (token: string, getToken: AuthTokenGetter) =>
+    request<{ workspace: AcceptedInvitationWorkspace }>(
+      `/invitations/${encodeURIComponent(token)}/accept`,
+      { method: "POST", getToken },
+    ),
 };
+
+export type { InvitationSummary };
 
 export const googleConnectUrl = `${API_URL}/google/connect`;

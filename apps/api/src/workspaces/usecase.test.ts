@@ -6,8 +6,9 @@ import { invitations, memberships, workspaces } from "@/db/schema/workspaces";
 import type { EmailMessage, SendEmailFn } from "@/notifications/types";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
-import { findOpenInvitationForEmail } from "./repo";
+import { findInvitationByToken, findOpenInvitationForEmail } from "./repo";
 import {
+  acceptInvitation,
   createWorkspaceForUser,
   getWorkspaceForUser,
   issueInvitation,
@@ -209,6 +210,141 @@ describe("workspaces/usecase: getWorkspaceForUser (ISH-107)", () => {
 
     const strangerRes = await getWorkspaceForUser(db, stranger.id, created.workspace.id);
     expect(strangerRes.kind).toBe("not_found");
+  });
+});
+
+describe("workspaces/usecase: acceptInvitation (ISH-109)", () => {
+  async function seedOpenInvitation(opts?: { email?: string; expiresInMs?: number }) {
+    const { owner, workspace } = await seedWorkspace();
+    const email = opts?.email ?? "invitee@example.com";
+    const issued = await issueInvitation(db, owner.id, workspace.id, email, baseDeps());
+    if (issued.kind !== "ok") throw new Error("seed: issueInvitation failed");
+    if (opts?.expiresInMs !== undefined) {
+      await testDb
+        .update(invitations)
+        .set({ expiresAt: new Date(Date.now() + opts.expiresInMs) })
+        .where(eq(invitations.id, issued.invitation.id));
+    }
+    return { workspace, owner, invitation: issued.invitation, email };
+  }
+
+  test("happy path: existing user is added as member, invitation marked accepted", async () => {
+    const { workspace, invitation, email } = await seedOpenInvitation();
+    const invitee = await seedUser(email);
+
+    const result = await acceptInvitation(db, invitee.id, invitee.email, invitation.token);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.workspace.id).toBe(workspace.id);
+
+    // Membership row exists.
+    const m = await testDb.select().from(memberships).where(eq(memberships.userId, invitee.id));
+    expect(m.length).toBe(1);
+    expect(m[0]?.role).toBe("member");
+
+    // Invitation now marked accepted.
+    const reloaded = await findInvitationByToken(db, invitation.token);
+    expect(reloaded?.acceptedAt).not.toBeNull();
+  });
+
+  test("not_found when token does not exist", async () => {
+    const invitee = await seedUser();
+    const result = await acceptInvitation(db, invitee.id, invitee.email, randomUUID());
+    expect(result.kind).toBe("not_found");
+  });
+
+  test("expired when expiresAt < now", async () => {
+    const { invitation, email } = await seedOpenInvitation({ expiresInMs: -1000 });
+    const invitee = await seedUser(email);
+    const result = await acceptInvitation(db, invitee.id, invitee.email, invitation.token);
+    expect(result.kind).toBe("expired");
+    // Did NOT insert a membership.
+    const m = await testDb.select().from(memberships).where(eq(memberships.userId, invitee.id));
+    expect(m.length).toBe(0);
+  });
+
+  test("already_accepted when acceptedAt is non-null", async () => {
+    const { invitation, email } = await seedOpenInvitation();
+    await testDb
+      .update(invitations)
+      .set({ acceptedAt: new Date() })
+      .where(eq(invitations.id, invitation.id));
+    const invitee = await seedUser(email);
+    const result = await acceptInvitation(db, invitee.id, invitee.email, invitation.token);
+    expect(result.kind).toBe("already_accepted");
+  });
+
+  test("email_mismatch when caller email differs from invitation email", async () => {
+    const { invitation } = await seedOpenInvitation({ email: "intended@example.com" });
+    const wrongUser = await seedUser("someone-else@example.com");
+    const result = await acceptInvitation(db, wrongUser.id, wrongUser.email, invitation.token);
+    expect(result.kind).toBe("email_mismatch");
+  });
+
+  test("email comparison is case-insensitive", async () => {
+    const { invitation } = await seedOpenInvitation({ email: "Mixed@Example.COM" });
+    const invitee = await seedUser("mixed@example.com");
+    const result = await acceptInvitation(db, invitee.id, invitee.email, invitation.token);
+    expect(result.kind).toBe("ok");
+  });
+
+  test("idempotent: re-accepting after a duplicate membership exists does not double-insert", async () => {
+    const { workspace, invitation, email } = await seedOpenInvitation();
+    const invitee = await seedUser(email);
+    // Pre-seed membership as if the user had been added independently.
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: workspace.id, userId: invitee.id, role: "member" });
+
+    const result = await acceptInvitation(db, invitee.id, invitee.email, invitation.token);
+    expect(result.kind).toBe("ok");
+
+    // Still exactly one membership row.
+    const m = await testDb.select().from(memberships).where(eq(memberships.userId, invitee.id));
+    expect(m.length).toBe(1);
+    // Invitation is marked accepted.
+    const reloaded = await findInvitationByToken(db, invitation.token);
+    expect(reloaded?.acceptedAt).not.toBeNull();
+  });
+
+  test("now() override is honored for expiry comparison", async () => {
+    const { invitation, email } = await seedOpenInvitation();
+    const invitee = await seedUser(email);
+    // Force a "now" 30 days in the future — past the 7-day TTL.
+    const future = Date.now() + 30 * 24 * 60 * 60_000;
+    const result = await acceptInvitation(db, invitee.id, invitee.email, invitation.token, {
+      now: () => future,
+    });
+    expect(result.kind).toBe("expired");
+  });
+
+  // Pins the WHERE accepted_at IS NULL guard on acceptInvitationAtomic. Without
+  // it, a concurrent second redemption (which the read-then-write window in
+  // acceptInvitation cannot itself prevent on neon-http) would overwrite the
+  // first acceptance timestamp.
+  test("acceptedAt is preserved across a racing second accept", async () => {
+    const { invitation, email } = await seedOpenInvitation();
+    const invitee = await seedUser(email);
+    const t1 = new Date("2026-04-26T01:00:00.000Z");
+    const t2 = new Date("2026-04-26T02:00:00.000Z");
+
+    // First accept lands at t1.
+    const r1 = await acceptInvitation(db, invitee.id, invitee.email, invitation.token, {
+      now: () => t1.getTime(),
+    });
+    expect(r1.kind).toBe("ok");
+    const after1 = await findInvitationByToken(db, invitation.token);
+    expect(after1?.acceptedAt?.toISOString()).toBe(t1.toISOString());
+
+    // Second accept tries to land at t2. Usecase short-circuits on
+    // already_accepted, but even if a racy caller bypassed that and called
+    // the repo directly, the partial-WHERE guard keeps the original timestamp.
+    const r2 = await acceptInvitation(db, invitee.id, invitee.email, invitation.token, {
+      now: () => t2.getTime(),
+    });
+    expect(r2.kind).toBe("already_accepted");
+    const after2 = await findInvitationByToken(db, invitation.token);
+    expect(after2?.acceptedAt?.toISOString()).toBe(t1.toISOString());
   });
 });
 
