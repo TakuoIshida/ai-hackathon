@@ -57,6 +57,7 @@ const navItems = [
   { to: "/dashboard", label: "ダッシュボード", end: true },
   { to: "/dashboard/links", label: "リンク" },
   { to: "/dashboard/bookings", label: "予約" },
+  { to: "/dashboard/workspaces", label: "ワークスペース" },
   { to: "/dashboard/settings", label: "設定" },
 ];
 

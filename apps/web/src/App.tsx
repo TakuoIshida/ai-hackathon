@@ -12,6 +12,8 @@ import Links from "@/routes/Links";
 import NotFound from "@/routes/NotFound";
 import PublicLink from "@/routes/PublicLink";
 import Settings from "@/routes/Settings";
+import WorkspaceDetail from "@/routes/WorkspaceDetail";
+import Workspaces from "@/routes/Workspaces";
 
 const HAS_CLERK = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
 
@@ -41,6 +43,8 @@ export default function App() {
         <Route path="links/:id/edit" element={<LinkForm />} />
         <Route path="bookings" element={<Bookings />} />
         <Route path="bookings/:id" element={<BookingDetail />} />
+        <Route path="workspaces" element={<Workspaces />} />
+        <Route path="workspaces/:id" element={<WorkspaceDetail />} />
         <Route path="settings" element={<Settings />} />
       </Route>
 
