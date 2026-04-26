@@ -1,10 +1,8 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
 import { Hono, type MiddlewareHandler } from "hono";
 import { cancelBookingByOwner } from "@/bookings/cancel";
 import type { CreateEventFn, GetAccessTokenFn } from "@/bookings/confirm";
+import { listOwnerBookings } from "@/bookings/usecase";
 import { db } from "@/db/client";
-import { bookings } from "@/db/schema/bookings";
-import { availabilityLinks } from "@/db/schema/links";
 import { getValidAccessToken } from "@/google/access-token";
 import { createEvent } from "@/google/calendar";
 import { type GoogleConfig, loadGoogleConfig } from "@/google/config";
@@ -55,39 +53,8 @@ export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): H
   // List all bookings owned by the authed user.
   route.get("/", async (c) => {
     const dbUser = getDbUser(c);
-    // Subquery: link IDs owned by this user.
-    const ownedLinks = await db
-      .select({
-        id: availabilityLinks.id,
-        slug: availabilityLinks.slug,
-        title: availabilityLinks.title,
-      })
-      .from(availabilityLinks)
-      .where(eq(availabilityLinks.userId, dbUser.id));
-    if (ownedLinks.length === 0) return c.json({ bookings: [] });
-    const linkIds = ownedLinks.map((l) => l.id);
-    const linkBySlug = new Map(ownedLinks.map((l) => [l.id, l]));
-    const rows = await db
-      .select()
-      .from(bookings)
-      .where(inArray(bookings.linkId, linkIds))
-      .orderBy(desc(bookings.startAt));
-    return c.json({
-      bookings: rows.map((b) => ({
-        id: b.id,
-        linkId: b.linkId,
-        linkTitle: linkBySlug.get(b.linkId)?.title ?? "",
-        linkSlug: linkBySlug.get(b.linkId)?.slug ?? "",
-        startAt: b.startAt,
-        endAt: b.endAt,
-        guestName: b.guestName,
-        guestEmail: b.guestEmail,
-        status: b.status,
-        meetUrl: b.meetUrl,
-        canceledAt: b.canceledAt,
-        createdAt: b.createdAt,
-      })),
-    });
+    const list = await listOwnerBookings(db, dbUser.id);
+    return c.json({ bookings: list });
   });
 
   // Owner-side cancel.
@@ -116,6 +83,3 @@ export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): H
 }
 
 export const bookingsRoute = createBookingsRoute();
-
-// silence "unused import" tripwires for `and` (kept for future filters)
-void and;
