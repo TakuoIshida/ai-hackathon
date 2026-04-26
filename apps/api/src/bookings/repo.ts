@@ -1,11 +1,22 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
 import { bookings } from "@/db/schema/bookings";
+import { availabilityLinks } from "@/db/schema/links";
 
 type Database = typeof DbClient;
 
 export type BookingRow = typeof bookings.$inferSelect;
 export type NewBookingRow = typeof bookings.$inferInsert;
+
+/**
+ * Booking row joined with the parent link's slug + title. Used by the owner
+ * "My bookings" list view so the response can include link metadata in a
+ * single round trip without N+1 lookups in the route handler.
+ */
+export type BookingWithLinkRow = BookingRow & {
+  linkSlug: string;
+  linkTitle: string;
+};
 
 /**
  * Inserts a confirmed booking, relying on the partial unique index
@@ -51,6 +62,33 @@ export async function findActiveBookingsForLink(
   linkId: string,
 ): Promise<BookingRow[]> {
   return database.select().from(bookings).where(eq(bookings.linkId, linkId));
+}
+
+/**
+ * Returns all bookings whose parent link is owned by `ownerId`, joined with
+ * the link's slug + title for response rendering. Sorted by `startAt` desc
+ * so the list view shows newest first.
+ *
+ * NOTE: ISH-112 introduces co-owners via the `link_owners` table, but this
+ * query intentionally only follows `availability_links.user_id` (the primary
+ * owner) to preserve existing behavior — the previous route handler also
+ * scoped only to `availabilityLinks.userId`.
+ */
+export async function findBookingsByOwner(
+  database: Database,
+  ownerId: string,
+): Promise<BookingWithLinkRow[]> {
+  const rows = await database
+    .select({
+      booking: bookings,
+      linkSlug: availabilityLinks.slug,
+      linkTitle: availabilityLinks.title,
+    })
+    .from(bookings)
+    .innerJoin(availabilityLinks, eq(bookings.linkId, availabilityLinks.id))
+    .where(eq(availabilityLinks.userId, ownerId))
+    .orderBy(desc(bookings.startAt));
+  return rows.map((r) => ({ ...r.booking, linkSlug: r.linkSlug, linkTitle: r.linkTitle }));
 }
 
 export async function findBookingByCancellationToken(
