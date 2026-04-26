@@ -108,12 +108,12 @@ function buildApp(deps: PublicRouteDeps = noGoogleDeps): Hono {
 }
 
 // PGlite WASM init is the slow part — do it once for the whole file. Between
-// tests we just TRUNCATE so each test sees a fresh schema. (Bun's default 5s
-// per-test timeout is not enough for repeated PGlite spawns on CI.)
+// tests we just TRUNCATE so each test sees a fresh schema. The 30s timeout
+// covers cold WASM init on slow CI runners (Bun's default 5s isn't enough).
 beforeAll(async () => {
   testDb = await createTestDb();
   setDbForTests(testDb);
-});
+}, 30_000);
 
 afterAll(async () => {
   clearDbForTests();
