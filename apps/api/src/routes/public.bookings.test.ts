@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
@@ -107,14 +107,25 @@ function buildApp(deps: PublicRouteDeps = noGoogleDeps): Hono {
   return app;
 }
 
-beforeEach(async () => {
+// PGlite WASM init is the slow part — do it once for the whole file. Between
+// tests we just TRUNCATE so each test sees a fresh schema. (Bun's default 5s
+// per-test timeout is not enough for repeated PGlite spawns on CI.)
+beforeAll(async () => {
   testDb = await createTestDb();
   setDbForTests(testDb);
 });
 
-afterEach(async () => {
+afterAll(async () => {
   clearDbForTests();
   await testDb.$client.close();
+});
+
+beforeEach(async () => {
+  await testDb.$client.exec(`
+    TRUNCATE TABLE bookings, availability_excludes, availability_rules,
+    availability_links, google_calendars, google_oauth_accounts, users
+    RESTART IDENTITY CASCADE;
+  `);
 });
 
 const validBody = {
