@@ -10,9 +10,15 @@ test.describe("smoke", () => {
     await expect(page.getByText(/Google Calendar と連携/)).toBeVisible();
   });
 
-  test("public booking page surfaces the not_found shell when API is absent", async ({ page }) => {
+  test("public booking page renders the not_found card when the API returns 404", async ({
+    page,
+  }) => {
+    // E2E runs without an API; intercept the public link fetch so the
+    // PublicLink component reliably resolves to its not_found branch.
+    await page.route("**/public/links/**", (route) =>
+      route.fulfill({ status: 404, body: JSON.stringify({ error: "not_found" }) }),
+    );
     await page.goto("/intro-30min");
-    // No API in the e2e env, so the booking page falls through to its 404 card.
     await expect(page.getByText("リンクが見つかりません")).toBeVisible();
   });
 
