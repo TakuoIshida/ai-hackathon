@@ -4,6 +4,9 @@ import type { GoogleConfig } from "@/google/config";
 import { getOauthAccountByUser, listUserCalendars } from "@/google/repo";
 import { computePublicSlots } from "@/links/public-slots";
 import type { LinkWithRelations } from "@/links/repo";
+import { guestConfirmEmail, ownerConfirmEmail } from "@/notifications/templates";
+import type { SendEmailFn } from "@/notifications/types";
+import { getUserById } from "@/users/lookup";
 import { attachGoogleEvent, type BookingRow, tryInsertConfirmedBooking } from "./repo";
 import type { BookingInput } from "./schemas";
 
@@ -20,6 +23,11 @@ export type GoogleSinks = {
   cfg: GoogleConfig | null;
   createEvent: CreateEventFn;
   getAccessToken: GetAccessTokenFn;
+};
+
+export type NotificationSinks = {
+  sendEmail: SendEmailFn;
+  appBaseUrl: string;
 };
 
 export type ConfirmResult =
@@ -46,6 +54,7 @@ export async function confirmBooking(
   link: LinkWithRelations,
   input: ConfirmInput,
   google: GoogleSinks,
+  notifications: NotificationSinks,
 ): Promise<ConfirmResult> {
   const startMs = input.startMs;
   const endMs = startMs + link.durationMinutes * 60_000;
@@ -74,8 +83,10 @@ export async function confirmBooking(
   });
   if (!inserted) return { kind: "race_lost" };
 
+  let booking = inserted;
+
   // Best-effort Google Calendar sync. If it fails the booking still stands
-  // (the operator can manually add the event); we log + return without Meet.
+  // (the operator can manually add the event); we log + continue without Meet.
   if (google.cfg) {
     try {
       const account = await getOauthAccountByUser(database, link.userId);
@@ -96,9 +107,10 @@ export async function confirmBooking(
             generateMeetUrl: true,
           });
           await attachGoogleEvent(database, inserted.id, created.id, created.meetUrl ?? null);
-          return {
-            kind: "ok",
-            booking: { ...inserted, googleEventId: created.id, meetUrl: created.meetUrl ?? null },
+          booking = {
+            ...inserted,
+            googleEventId: created.id,
+            meetUrl: created.meetUrl ?? null,
           };
         }
       }
@@ -107,5 +119,35 @@ export async function confirmBooking(
     }
   }
 
-  return { kind: "ok", booking: inserted };
+  // Best-effort email notifications. Same policy: log on failure, do not
+  // roll back the booking. ISH-91/92/93/96 — owner + guest confirm.
+  try {
+    const owner = await getUserById(database, link.userId);
+    if (owner) {
+      const cancelUrl = `${notifications.appBaseUrl}/cancel/${booking.cancellationToken}`;
+      const ctx = {
+        linkTitle: link.title,
+        linkDescription: link.description,
+        startAt: booking.startAt,
+        endAt: booking.endAt,
+        ownerEmail: owner.email,
+        ownerName: owner.name,
+        guestEmail: booking.guestEmail,
+        guestName: booking.guestName,
+        guestNote: booking.guestNote,
+        guestTimeZone: booking.guestTimeZone,
+        ownerTimeZone: link.timeZone,
+        meetUrl: booking.meetUrl,
+        cancelUrl,
+      };
+      await Promise.all([
+        notifications.sendEmail(ownerConfirmEmail(ctx)),
+        notifications.sendEmail(guestConfirmEmail(ctx)),
+      ]);
+    }
+  } catch (err) {
+    console.warn("[booking] confirmation email send failed:", err);
+  }
+
+  return { kind: "ok", booking };
 }

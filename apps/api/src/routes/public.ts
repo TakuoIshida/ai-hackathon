@@ -9,12 +9,25 @@ import { createEvent } from "@/google/calendar";
 import { type GoogleConfig, loadGoogleConfig } from "@/google/config";
 import { computePublicSlots } from "@/links/public-slots";
 import { findPublishedLinkBySlug } from "@/links/repo";
+import { createResendSender, loadResendConfig } from "@/notifications/sender";
+import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
 
 export type PublicRouteDeps = {
   loadCfg: () => GoogleConfig | null;
   createEvent: CreateEventFn;
   getAccessToken: GetAccessTokenFn;
+  sendEmail: SendEmailFn;
+  appBaseUrl: string;
 };
+
+function productionSendEmail(): SendEmailFn {
+  const cfg = loadResendConfig();
+  if (!cfg) {
+    console.info("[email] RESEND_API_KEY/EMAIL_FROM not set — emails are no-op");
+    return noopSendEmail;
+  }
+  return createResendSender(cfg);
+}
 
 const productionDeps: PublicRouteDeps = {
   loadCfg: () => {
@@ -26,6 +39,8 @@ const productionDeps: PublicRouteDeps = {
   },
   createEvent,
   getAccessToken: getValidAccessToken,
+  sendEmail: productionSendEmail(),
+  appBaseUrl: process.env.APP_BASE_URL ?? "http://localhost:5173",
 };
 
 export function createPublicRoute(deps: PublicRouteDeps = productionDeps): Hono {
@@ -88,6 +103,10 @@ export function createPublicRoute(deps: PublicRouteDeps = productionDeps): Hono 
         cfg: deps.loadCfg(),
         createEvent: deps.createEvent,
         getAccessToken: deps.getAccessToken,
+      },
+      {
+        sendEmail: deps.sendEmail,
+        appBaseUrl: deps.appBaseUrl,
       },
     );
 

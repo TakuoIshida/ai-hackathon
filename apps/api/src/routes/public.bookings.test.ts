@@ -91,6 +91,9 @@ async function seedGoogleCalendar(db: TestDb, userId: string): Promise<string> {
 
 let testDb: TestDb;
 
+type CapturedEmail = { to: string; subject: string };
+let sentEmails: CapturedEmail[];
+
 const noGoogleDeps: PublicRouteDeps = {
   loadCfg: () => null,
   createEvent: async () => {
@@ -99,6 +102,10 @@ const noGoogleDeps: PublicRouteDeps = {
   getAccessToken: async () => {
     throw new Error("getAccessToken should not be called in no-Google tests");
   },
+  sendEmail: async (msg) => {
+    sentEmails.push({ to: msg.to, subject: msg.subject });
+  },
+  appBaseUrl: "https://app.test",
 };
 
 function buildApp(deps: PublicRouteDeps = noGoogleDeps): Hono {
@@ -121,6 +128,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  sentEmails = [];
   await testDb.$client.exec(`
     TRUNCATE TABLE bookings, availability_excludes, availability_rules,
     availability_links, google_calendars, google_oauth_accounts, users
@@ -198,6 +206,11 @@ describe("POST /public/links/:slug/bookings", () => {
     expect(rows[0]?.guestEmail).toBe("guest@example.com");
     expect(rows[0]?.startAt.toISOString()).toBe(SLOT_START_ISO);
     expect(rows[0]?.endAt.getTime()).toBe(SLOT_END_MS);
+
+    // Both owner and guest should receive a confirm email.
+    expect(sentEmails.length).toBe(2);
+    const recipients = sentEmails.map((e) => e.to).sort();
+    expect(recipients).toEqual(["guest@example.com", "owner@example.com"]);
   });
 
   test("409 when the same slot is booked twice (dual-booking guard)", async () => {
@@ -275,6 +288,10 @@ describe("POST /public/links/:slug/bookings", () => {
         };
       },
       getAccessToken: async () => "fake-access-token",
+      sendEmail: async (msg) => {
+        sentEmails.push({ to: msg.to, subject: msg.subject });
+      },
+      appBaseUrl: "https://app.test",
     };
 
     const app = buildApp(deps);
@@ -292,5 +309,30 @@ describe("POST /public/links/:slug/bookings", () => {
     const [persisted] = await testDb.select().from(bookings);
     expect(persisted?.googleEventId).toBe("evt-google-1");
     expect(persisted?.meetUrl).toBe("https://meet.google.com/abc-defg-hij");
+
+    // Guest email should include the Meet URL via the confirm template.
+    expect(sentEmails.length).toBe(2);
+    const guestEmail = sentEmails.find((e) => e.to === "guest@example.com");
+    expect(guestEmail).toBeDefined();
+  });
+
+  test("email send failure does not roll back the booking", async () => {
+    await seedPublishedLink(testDb);
+    const failingDeps: PublicRouteDeps = {
+      ...noGoogleDeps,
+      sendEmail: async () => {
+        throw new Error("smtp boom");
+      },
+    };
+    const app = buildApp(failingDeps);
+    const res = await app.request("/public/links/intro-30min/bookings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validBody),
+    });
+    // Booking still 201; email failure is logged + swallowed.
+    expect(res.status).toBe(201);
+    const rows = await testDb.select().from(bookings);
+    expect(rows.length).toBe(1);
   });
 });

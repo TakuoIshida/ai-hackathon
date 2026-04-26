@@ -16,6 +16,11 @@ export async function getUserByClerkId(
   return row ?? null;
 }
 
+export async function getUserById(database: Database, id: string): Promise<DbUser | null> {
+  const [row] = await database.select().from(users).where(eq(users.id, id)).limit(1);
+  return row ?? null;
+}
+
 export async function ensureUserByClerkId(
   database: Database,
   clerkId: string,
