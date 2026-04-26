@@ -133,3 +133,64 @@ export async function listUserCalendars(
     .from(googleCalendars)
     .where(eq(googleCalendars.oauthAccountId, oauthAccountId));
 }
+
+export async function findCalendarById(
+  database: Database,
+  calendarId: string,
+): Promise<CalendarRow | null> {
+  const [row] = await database
+    .select()
+    .from(googleCalendars)
+    .where(eq(googleCalendars.id, calendarId))
+    .limit(1);
+  return row ?? null;
+}
+
+export type CalendarFlagsPatch = {
+  usedForBusy?: boolean;
+  usedForWrites?: boolean;
+};
+
+/**
+ * Atomically update flags for a single calendar. When usedForWrites is set
+ * to true, all other calendars on the same oauth account get usedForWrites
+ * cleared so the "write target" is exclusive (radio behavior in the UI).
+ *
+ * neon-http does not support callback transactions, so we batch.
+ */
+export async function updateCalendarFlags(
+  database: Database,
+  calendar: CalendarRow,
+  patch: CalendarFlagsPatch,
+): Promise<CalendarRow | null> {
+  type BatchQuery = Parameters<Database["batch"]>[0][number];
+  const queries: BatchQuery[] = [];
+
+  if (patch.usedForWrites === true) {
+    queries.push(
+      database
+        .update(googleCalendars)
+        .set({ usedForWrites: false, updatedAt: new Date() })
+        .where(
+          and(
+            eq(googleCalendars.oauthAccountId, calendar.oauthAccountId),
+            // every row in the same account except the target one
+            sql`${googleCalendars.id} <> ${calendar.id}`,
+          ),
+        ),
+    );
+  }
+
+  const set: Record<string, unknown> = { updatedAt: new Date() };
+  if (patch.usedForBusy !== undefined) set.usedForBusy = patch.usedForBusy;
+  if (patch.usedForWrites !== undefined) set.usedForWrites = patch.usedForWrites;
+
+  queries.push(
+    database.update(googleCalendars).set(set).where(eq(googleCalendars.id, calendar.id)),
+  );
+
+  if (queries.length > 0) {
+    await database.batch(queries as [BatchQuery, ...BatchQuery[]]);
+  }
+  return findCalendarById(database, calendar.id);
+}
