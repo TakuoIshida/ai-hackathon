@@ -6,9 +6,10 @@ import { invitations, memberships, workspaces } from "@/db/schema/workspaces";
 import type { EmailMessage, SendEmailFn } from "@/notifications/types";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
-import { findInvitationByToken, findOpenInvitationForEmail } from "./repo";
+import { findInvitationByToken, findMembership, findOpenInvitationForEmail } from "./repo";
 import {
   acceptInvitation,
+  changeMemberRole,
   createWorkspaceForUser,
   getWorkspaceForUser,
   issueInvitation,
@@ -345,6 +346,88 @@ describe("workspaces/usecase: acceptInvitation (ISH-109)", () => {
     expect(r2.kind).toBe("already_accepted");
     const after2 = await findInvitationByToken(db, invitation.token);
     expect(after2?.acceptedAt?.toISOString()).toBe(t1.toISOString());
+  });
+});
+
+describe("workspaces/usecase: changeMemberRole (ISH-111)", () => {
+  test("ok: promotes a member to owner", async () => {
+    const { owner, workspace } = await seedWorkspace();
+    const member = await seedUser();
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: workspace.id, userId: member.id, role: "member" });
+
+    const result = await changeMemberRole(db, owner.id, workspace.id, member.id, "owner");
+    expect(result.kind).toBe("ok");
+    const reloaded = await findMembership(db, workspace.id, member.id);
+    expect(reloaded?.role).toBe("owner");
+  });
+
+  test("ok: demotes an owner to member when there is another owner", async () => {
+    const { owner, workspace } = await seedWorkspace();
+    const second = await seedUser();
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: workspace.id, userId: second.id, role: "owner" });
+
+    const result = await changeMemberRole(db, owner.id, workspace.id, second.id, "member");
+    expect(result.kind).toBe("ok");
+    const reloaded = await findMembership(db, workspace.id, second.id);
+    expect(reloaded?.role).toBe("member");
+  });
+
+  test("forbidden when caller is a member, not an owner", async () => {
+    const { workspace } = await seedWorkspace();
+    const memberCaller = await seedUser();
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: workspace.id, userId: memberCaller.id, role: "member" });
+    const target = await seedUser();
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: workspace.id, userId: target.id, role: "member" });
+
+    const result = await changeMemberRole(db, memberCaller.id, workspace.id, target.id, "owner");
+    expect(result.kind).toBe("forbidden");
+  });
+
+  test("not_found when target is not a member of the workspace", async () => {
+    const { owner, workspace } = await seedWorkspace();
+    const stranger = await seedUser();
+    const result = await changeMemberRole(db, owner.id, workspace.id, stranger.id, "owner");
+    expect(result.kind).toBe("not_found");
+  });
+
+  test("not_found when caller is not a member of the workspace", async () => {
+    const { workspace } = await seedWorkspace();
+    const stranger = await seedUser();
+    const target = await seedUser();
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: workspace.id, userId: target.id, role: "member" });
+
+    const result = await changeMemberRole(db, stranger.id, workspace.id, target.id, "owner");
+    expect(result.kind).toBe("not_found");
+  });
+
+  test("last_owner: blocks demoting the only owner to member", async () => {
+    const { owner, workspace } = await seedWorkspace();
+    const result = await changeMemberRole(db, owner.id, workspace.id, owner.id, "member");
+    expect(result.kind).toBe("last_owner");
+    // role unchanged
+    const reloaded = await findMembership(db, workspace.id, owner.id);
+    expect(reloaded?.role).toBe("owner");
+  });
+
+  test("noop: target's current role already equals newRole", async () => {
+    const { owner, workspace } = await seedWorkspace();
+    const member = await seedUser();
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: workspace.id, userId: member.id, role: "member" });
+
+    const result = await changeMemberRole(db, owner.id, workspace.id, member.id, "member");
+    expect(result.kind).toBe("noop");
   });
 });
 

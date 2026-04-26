@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
 import {
   type Invitation,
@@ -149,6 +149,40 @@ export async function findMembership(
     .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
     .limit(1);
   return row ?? null;
+}
+
+/**
+ * ISH-111: change a member's role. Returns true iff a row matched and was
+ * updated. The caller (usecase) is responsible for the role-policy checks
+ * (caller is owner; not the last owner being demoted; etc.).
+ */
+export async function updateMembershipRole(
+  database: Database,
+  workspaceId: string,
+  userId: string,
+  role: MembershipRole,
+): Promise<boolean> {
+  const result = await database
+    .update(memberships)
+    .set({ role })
+    .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
+    .returning({ id: memberships.id });
+  return result.length > 0;
+}
+
+/**
+ * ISH-111: number of `owner` memberships in the workspace. Used to block
+ * demoting the only remaining owner.
+ */
+export async function countOwnersForWorkspace(
+  database: Database,
+  workspaceId: string,
+): Promise<number> {
+  const [row] = await database
+    .select({ count: sql<number>`count(*)::int` })
+    .from(memberships)
+    .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.role, "owner")));
+  return row?.count ?? 0;
 }
 
 export async function findOpenInvitationForEmail(

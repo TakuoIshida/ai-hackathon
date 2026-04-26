@@ -49,3 +49,17 @@ describe("/workspaces auth gate (ISH-107)", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("/workspaces auth gate (ISH-111)", () => {
+  test("PATCH /workspaces/:id/members/:userId → 401 unauth", async () => {
+    const res = await app.request(
+      "/workspaces/00000000-0000-0000-0000-000000000000/members/00000000-0000-0000-0000-000000000001",
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: "owner" }),
+      },
+    );
+    expect(res.status).toBe(401);
+  });
+});

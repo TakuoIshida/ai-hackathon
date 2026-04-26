@@ -6,11 +6,13 @@ import { memberships, workspaces } from "@/db/schema/workspaces";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
 import {
+  countOwnersForWorkspace,
   createWorkspaceWithOwnerMembership,
   findMembership,
   findWorkspaceById,
   getWorkspaceForMember,
   listMembershipsForUser,
+  updateMembershipRole,
 } from "./repo";
 
 let testDb: TestDb;
@@ -175,5 +177,80 @@ describe("workspaces/repo: getWorkspaceForMember (ISH-107)", () => {
   test("returns null when workspace id does not exist", async () => {
     const owner = await seedUser();
     expect(await getWorkspaceForMember(db, randomUUID(), owner.id)).toBeNull();
+  });
+});
+
+describe("workspaces/repo: updateMembershipRole (ISH-111)", () => {
+  test("returns true and persists the new role on hit", async () => {
+    const owner = await seedUser();
+    const created = await createWorkspaceWithOwnerMembership(db, {
+      name: "Acme",
+      slug: "acme-update",
+      ownerUserId: owner.id,
+    });
+    if (created.kind !== "ok") throw new Error("seed");
+    const member = await seedUser();
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: created.workspace.id, userId: member.id, role: "member" });
+
+    const updated = await updateMembershipRole(db, created.workspace.id, member.id, "owner");
+    expect(updated).toBe(true);
+    const reloaded = await findMembership(db, created.workspace.id, member.id);
+    expect(reloaded?.role).toBe("owner");
+  });
+
+  test("returns false when no membership row matches", async () => {
+    const owner = await seedUser();
+    const created = await createWorkspaceWithOwnerMembership(db, {
+      name: "Acme",
+      slug: "acme-miss",
+      ownerUserId: owner.id,
+    });
+    if (created.kind !== "ok") throw new Error("seed");
+    const stranger = await seedUser();
+
+    const updated = await updateMembershipRole(db, created.workspace.id, stranger.id, "owner");
+    expect(updated).toBe(false);
+  });
+});
+
+describe("workspaces/repo: countOwnersForWorkspace (ISH-111)", () => {
+  test("counts only owner rows scoped to the workspace", async () => {
+    const ownerA = await seedUser();
+    const ownerB = await seedUser();
+    const wsA = await createWorkspaceWithOwnerMembership(db, {
+      name: "A",
+      slug: "ws-count-a",
+      ownerUserId: ownerA.id,
+    });
+    const wsB = await createWorkspaceWithOwnerMembership(db, {
+      name: "B",
+      slug: "ws-count-b",
+      ownerUserId: ownerB.id,
+    });
+    if (wsA.kind !== "ok" || wsB.kind !== "ok") throw new Error("seed");
+
+    expect(await countOwnersForWorkspace(db, wsA.workspace.id)).toBe(1);
+    expect(await countOwnersForWorkspace(db, wsB.workspace.id)).toBe(1);
+
+    // Add a second owner to wsA — wsB count should be unaffected.
+    const second = await seedUser();
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: wsA.workspace.id, userId: second.id, role: "owner" });
+    expect(await countOwnersForWorkspace(db, wsA.workspace.id)).toBe(2);
+    expect(await countOwnersForWorkspace(db, wsB.workspace.id)).toBe(1);
+
+    // Members are not counted.
+    const memberOnly = await seedUser();
+    await testDb
+      .insert(memberships)
+      .values({ workspaceId: wsA.workspace.id, userId: memberOnly.id, role: "member" });
+    expect(await countOwnersForWorkspace(db, wsA.workspace.id)).toBe(2);
+  });
+
+  test("returns 0 for an unknown workspace id", async () => {
+    expect(await countOwnersForWorkspace(db, randomUUID())).toBe(0);
   });
 });

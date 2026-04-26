@@ -102,6 +102,10 @@ export type GoogleConnection = {
 // `WorkspaceSummary` for now — member-management UI lives in a future ticket.
 export type WorkspaceRole = "owner" | "member";
 
+// ISH-111: alias used by member-management UI. Same union as WorkspaceRole;
+// kept as a separate name so role-change call sites read clearly.
+export type MembershipRole = "owner" | "member";
+
 export type WorkspaceSummary = {
   id: string;
   slug: string;
