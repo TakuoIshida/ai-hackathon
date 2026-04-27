@@ -5,9 +5,7 @@ import * as bookingsRepo from "@/bookings/repo";
 import { tryInsertConfirmedBooking } from "@/bookings/repo";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
 import { availabilityLinks, bookings, users } from "@/db/schema";
-import * as linksRepo from "@/links/repo";
 import { createTestDb, type TestDb } from "@/test/integration-db";
-import * as usersRepo from "@/users/repo";
 import { sendDueReminders } from "./reminder-job";
 import type { EmailMessage, SendEmailFn } from "./types";
 
@@ -285,50 +283,6 @@ describe("sendDueReminders (ISH-98)", () => {
     for (const id of [a.id, b.id, c.id]) {
       const [row] = await testDb.select().from(bookings).where(eq(bookings.id, id));
       expect(row?.reminderSentAt).toBeTruthy();
-    }
-  });
-
-  // FK constraints (`bookings.link_id` ON DELETE RESTRICT) make this branch
-  // unreachable in production, but the defensive check exists in dispatch().
-  // Pin it so a future FK relaxation surfaces test failures rather than
-  // silent crashes / null-deref.
-  test("link missing (orphan booking): result.failed incremented, no email sent", async () => {
-    const fixture = await seedOwnerAndLink();
-    await insertDueBooking(fixture.linkId, "guest@example.com");
-
-    const findLinkSpy = spyOn(linksRepo, "findLinkById").mockResolvedValue(null);
-    try {
-      const { sendEmail, captured } = captureSender();
-      const result = await sendDueReminders(db, {
-        sendEmail,
-        appBaseUrl: APP_BASE_URL,
-        now: () => NOW.getTime(),
-      });
-      expect(result).toEqual({ considered: 1, sent: 0, skipped: 0, failed: 1 });
-      expect(captured.length).toBe(0);
-    } finally {
-      findLinkSpy.mockRestore();
-    }
-  });
-
-  // Same rationale as the link-missing case: defensive code that production
-  // FK constraints currently keep dead. Pinned to catch regressions.
-  test("owner missing: result.failed incremented, no email sent", async () => {
-    const fixture = await seedOwnerAndLink();
-    await insertDueBooking(fixture.linkId, "guest@example.com");
-
-    const findUserSpy = spyOn(usersRepo, "findUserById").mockResolvedValue(null);
-    try {
-      const { sendEmail, captured } = captureSender();
-      const result = await sendDueReminders(db, {
-        sendEmail,
-        appBaseUrl: APP_BASE_URL,
-        now: () => NOW.getTime(),
-      });
-      expect(result).toEqual({ considered: 1, sent: 0, skipped: 0, failed: 1 });
-      expect(captured.length).toBe(0);
-    } finally {
-      findUserSpy.mockRestore();
     }
   });
 

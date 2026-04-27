@@ -121,22 +121,14 @@ async function dispatch(
   result: ReminderJobResult,
 ): Promise<void> {
   try {
+    // Both lookups are FK-protected: bookings.link_id is ON DELETE RESTRICT
+    // and links.user_id is ON DELETE CASCADE, so a confirmed booking always
+    // has a live link + owner. The throws below exist for TS narrowing only;
+    // if either fires it's an invariant violation, not a normal flow.
     const link = await findLinkById(database, booking.linkId);
-    if (!link) {
-      console.error(
-        `[reminder-job] link missing for booking=${booking.bookingId} link=${booking.linkId}`,
-      );
-      result.failed += 1;
-      return;
-    }
+    if (!link) throw new Error(`reminder-job: link missing booking=${booking.bookingId}`);
     const owner = await findUserById(database, link.userId);
-    if (!owner) {
-      console.error(
-        `[reminder-job] owner missing for booking=${booking.bookingId} user=${link.userId}`,
-      );
-      result.failed += 1;
-      return;
-    }
+    if (!owner) throw new Error(`reminder-job: owner missing user=${link.userId}`);
 
     const ctx: BookingNotificationContext = {
       linkTitle: link.title,
