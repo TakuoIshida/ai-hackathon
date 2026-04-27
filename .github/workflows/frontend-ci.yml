@@ -24,9 +24,10 @@ on:
       - "biome.json"
       - ".github/workflows/frontend-ci.yml"
       - ".github/actions/setup/**"
+  workflow_dispatch:
 
 concurrency:
-  group: frontend-ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
