@@ -1,26 +1,36 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
-import { cancelBookingByToken } from "@/bookings/cancel";
-import { type CreateEventFn, confirmBooking, type GetAccessTokenFn } from "@/bookings/confirm";
+import { type CancelBookingPorts, cancelBookingByToken } from "@/bookings/cancel";
+import { type ConfirmBookingPorts, confirmBooking } from "@/bookings/confirm";
 import { bookingInputSchema, toConfirmBookingCommand } from "@/bookings/schemas";
 import { config } from "@/config";
 import { db } from "@/db/client";
-import { getValidAccessToken } from "@/google/access-token";
-import { createEvent, queryFreeBusy } from "@/google/calendar";
-import type { GoogleConfig } from "@/google/config";
 import { findPublishedLinkBySlug } from "@/links/repo";
-import { computePublicSlots, type GooglePort } from "@/links/usecase";
+import { computePublicSlots } from "@/links/usecase";
 import { createBookingNotifier } from "@/notifications/booking-notifier";
 import { createResendSender } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
+import type {
+  GooglePort,
+  LinkAvailabilityPort,
+  LinkLookupPort,
+  NotificationPort,
+  UserLookupPort,
+} from "@/ports";
+import {
+  buildGooglePort,
+  buildLinkAvailabilityPort,
+  buildLinkLookupPort,
+  buildUserLookupPort,
+} from "@/wiring";
 
 export type PublicRouteDeps = {
-  loadCfg: () => GoogleConfig | null;
-  createEvent: CreateEventFn;
-  getAccessToken: GetAccessTokenFn;
-  sendEmail: SendEmailFn;
-  appBaseUrl: string;
+  google: GooglePort | null;
+  links: LinkLookupPort;
+  availability: LinkAvailabilityPort;
+  users: UserLookupPort;
+  notifier: NotificationPort;
 };
 
 function buildProductionSendEmail(): SendEmailFn {
@@ -31,27 +41,26 @@ function buildProductionSendEmail(): SendEmailFn {
   return createResendSender(config.resend);
 }
 
-const productionDeps: PublicRouteDeps = {
-  loadCfg: () => config.google,
-  createEvent,
-  getAccessToken: getValidAccessToken,
-  sendEmail: buildProductionSendEmail(),
-  appBaseUrl: config.appBaseUrl,
-};
-
-/**
- * Build a `GooglePort` for `computePublicSlots` from the route's deps.
- * Returns `undefined` when no Google config is loaded (env vars unset),
- * which signals `computePublicSlots` to skip the busy lookup entirely.
- */
-function buildGooglePort(deps: PublicRouteDeps): GooglePort | undefined {
-  const cfg = deps.loadCfg();
-  if (!cfg) return undefined;
+function buildProductionDeps(): PublicRouteDeps {
+  const google = buildGooglePort(db, config.google);
   return {
-    getValidAccessToken: (oauthAccountId) => deps.getAccessToken(db, cfg, oauthAccountId),
-    getFreeBusy: (input) => queryFreeBusy(input),
+    google,
+    links: buildLinkLookupPort(db),
+    // confirmBooking's slot revalidation only re-checks the rules grid; busy
+    // intervals are skipped (the bookings.uniq_bookings_active_slot index is
+    // what guards races, not this re-check). Pass `null` so the port mirrors
+    // the historical behavior. The slots endpoint below calls
+    // `computePublicSlots` directly with `deps.google` for busy merge.
+    availability: buildLinkAvailabilityPort(db, null),
+    users: buildUserLookupPort(db),
+    notifier: createBookingNotifier({
+      sendEmail: buildProductionSendEmail(),
+      appBaseUrl: config.appBaseUrl,
+    }),
   };
 }
+
+const productionDeps: PublicRouteDeps = buildProductionDeps();
 
 export function createPublicRoute(deps: PublicRouteDeps = productionDeps): Hono {
   const route = new Hono();
@@ -84,7 +93,7 @@ export function createPublicRoute(deps: PublicRouteDeps = productionDeps): Hono 
       return c.json({ error: "invalid_range" }, 400);
     }
 
-    const result = await computePublicSlots(db, link, { fromMs, toMs }, buildGooglePort(deps));
+    const result = await computePublicSlots(db, link, { fromMs, toMs }, deps.google);
     return c.json({
       durationMinutes: link.durationMinutes,
       timeZone: link.timeZone,
@@ -104,22 +113,14 @@ export function createPublicRoute(deps: PublicRouteDeps = productionDeps): Hono 
       return c.json({ error: "invalid_start_at" }, 400);
     }
 
-    const result = await confirmBooking(
-      db,
-      link,
-      command,
-      {
-        cfg: deps.loadCfg(),
-        createEvent: deps.createEvent,
-        getAccessToken: deps.getAccessToken,
-      },
-      {
-        notifier: createBookingNotifier({
-          sendEmail: deps.sendEmail,
-          appBaseUrl: deps.appBaseUrl,
-        }),
-      },
-    );
+    const ports: ConfirmBookingPorts = {
+      google: deps.google,
+      links: deps.links,
+      availability: deps.availability,
+      users: deps.users,
+      notifier: deps.notifier,
+    };
+    const result = await confirmBooking(db, link, command, ports);
 
     if (result.kind === "slot_unavailable") {
       return c.json({ error: "slot_unavailable" }, 410);
@@ -152,21 +153,13 @@ export function createPublicRoute(deps: PublicRouteDeps = productionDeps): Hono 
     if (!/^[0-9a-f-]{36}$/i.test(token)) {
       return c.json({ error: "invalid_token" }, 400);
     }
-    const result = await cancelBookingByToken(
-      db,
-      token,
-      {
-        cfg: deps.loadCfg(),
-        createEvent: deps.createEvent,
-        getAccessToken: deps.getAccessToken,
-      },
-      {
-        notifier: createBookingNotifier({
-          sendEmail: deps.sendEmail,
-          appBaseUrl: deps.appBaseUrl,
-        }),
-      },
-    );
+    const ports: CancelBookingPorts = {
+      google: deps.google,
+      links: deps.links,
+      users: deps.users,
+      notifier: deps.notifier,
+    };
+    const result = await cancelBookingByToken(db, token, ports);
     if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
     if (result.kind === "already_canceled") return c.json({ ok: true, alreadyCanceled: true });
     return c.json({ ok: true, bookingId: result.booking.id });

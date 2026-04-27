@@ -1,39 +1,28 @@
 import type { db as DbClient } from "@/db/client";
-import type { CreatedEvent, EventCreateInput } from "@/google/calendar";
-import type { GoogleConfig } from "@/google/config";
-import { getOauthAccountByUser, listUserCalendars } from "@/google/repo";
-import type { LinkWithRelations } from "@/links/domain";
-import { listLinkCoOwnerUserIds } from "@/links/repo";
-import { computePublicSlots } from "@/links/usecase";
-import type { BookingNotifier } from "@/notifications/types";
-import { getUserById } from "@/users/usecase";
+import type {
+  GooglePort,
+  LinkAvailabilityPort,
+  LinkLookupPort,
+  LinkWithRelations,
+  NotificationPort,
+  UserLookupPort,
+} from "@/ports";
 import type { Booking, ConfirmBookingCommand } from "./domain";
 import { attachGoogleEvent, tryInsertConfirmedBooking } from "./repo";
 
 type Database = typeof DbClient;
 
-export type CreateEventFn = (input: EventCreateInput) => Promise<CreatedEvent>;
-export type GetAccessTokenFn = (
-  database: Database,
-  cfg: GoogleConfig,
-  oauthAccountId: string,
-) => Promise<string>;
-
-export type GoogleSinks = {
-  cfg: GoogleConfig | null;
-  createEvent: CreateEventFn;
-  getAccessToken: GetAccessTokenFn;
-};
-
 /**
- * Presentation port for booking notifications (ISH-123). The usecase only
- * publishes domain events; the adapter (see `@/notifications/booking-notifier`)
- * decides how to deliver them. Wrapped naming for backward compatibility with
- * existing `NotificationSinks` callsites — the field name `notifier` keeps the
- * dependency-shape pattern used by `GoogleSinks`.
+ * Cross-feature dependencies for `confirmBooking`. All adapters are built in
+ * the composition root (`wiring.ts`); tests inject fakes. `google === null`
+ * means Google is disabled and calendar sync is skipped.
  */
-export type NotificationSinks = {
-  notifier: BookingNotifier;
+export type ConfirmBookingPorts = {
+  google: GooglePort | null;
+  links: LinkLookupPort;
+  availability: LinkAvailabilityPort;
+  users: UserLookupPort;
+  notifier: NotificationPort;
 };
 
 export type ConfirmResult =
@@ -66,13 +55,12 @@ export async function confirmBooking(
   database: Database,
   link: LinkWithRelations,
   input: ConfirmInput,
-  google: GoogleSinks,
-  notifications: NotificationSinks,
+  ports: ConfirmBookingPorts,
 ): Promise<ConfirmResult> {
   const startMs = input.startMs;
   const endMs = startMs + link.durationMinutes * 60_000;
 
-  if (!(await revalidateSlot(database, link, startMs, endMs))) {
+  if (!(await revalidateSlot(link, startMs, endMs, ports.availability))) {
     return { kind: "slot_unavailable" };
   }
 
@@ -87,8 +75,8 @@ export async function confirmBooking(
   });
   if (!inserted) return { kind: "race_lost" };
 
-  const booking = await syncGoogleEvent(database, link, inserted, input, google);
-  await notifyConfirmed(database, link, booking, notifications);
+  const booking = await syncGoogleEvent(database, link, inserted, input, ports);
+  await notifyConfirmed(link, booking, ports);
   return { kind: "ok", booking };
 }
 
@@ -99,12 +87,12 @@ export async function confirmBooking(
  * the local day in any IANA timezone.
  */
 async function revalidateSlot(
-  database: Database,
   link: LinkWithRelations,
   startMs: number,
   endMs: number,
+  availability: LinkAvailabilityPort,
 ): Promise<boolean> {
-  const result = await computePublicSlots(database, link, {
+  const result = await availability.computePublicSlots(link, {
     fromMs: startMs - 24 * 60 * 60_000,
     toMs: startMs + 24 * 60 * 60_000,
   });
@@ -128,19 +116,20 @@ async function syncGoogleEvent(
   link: LinkWithRelations,
   booking: Booking,
   input: ConfirmInput,
-  google: GoogleSinks,
+  ports: ConfirmBookingPorts,
 ): Promise<Booking> {
-  if (!google.cfg) return booking;
+  const { google, links, users } = ports;
+  if (!google) return booking;
   try {
-    const account = await getOauthAccountByUser(database, link.userId);
+    const account = await google.getOauthAccountByUser(link.userId);
     if (!account) return booking;
 
-    const calendars = await listUserCalendars(database, account.id);
+    const calendars = await google.listUserCalendars(account.id);
     const writeTarget = calendars.find((c) => c.usedForWrites) ?? calendars[0];
     if (!writeTarget) return booking;
 
-    const ownerEmails = await loadCoOwnerEmails(database, link.id);
-    const accessToken = await google.getAccessToken(database, google.cfg, account.id);
+    const ownerEmails = await loadCoOwnerEmails(link.id, links, users);
+    const accessToken = await google.getValidAccessToken(account.id);
     const created = await google.createEvent({
       accessToken,
       calendarId: writeTarget.googleCalendarId,
@@ -163,11 +152,15 @@ async function syncGoogleEvent(
   }
 }
 
-async function loadCoOwnerEmails(database: Database, linkId: string): Promise<string[]> {
-  const coOwnerIds = await listLinkCoOwnerUserIds(database, linkId);
+async function loadCoOwnerEmails(
+  linkId: string,
+  links: LinkLookupPort,
+  users: UserLookupPort,
+): Promise<string[]> {
+  const coOwnerIds = await links.listLinkCoOwnerUserIds(linkId);
   const emails: string[] = [];
   for (const ownerId of coOwnerIds) {
-    const u = await getUserById(database, ownerId);
+    const u = await users.findUserById(ownerId);
     if (u) emails.push(u.email);
   }
   return emails;
@@ -180,15 +173,14 @@ async function loadCoOwnerEmails(database: Database, linkId: string): Promise<st
  * ISH-91/92/93/96 — owner + guest confirm.
  */
 async function notifyConfirmed(
-  database: Database,
   link: LinkWithRelations,
   booking: Booking,
-  notifications: NotificationSinks,
+  ports: ConfirmBookingPorts,
 ): Promise<void> {
   try {
-    const owner = await getUserById(database, link.userId);
+    const owner = await ports.users.findUserById(link.userId);
     if (!owner) return;
-    await notifications.notifier.notify({
+    await ports.notifier.notify({
       kind: "booking_confirmed",
       booking,
       link: {

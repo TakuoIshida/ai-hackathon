@@ -12,18 +12,14 @@ import {
 } from "@/db/schema";
 import type { LinkWithRelations } from "@/links/domain";
 import { findPublishedLinkBySlug } from "@/links/repo";
-import { createBookingNotifier } from "@/notifications/booking-notifier";
-import type { BookingEvent, EmailMessage, SendEmailFn } from "@/notifications/types";
-import { createTestDb, type TestDb } from "@/test/integration-db";
 import {
-  type ConfirmInput,
-  type ConfirmResult,
-  type CreateEventFn,
-  confirmBooking,
-  type GetAccessTokenFn,
-  type GoogleSinks,
-  type NotificationSinks,
-} from "./confirm";
+  type BookingTestSinks,
+  buildBookingTestSinks,
+  buildTestGooglePort,
+  toConfirmPorts,
+} from "@/test/booking-ports";
+import { createTestDb, type TestDb } from "@/test/integration-db";
+import { type ConfirmInput, type ConfirmResult, confirmBooking } from "./confirm";
 
 const TZ = "Asia/Tokyo";
 // Pick a Monday far enough in the future that Date.now() is always earlier.
@@ -33,37 +29,7 @@ const SLOT_START_MS = Date.parse(SLOT_START_ISO);
 const SLOT_END_MS = SLOT_START_MS + 30 * 60_000;
 
 let testDb: TestDb;
-let sentEmails: EmailMessage[];
-let notifyCalls: BookingEvent[];
-
-const captureSendEmail: SendEmailFn = async (msg: EmailMessage) => {
-  sentEmails.push(msg);
-};
-
-/**
- * Build a `NotificationSinks` whose `notifier` records every event it
- * receives AND dispatches via the real `createBookingNotifier` adapter so the
- * SendEmail pipeline + template rendering is also exercised end-to-end.
- *
- * Tests can therefore assert on:
- *   - the published domain event shape (`notifyCalls[0].kind === "booking_confirmed"`)
- *   - the rendered email envelopes (`sentEmails`)
- * without re-implementing the templates in the test file.
- */
-function buildNotifications(
-  sendEmail: SendEmailFn = captureSendEmail,
-  appBaseUrl = "https://app.test",
-): NotificationSinks {
-  const adapter = createBookingNotifier({ sendEmail, appBaseUrl });
-  return {
-    notifier: {
-      async notify(event) {
-        notifyCalls.push(event);
-        await adapter.notify(event);
-      },
-    },
-  };
-}
+let sinks: BookingTestSinks;
 
 type SeededLink = {
   userId: string;
@@ -141,41 +107,6 @@ async function seedGoogleCalendar(db: TestDb, userId: string): Promise<string> {
   return account.id;
 }
 
-const noGoogleSinks: GoogleSinks = {
-  cfg: null,
-  createEvent: async () => {
-    throw new Error("createEvent should not be called in no-Google tests");
-  },
-  getAccessToken: async () => {
-    throw new Error("getAccessToken should not be called in no-Google tests");
-  },
-};
-
-function googleSinksWith(overrides: {
-  createEvent?: CreateEventFn;
-  getAccessToken?: GetAccessTokenFn;
-}): GoogleSinks {
-  return {
-    cfg: {
-      clientId: "x",
-      clientSecret: "y",
-      redirectUri: "z",
-      encryptionKey: Buffer.alloc(32),
-      appBaseUrl: "http://app",
-    },
-    createEvent:
-      overrides.createEvent ??
-      (async () => ({
-        id: "evt-1",
-        meetUrl: "https://meet.google.com/abc-defg-hij",
-        htmlLink: "https://example.com/evt-1",
-      })),
-    getAccessToken: overrides.getAccessToken ?? (async () => "fake-access-token"),
-  };
-}
-
-const notifications: NotificationSinks = buildNotifications();
-
 const validInput = (): ConfirmInput => ({
   startMs: SLOT_START_MS,
   guestName: "Guest Name",
@@ -195,8 +126,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  sentEmails = [];
-  notifyCalls = [];
+  sinks = buildBookingTestSinks(db);
   await testDb.$client.exec(`
     TRUNCATE TABLE bookings, availability_excludes, availability_rules,
     availability_links, google_calendars, google_oauth_accounts, users
@@ -208,7 +138,7 @@ describe("confirmBooking — happy path without Google", () => {
   test("inserts a confirmed booking and fires both confirmation emails", async () => {
     const seed = await seedPublishedLink(testDb);
 
-    const result = await confirmBooking(db, seed.link, validInput(), noGoogleSinks, notifications);
+    const result = await confirmBooking(db, seed.link, validInput(), toConfirmPorts(sinks, null));
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("unexpected kind");
@@ -226,8 +156,8 @@ describe("confirmBooking — happy path without Google", () => {
 
     // ISH-123: usecase publishes a single domain event; the notifier adapter
     // is what fans it out to owner + guest emails.
-    expect(notifyCalls.length).toBe(1);
-    const event = notifyCalls[0];
+    expect(sinks.notifyCalls.length).toBe(1);
+    const event = sinks.notifyCalls[0];
     expect(event?.kind).toBe("booking_confirmed");
     if (event?.kind !== "booking_confirmed") throw new Error("unexpected event kind");
     expect(event.booking.id).toBe(result.booking.id);
@@ -236,10 +166,13 @@ describe("confirmBooking — happy path without Google", () => {
     expect(event.link.title).toBe("30 min meeting");
 
     // Owner + guest email rendered by the adapter.
-    expect(sentEmails.length).toBe(2);
-    expect(sentEmails.map((e) => e.to).sort()).toEqual(["guest@example.com", "owner@example.com"]);
+    expect(sinks.sentEmails.length).toBe(2);
+    expect(sinks.sentEmails.map((e) => e.to).sort()).toEqual([
+      "guest@example.com",
+      "owner@example.com",
+    ]);
     // Cancel URL is built from the notifier's appBaseUrl + token.
-    const guestEmail = sentEmails.find((e) => e.to === "guest@example.com");
+    const guestEmail = sinks.sentEmails.find((e) => e.to === "guest@example.com");
     expect(guestEmail).toBeDefined();
     expect(guestEmail?.text).toContain(
       `https://app.test/cancel/${result.booking.cancellationToken}`,
@@ -254,7 +187,7 @@ describe("confirmBooking — Google integration", () => {
 
     let createEventCalled = 0;
     let lastTitle: string | undefined;
-    const sinks = googleSinksWith({
+    const google = buildTestGooglePort(db, {
       createEvent: async (input) => {
         createEventCalled += 1;
         lastTitle = input.title;
@@ -266,7 +199,7 @@ describe("confirmBooking — Google integration", () => {
       },
     });
 
-    const result = await confirmBooking(db, seed.link, validInput(), sinks, notifications);
+    const result = await confirmBooking(db, seed.link, validInput(), toConfirmPorts(sinks, google));
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("unexpected kind");
@@ -282,28 +215,28 @@ describe("confirmBooking — Google integration", () => {
     expect(persisted?.googleEventId).toBe("evt-google-1");
     expect(persisted?.meetUrl).toBe("https://meet.google.com/abc-defg-hij");
 
-    expect(sentEmails.length).toBe(2);
+    expect(sinks.sentEmails.length).toBe(2);
   });
 
   test("Google account not connected: booking succeeds without Google sync", async () => {
     // cfg is set but the user has no oauth account row → getOauthAccountByUser returns null.
     const seed = await seedPublishedLink(testDb);
     let createEventCalled = 0;
-    const sinks = googleSinksWith({
+    const google = buildTestGooglePort(db, {
       createEvent: async () => {
         createEventCalled += 1;
         return { id: "should-not-be-used" };
       },
     });
 
-    const result = await confirmBooking(db, seed.link, validInput(), sinks, notifications);
+    const result = await confirmBooking(db, seed.link, validInput(), toConfirmPorts(sinks, google));
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("unexpected kind");
     expect(createEventCalled).toBe(0);
     expect(result.booking.googleEventId).toBeNull();
     expect(result.booking.meetUrl).toBeNull();
-    expect(sentEmails.length).toBe(2);
+    expect(sinks.sentEmails.length).toBe(2);
   });
 
   test("createEvent throws — booking still stands (no rollback); googleEventId null", async () => {
@@ -316,14 +249,14 @@ describe("confirmBooking — Google integration", () => {
     await seedGoogleCalendar(testDb, seed.userId);
 
     let createEventCalls = 0;
-    const sinks = googleSinksWith({
+    const google = buildTestGooglePort(db, {
       createEvent: async () => {
         createEventCalls += 1;
         throw new Error("calendar boom");
       },
     });
 
-    const result = await confirmBooking(db, seed.link, validInput(), sinks, notifications);
+    const result = await confirmBooking(db, seed.link, validInput(), toConfirmPorts(sinks, google));
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("unexpected kind");
@@ -341,16 +274,16 @@ describe("confirmBooking — Google integration", () => {
     expect(persisted?.meetUrl).toBeNull();
 
     // Email side-effects still ran.
-    expect(sentEmails.length).toBe(2);
+    expect(sinks.sentEmails.length).toBe(2);
   });
 
-  test("getAccessToken throws — booking still stands (no rollback)", async () => {
+  test("getValidAccessToken throws — booking still stands (no rollback)", async () => {
     const seed = await seedPublishedLink(testDb);
     await seedGoogleCalendar(testDb, seed.userId);
 
     let createEventCalls = 0;
-    const sinks = googleSinksWith({
-      getAccessToken: async () => {
+    const google = buildTestGooglePort(db, {
+      getValidAccessToken: async () => {
         throw new Error("token boom");
       },
       createEvent: async () => {
@@ -359,7 +292,7 @@ describe("confirmBooking — Google integration", () => {
       },
     });
 
-    const result = await confirmBooking(db, seed.link, validInput(), sinks, notifications);
+    const result = await confirmBooking(db, seed.link, validInput(), toConfirmPorts(sinks, google));
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("unexpected kind");
@@ -373,15 +306,16 @@ describe("confirmBooking — notifications resilience", () => {
   test("sendEmail throws — booking is still committed (best-effort policy)", async () => {
     const seed = await seedPublishedLink(testDb);
 
-    const failingNotifications = buildNotifications(async () => {
-      throw new Error("smtp boom");
+    const failingSinks = buildBookingTestSinks(db, {
+      sendEmail: async () => {
+        throw new Error("smtp boom");
+      },
     });
     const result = await confirmBooking(
       db,
       seed.link,
       validInput(),
-      noGoogleSinks,
-      failingNotifications,
+      toConfirmPorts(failingSinks, null),
     );
 
     expect(result.kind).toBe("ok");
@@ -393,7 +327,9 @@ describe("confirmBooking — notifications resilience", () => {
   test("notifier.notify throws — booking is still committed (usecase swallows)", async () => {
     const seed = await seedPublishedLink(testDb);
 
-    const result = await confirmBooking(db, seed.link, validInput(), noGoogleSinks, {
+    const ports = toConfirmPorts(sinks, null);
+    const result = await confirmBooking(db, seed.link, validInput(), {
+      ...ports,
       notifier: {
         notify: async () => {
           throw new Error("notifier boom");
@@ -423,28 +359,26 @@ describe("confirmBooking — slot conflict / availability guards", () => {
         guestNote: null,
         guestTimeZone: null,
       },
-      noGoogleSinks,
-      notifications,
+      toConfirmPorts(sinks, null),
     );
 
     expect(result.kind).toBe("slot_unavailable");
     const rows = await testDb.select().from(bookings);
     expect(rows.length).toBe(0);
-    expect(sentEmails.length).toBe(0);
+    expect(sinks.sentEmails.length).toBe(0);
   });
 
   test("dual-booking same slot → kind:'race_lost' (409 shape) and only one row exists", async () => {
     const seed = await seedPublishedLink(testDb);
 
-    const first = await confirmBooking(db, seed.link, validInput(), noGoogleSinks, notifications);
+    const first = await confirmBooking(db, seed.link, validInput(), toConfirmPorts(sinks, null));
     expect(first.kind).toBe("ok");
 
     const second: ConfirmResult = await confirmBooking(
       db,
       seed.link,
       { ...validInput(), guestEmail: "different@example.com" },
-      noGoogleSinks,
-      notifications,
+      toConfirmPorts(sinks, null),
     );
 
     expect(second.kind).toBe("race_lost");
