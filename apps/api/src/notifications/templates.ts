@@ -136,6 +136,82 @@ export function guestCancelEmail(ctx: CancelNotificationContext): EmailMessage {
   };
 }
 
+// ISH-95: reminder emails sent X hours before a confirmed booking.
+//
+// Uses the same context shape as confirm/cancel so the cron job can hand the
+// existing notification context straight through. We do NOT include guestNote
+// here (reminders are operational, not editorial).
+
+function reminderText(
+  ctx: BookingNotificationContext,
+  opts: { audience: "owner" | "guest" },
+): string {
+  const tz =
+    opts.audience === "owner" ? ctx.ownerTimeZone : (ctx.guestTimeZone ?? ctx.ownerTimeZone);
+  const when = fmt(ctx.startAt, tz);
+  const counterpart =
+    opts.audience === "owner"
+      ? `ゲスト: ${ctx.guestName} <${ctx.guestEmail}>`
+      : ctx.ownerName
+        ? `主催者: ${ctx.ownerName} <${ctx.ownerEmail}>`
+        : `主催者: ${ctx.ownerEmail}`;
+  return [
+    `まもなく予約のお時間です — ${ctx.linkTitle}`,
+    "",
+    `日時: ${when} (${tz})`,
+    counterpart,
+    ctx.meetUrl ? `Google Meet: ${ctx.meetUrl}` : null,
+    "",
+    `キャンセル: ${ctx.cancelUrl}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function reminderHtml(
+  ctx: BookingNotificationContext,
+  opts: { audience: "owner" | "guest" },
+): string {
+  const tz =
+    opts.audience === "owner" ? ctx.ownerTimeZone : (ctx.guestTimeZone ?? ctx.ownerTimeZone);
+  const when = fmt(ctx.startAt, tz);
+  const counterpart =
+    opts.audience === "owner"
+      ? `ゲスト: ${escapeHtml(ctx.guestName)} &lt;${escapeHtml(ctx.guestEmail)}&gt;`
+      : ctx.ownerName
+        ? `主催者: ${escapeHtml(ctx.ownerName)} &lt;${escapeHtml(ctx.ownerEmail)}&gt;`
+        : `主催者: ${escapeHtml(ctx.ownerEmail)}`;
+  return `<!doctype html><html><body style="font-family:sans-serif">
+<h1 style="font-size:1.25rem">まもなく予約のお時間です</h1>
+<p><strong>${escapeHtml(ctx.linkTitle)}</strong></p>
+<p>日時: ${escapeHtml(when)} (${escapeHtml(tz)})</p>
+<p>${counterpart}</p>
+${ctx.meetUrl ? `<p>Google Meet: <a href="${escapeHtml(ctx.meetUrl)}">${escapeHtml(ctx.meetUrl)}</a></p>` : ""}
+<p style="font-size:0.875rem;color:#666">キャンセル: <a href="${escapeHtml(ctx.cancelUrl)}">${escapeHtml(ctx.cancelUrl)}</a></p>
+</body></html>`;
+}
+
+export function ownerReminderEmail(ctx: BookingNotificationContext): EmailMessage {
+  const when = fmt(ctx.startAt, ctx.ownerTimeZone);
+  return {
+    to: ctx.ownerEmail,
+    subject: `[リマインド] ${ctx.linkTitle} — ${when}`,
+    text: reminderText(ctx, { audience: "owner" }),
+    html: reminderHtml(ctx, { audience: "owner" }),
+  };
+}
+
+export function guestReminderEmail(ctx: BookingNotificationContext): EmailMessage {
+  const tz = ctx.guestTimeZone ?? ctx.ownerTimeZone;
+  const when = fmt(ctx.startAt, tz);
+  return {
+    to: ctx.guestEmail,
+    subject: `[リマインド] ${ctx.linkTitle} — ${when}`,
+    text: reminderText(ctx, { audience: "guest" }),
+    html: reminderHtml(ctx, { audience: "guest" }),
+  };
+}
+
 // ISH-108: workspace invitation email.
 export type WorkspaceInviteContext = {
   to: string;

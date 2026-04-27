@@ -3,8 +3,10 @@ import {
   type BookingNotificationContext,
   guestCancelEmail,
   guestConfirmEmail,
+  guestReminderEmail,
   ownerCancelEmail,
   ownerConfirmEmail,
+  ownerReminderEmail,
 } from "./templates";
 
 const baseCtx: BookingNotificationContext = {
@@ -80,5 +82,61 @@ describe("ownerCancelEmail / guestCancelEmail", () => {
     const ownerCanceled = guestCancelEmail({ ...baseCtx, canceledBy: "owner" });
     expect(guestCanceled.text).toContain("あなた が予約をキャンセル");
     expect(ownerCanceled.text).toContain("主催者 が予約をキャンセル");
+  });
+});
+
+describe("ownerReminderEmail (ISH-95)", () => {
+  test("addressed to owner with subject in owner timezone + リマインド prefix", () => {
+    const m = ownerReminderEmail(baseCtx);
+    expect(m.to).toBe("owner@example.com");
+    expect(m.subject).toContain("リマインド");
+    expect(m.subject).toContain("30 min meet");
+    // owner TZ = Asia/Tokyo → 14:00 JST
+    expect(m.subject).toContain("14:00");
+  });
+  test("body includes guest line, meet URL, and cancel URL", () => {
+    const m = ownerReminderEmail(baseCtx);
+    expect(m.text).toContain("guest@example.com");
+    expect(m.text).toContain("Guest <Hacker>");
+    expect(m.text).toContain("Google Meet:");
+    expect(m.text).toContain("https://meet.google.com/abc");
+    expect(m.text).toContain(baseCtx.cancelUrl);
+  });
+  test("escapes guestName in html (XSS guard)", () => {
+    const m = ownerReminderEmail(baseCtx);
+    expect(m.html).toContain("Guest &lt;Hacker&gt;");
+    expect(m.html).not.toContain("<Hacker>");
+  });
+  test("omits Meet line when meetUrl is null", () => {
+    const m = ownerReminderEmail({ ...baseCtx, meetUrl: null });
+    expect(m.text).not.toContain("Google Meet:");
+    expect(m.html).not.toContain("Google Meet:");
+  });
+});
+
+describe("guestReminderEmail (ISH-95)", () => {
+  test("addressed to guest, subject formatted in guest timezone", () => {
+    // guest in NY: 2026-12-14T05:00:00Z = 00:00 EST
+    const m = guestReminderEmail({ ...baseCtx, guestTimeZone: "America/New_York" });
+    expect(m.to).toBe("guest@example.com");
+    expect(m.subject).toContain("リマインド");
+    expect(m.subject).toContain("00:00");
+  });
+  test("falls back to owner TZ when guestTimeZone is null", () => {
+    const m = guestReminderEmail({ ...baseCtx, guestTimeZone: null });
+    // owner TZ JST → 14:00
+    expect(m.subject).toContain("14:00");
+  });
+  test("counterpart line shows organizer name when present, else email only", () => {
+    const withName = guestReminderEmail(baseCtx);
+    expect(withName.text).toContain("主催者: Owner Name <owner@example.com>");
+    const withoutName = guestReminderEmail({ ...baseCtx, ownerName: null });
+    expect(withoutName.text).toContain("主催者: owner@example.com");
+    expect(withoutName.text).not.toContain("主催者: Owner Name");
+  });
+  test("includes Meet URL and cancel URL", () => {
+    const m = guestReminderEmail(baseCtx);
+    expect(m.text).toContain("https://meet.google.com/abc");
+    expect(m.text).toContain(baseCtx.cancelUrl);
   });
 });
