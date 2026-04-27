@@ -1,43 +1,12 @@
 import { sql } from "drizzle-orm";
 import { pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { ulidPk } from "../helpers/ulid";
-import { users } from "./users";
+import { tenants, users } from "./common";
 
-export const workspaces = pgTable("workspaces", {
-  id: ulidPk(),
-  name: text("name").notNull(),
-  slug: text("slug").notNull().unique(),
-  ownerUserId: text("owner_user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "restrict" }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
-
-export type Workspace = typeof workspaces.$inferSelect;
-export type NewWorkspace = typeof workspaces.$inferInsert;
-
-export const memberships = pgTable(
-  "memberships",
-  {
-    id: ulidPk(),
-    workspaceId: text("workspace_id")
-      .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    role: text("role", { enum: ["owner", "member"] })
-      .notNull()
-      .default("member"),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (t) => [uniqueIndex("uniq_workspace_user").on(t.workspaceId, t.userId)],
-);
-
-export type Membership = typeof memberships.$inferSelect;
-export type NewMembership = typeof memberships.$inferInsert;
-export type MembershipRole = Membership["role"];
+// NOTE: workspaces and memberships tables have been moved to common.tenants
+// and common.tenant_members respectively (ISH-168 / D-1). This file now only
+// contains the invitations table, which will be moved to tenant.invitations in
+// D-2 (ISH-169).
 
 // ISH-108: workspace member invitations.
 //
@@ -50,7 +19,7 @@ export const invitations = pgTable(
     id: ulidPk(),
     workspaceId: text("workspace_id")
       .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
+      .references(() => tenants.id, { onDelete: "cascade" }),
     email: text("email").notNull(),
     // Security token: keep UUIDv4 to avoid timestamp exposure (P-5 design doc)
     token: uuid("token").notNull().unique().defaultRandom(),

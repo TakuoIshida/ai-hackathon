@@ -31,13 +31,13 @@ afterAll(async () => {
 beforeEach(async () => {
   await testDb.$client.exec(`
     TRUNCATE TABLE bookings, link_owners, availability_excludes, availability_rules,
-    availability_links, users RESTART IDENTITY CASCADE;
+    availability_links, common.users RESTART IDENTITY CASCADE;
   `);
 });
 
 async function seedUser(): Promise<string> {
   const u = await insertUser(db, {
-    clerkId: `c_${randomUUID()}`,
+    externalId: `c_${randomUUID()}`,
     email: "owner@example.com",
     name: null,
   });
@@ -77,7 +77,7 @@ describe("links/repo", () => {
   test("listLinksForUser scopes by userId", async () => {
     const userA = await seedUser();
     const userB = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "b@x.com",
       name: null,
     });
@@ -92,7 +92,7 @@ describe("links/repo", () => {
   test("getLinkForUser returns null when ownership does not match", async () => {
     const userA = await seedUser();
     const userB = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "b@x.com",
       name: null,
     });
@@ -154,12 +154,12 @@ describe("links/repo: link co-owners (ISH-112)", () => {
     const userId = await seedUser();
     const link = await createLink(db, userId, baseInput({ slug: "co-1" }));
     const u2 = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u2@x.com",
       name: null,
     });
     const u3 = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u3@x.com",
       name: null,
     });
@@ -172,7 +172,7 @@ describe("links/repo: link co-owners (ISH-112)", () => {
     const userId = await seedUser();
     const link = await createLink(db, userId, baseInput({ slug: "co-2" }));
     const u2 = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u2@x.com",
       name: null,
     });
@@ -184,12 +184,12 @@ describe("links/repo: link co-owners (ISH-112)", () => {
     const userId = await seedUser();
     const link = await createLink(db, userId, baseInput({ slug: "co-3" }));
     const u2 = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u2@x.com",
       name: null,
     });
     const u3 = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u3@x.com",
       name: null,
     });
@@ -202,7 +202,7 @@ describe("links/repo: link co-owners (ISH-112)", () => {
     const userId = await seedUser();
     const link = await createLink(db, userId, baseInput({ slug: "co-4" }));
     const u2 = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u2@x.com",
       name: null,
     });
@@ -215,7 +215,7 @@ describe("links/repo: link co-owners (ISH-112)", () => {
     const userId = await seedUser();
     const link = await createLink(db, userId, baseInput({ slug: "co-5" }));
     const u2 = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u2@x.com",
       name: null,
     });

@@ -24,7 +24,7 @@ export function createMeRoute(deps: MeRouteDeps = {}): Hono {
     }
     return c.json({
       id: row.id,
-      clerkId: row.clerkId,
+      externalId: row.externalId,
       email: row.email,
       name: row.name,
       timeZone: row.timeZone,

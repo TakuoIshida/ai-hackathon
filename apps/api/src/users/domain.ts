@@ -9,7 +9,8 @@
  */
 export type User = {
   id: string;
-  clerkId: string;
+  /** External IdP identifier (formerly clerkId). */
+  externalId: string;
   email: string;
   name: string | null;
   timeZone: string;
@@ -39,7 +40,7 @@ export function buildDisplayName(payload: ClerkUserPayload): string | null {
 }
 
 export function deriveUserAttributes(payload: ClerkUserPayload): {
-  clerkId: string;
+  externalId: string;
   email: string;
   name: string | null;
 } {
@@ -47,5 +48,5 @@ export function deriveUserAttributes(payload: ClerkUserPayload): {
   if (!email) {
     throw new Error(`Clerk user ${payload.id} has no email addresses`);
   }
-  return { clerkId: payload.id, email, name: buildDisplayName(payload) };
+  return { externalId: payload.id, email, name: buildDisplayName(payload) };
 }

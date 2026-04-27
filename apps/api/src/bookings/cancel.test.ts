@@ -41,7 +41,7 @@ beforeEach(async () => {
   sinks = buildBookingTestSinks(db);
   await testDb.$client.exec(`
     TRUNCATE TABLE bookings, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, users
+    availability_links, google_calendars, google_oauth_accounts, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
@@ -58,7 +58,7 @@ async function seedConfirmedBooking(
 ): Promise<SeedResult> {
   const [user] = await testDb
     .insert(users)
-    .values({ clerkId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
+    .values({ externalId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
     .returning();
   if (!user) throw new Error("seed user");
   const [link] = await testDb
@@ -231,7 +231,7 @@ describe("cancelBookingByOwner", () => {
     // Different user — must not be able to cancel someone else's booking.
     const [intruder] = await testDb
       .insert(users)
-      .values({ clerkId: `clerk_${randomUUID()}`, email: "intruder@example.com" })
+      .values({ externalId: `clerk_${randomUUID()}`, email: "intruder@example.com" })
       .returning();
     if (!intruder) throw new Error("seed intruder");
 

@@ -35,7 +35,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(`
-    TRUNCATE TABLE google_calendars, google_oauth_accounts, users
+    TRUNCATE TABLE google_calendars, google_oauth_accounts, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
@@ -46,7 +46,7 @@ async function seedAccountAndCalendar(opts?: { writes?: boolean }): Promise<{
   calendarId: string;
 }> {
   const u = await insertUser(db, {
-    clerkId: `c_${randomUUID()}`,
+    externalId: `c_${randomUUID()}`,
     email: "owner@example.com",
     name: null,
   });
@@ -82,7 +82,7 @@ async function seedAccountAndCalendar(opts?: { writes?: boolean }): Promise<{
 describe("google/usecase: upsertOauthAccountWithEncryption", () => {
   test("encrypts the refresh token and stores ciphertext (round-trip via decryptOauthRefreshToken)", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "x@example.com",
       name: null,
     });
@@ -114,7 +114,7 @@ describe("google/usecase: upsertOauthAccountWithEncryption", () => {
 
   test("upsert overwrites the encrypted fields on conflict", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "y@example.com",
       name: null,
     });
@@ -290,7 +290,7 @@ describe("google/usecase: updateCalendarFlagsForUser", () => {
 
   test("forbidden when user has no oauth account", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "x@x.com",
       name: null,
     });
@@ -439,7 +439,7 @@ describe("google/usecase: buildOauthAuthUrl", () => {
 describe("google/usecase: completeOauthCallback", () => {
   test("invalid_state when cookie/query mismatch", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -458,7 +458,7 @@ describe("google/usecase: completeOauthCallback", () => {
 
   test("invalid_state when cookie is missing", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -474,7 +474,7 @@ describe("google/usecase: completeOauthCallback", () => {
 
   test("missing_code when state matches but code is absent", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -490,7 +490,7 @@ describe("google/usecase: completeOauthCallback", () => {
 
   test("missing_refresh_token when Google omits refresh_token", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -508,7 +508,7 @@ describe("google/usecase: completeOauthCallback", () => {
 
   test("missing_scopes when granted scope set is incomplete", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -526,7 +526,7 @@ describe("google/usecase: completeOauthCallback", () => {
 
   test("ok: persists oauth account, runs initial calendar sync, returns redirect URL", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -557,7 +557,7 @@ describe("google/usecase: completeOauthCallback", () => {
 
   test("ok even when initial calendar sync throws (best-effort)", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -580,7 +580,7 @@ describe("google/usecase: completeOauthCallback", () => {
 
   test("upsert: re-running callback for the same google user updates the row", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -619,7 +619,7 @@ describe("google/usecase: completeOauthCallback", () => {
 describe("google/usecase: disconnectGoogleAccount", () => {
   test("already_disconnected when no oauth row exists", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -631,7 +631,7 @@ describe("google/usecase: disconnectGoogleAccount", () => {
 
   test("ok: revokes refresh token and deletes the row", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -661,7 +661,7 @@ describe("google/usecase: disconnectGoogleAccount", () => {
 
   test("ok: still deletes row when revoke throws (best-effort)", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -699,7 +699,7 @@ describe("google/usecase: disconnectGoogleAccount", () => {
 describe("google/usecase: completeOauthCallback (real adapters + fake fetch)", () => {
   test("token exchange + userinfo + calendarList all wired correctly", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
