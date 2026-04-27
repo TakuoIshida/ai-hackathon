@@ -23,7 +23,20 @@ const tree = (
 );
 
 if (PUBLISHABLE_KEY) {
-  root.render(<ClerkProvider publishableKey={PUBLISHABLE_KEY}>{tree}</ClerkProvider>);
+  // ISH-55: point Clerk at our in-app sign-in / sign-up routes so
+  // <RedirectToSignIn /> (App.tsx ProtectedDashboard) and Clerk's internal
+  // links stay inside the SPA shell instead of bouncing to Clerk's hosted page.
+  root.render(
+    <ClerkProvider
+      publishableKey={PUBLISHABLE_KEY}
+      signInUrl="/sign-in"
+      signUpUrl="/sign-up"
+      signInFallbackRedirectUrl="/dashboard"
+      signUpFallbackRedirectUrl="/dashboard"
+    >
+      {tree}
+    </ClerkProvider>,
+  );
 } else {
   console.warn(
     "[clerk] VITE_CLERK_PUBLISHABLE_KEY is not set — rendering app without Clerk. Auth-gated UI will be hidden.",
