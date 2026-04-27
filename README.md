@@ -35,6 +35,31 @@ cp .env.example apps/api/.env        # fill DATABASE_URL + CLERK_*
 cp .env.example apps/web/.env        # fill VITE_*
 ```
 
+## ローカル開発 DB (Postgres 17)
+
+ローカル開発では `docker-compose.dev.yml` で本物の Postgres 17 を立ち上げて
+`DATABASE_URL` を向けます (PGlite はテスト用)。
+
+```bash
+# 起動 (バックグラウンド)
+docker compose -f docker-compose.dev.yml up -d
+
+# apps/api/.env に以下を設定 (.env.example のデフォルト):
+# DATABASE_URL=postgres://postgres:postgres@localhost:5432/app_dev
+
+# スキーマ適用 (drizzle-kit push)
+bun run --filter @app/api db:push
+
+# 接続確認
+pg_isready -h localhost -p 5432 -U postgres
+
+# 停止 + データ削除 (ボリューム破棄)
+docker compose -f docker-compose.dev.yml down -v
+```
+
+データは名前付きボリューム `postgres-data` に永続化されます。完全リセットは
+`down -v`。
+
 ## Run (local, no Docker)
 
 ```bash
