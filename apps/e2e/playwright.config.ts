@@ -50,6 +50,16 @@ export default defineConfig({
       timeout: 30_000,
       stdout: "pipe",
       stderr: "pipe",
+      // E2E specs mock all API calls via page.route(); the API process only
+      // needs to boot far enough to serve /health. ISH-128's
+      // assertProductionConfig() throws at boot when these are missing, so we
+      // feed dummy values here. None of these are dialed — DATABASE_URL is
+      // never connected to, the Clerk keys never authenticate.
+      env: {
+        DATABASE_URL: "postgres://e2e:e2e@localhost:5432/e2e",
+        CLERK_SECRET_KEY: "sk_test_e2e_bypass",
+        CLERK_WEBHOOK_SECRET: "whsec_e2e_bypass",
+      },
     },
     {
       // In CI the web build artifact is downloaded into apps/web/dist by the
