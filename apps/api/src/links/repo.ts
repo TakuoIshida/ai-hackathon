@@ -212,6 +212,21 @@ export async function deleteLink(
   return result.length > 0;
 }
 
+/**
+ * Plain row by id (no rules/excludes, no ownership scoping). Used by
+ * cross-feature lookups via `LinkLookupPort` — bookings cancel needs the
+ * link's owner / title to build notifications without caring about who is
+ * cancelling.
+ */
+export async function findLinkById(database: Database, linkId: string): Promise<Link | null> {
+  const [row] = await database
+    .select()
+    .from(availabilityLinks)
+    .where(eq(availabilityLinks.id, linkId))
+    .limit(1);
+  return row ? toLinkDomain(row) : null;
+}
+
 export async function findPublishedLinkBySlug(
   database: Database,
   slug: string,

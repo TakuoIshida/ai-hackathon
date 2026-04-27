@@ -5,9 +5,13 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
 import { availabilityLinks, bookings, users } from "@/db/schema";
 import type { AuthVars } from "@/middleware/auth";
+import { createBookingNotifier } from "@/notifications/booking-notifier";
+import type { GooglePort, NotificationPort } from "@/ports";
 import { type BookingsRouteDeps, createBookingsRoute } from "@/routes/bookings";
+import { buildTestGooglePort } from "@/test/booking-ports";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { ensureUserByClerkId } from "@/users/usecase";
+import { buildLinkLookupPort, buildUserLookupPort } from "@/wiring";
 
 const TZ = "Asia/Tokyo";
 
@@ -15,20 +19,24 @@ let testDb: TestDb;
 type CapturedEmail = { to: string; subject: string };
 let sentEmails: CapturedEmail[];
 
+function captureNotifier(appBaseUrl = "https://app.test"): NotificationPort {
+  return createBookingNotifier({
+    sendEmail: async (msg) => {
+      sentEmails.push({ to: msg.to, subject: msg.subject });
+    },
+    appBaseUrl,
+  });
+}
+
 // Default fake deps mirror `public.bookings.test.ts`: no Google, capture emails.
-const noGoogleDeps: Omit<BookingsRouteDeps, "authMiddlewares"> = {
-  loadCfg: () => null,
-  createEvent: async () => {
-    throw new Error("createEvent should not be called in no-Google tests");
-  },
-  getAccessToken: async () => {
-    throw new Error("getAccessToken should not be called in no-Google tests");
-  },
-  sendEmail: async (msg) => {
-    sentEmails.push({ to: msg.to, subject: msg.subject });
-  },
-  appBaseUrl: "https://app.test",
-};
+function buildNoGoogleDeps(): Omit<BookingsRouteDeps, "authMiddlewares"> {
+  return {
+    google: null,
+    links: buildLinkLookupPort(db),
+    users: buildUserLookupPort(db),
+    notifier: captureNotifier(),
+  };
+}
 
 /**
  * Builds a fake auth middleware stack that:
@@ -64,7 +72,7 @@ function fakeAuthMiddlewares(): MiddlewareHandler[] {
 
 function buildApp(extra: Partial<BookingsRouteDeps> = {}): Hono {
   const deps: BookingsRouteDeps = {
-    ...noGoogleDeps,
+    ...buildNoGoogleDeps(),
     ...extra,
     authMiddlewares: fakeAuthMiddlewares(),
   };
@@ -343,20 +351,17 @@ describe("DELETE /bookings/:id (owner cancel)", () => {
       usedForWrites: true,
     });
 
-    // Provide a Google config so `cancel.ts` enters the deleteEvent branch.
-    // The `getAccessToken` fake throws to simulate a transient Google failure;
-    // the cancel must still succeed, and the booking must end up canceled.
-    const failingDeps: Partial<BookingsRouteDeps> = {
-      loadCfg: () => ({
-        clientId: "x",
-        clientSecret: "y",
-        redirectUri: "z",
-        encryptionKey: Buffer.alloc(32),
-        appBaseUrl: "http://app",
-      }),
-      getAccessToken: async () => {
+    // Provide a Google port so `cancel.ts` enters the deleteEvent branch.
+    // The `getValidAccessToken` fake throws to simulate a transient Google
+    // failure; the cancel must still succeed, and the booking must end up
+    // canceled.
+    const failingGoogle: GooglePort = buildTestGooglePort(db, {
+      getValidAccessToken: async () => {
         throw new Error("google boom");
       },
+    });
+    const failingDeps: Partial<BookingsRouteDeps> = {
+      google: failingGoogle,
     };
 
     const app = buildApp(failingDeps);

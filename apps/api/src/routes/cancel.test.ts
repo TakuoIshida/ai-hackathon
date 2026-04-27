@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { clearDbForTests, setDbForTests } from "@/db/client";
+import { clearDbForTests, db, setDbForTests } from "@/db/client";
 import {
   availabilityLinks,
   bookings,
@@ -10,29 +10,38 @@ import {
   googleOauthAccounts,
   users,
 } from "@/db/schema";
+import { createBookingNotifier } from "@/notifications/booking-notifier";
+import type { GooglePort, NotificationPort } from "@/ports";
 import { createPublicRoute, type PublicRouteDeps } from "@/routes/public";
+import { buildTestGooglePort } from "@/test/booking-ports";
 import { createTestDb, type TestDb } from "@/test/integration-db";
+import { buildLinkAvailabilityPort, buildLinkLookupPort, buildUserLookupPort } from "@/wiring";
 
 const TZ = "Asia/Tokyo";
 
 let testDb: TestDb;
 let sentEmails: { to: string; subject: string }[];
 
-const noGoogleDeps: PublicRouteDeps = {
-  loadCfg: () => null,
-  createEvent: async () => {
-    throw new Error("createEvent should not be called");
-  },
-  getAccessToken: async () => {
-    throw new Error("getAccessToken should not be called");
-  },
-  sendEmail: async (msg) => {
-    sentEmails.push({ to: msg.to, subject: msg.subject });
-  },
-  appBaseUrl: "https://app.test",
-};
+function captureNotifier(appBaseUrl = "https://app.test"): NotificationPort {
+  return createBookingNotifier({
+    sendEmail: async (msg) => {
+      sentEmails.push({ to: msg.to, subject: msg.subject });
+    },
+    appBaseUrl,
+  });
+}
 
-function buildApp(deps: PublicRouteDeps = noGoogleDeps): Hono {
+function buildNoGoogleDeps(): PublicRouteDeps {
+  return {
+    google: null,
+    links: buildLinkLookupPort(db),
+    availability: buildLinkAvailabilityPort(db, null),
+    users: buildUserLookupPort(db),
+    notifier: captureNotifier(),
+  };
+}
+
+function buildApp(deps: PublicRouteDeps = buildNoGoogleDeps()): Hono {
   const app = new Hono();
   app.route("/public", createPublicRoute(deps));
   return app;
@@ -94,8 +103,9 @@ async function seedConfirmedBooking(token: string): Promise<{ bookingId: string 
 /**
  * Seed a confirmed booking already linked to a Google Calendar event so the
  * cancel side-effect path actually attempts a Google delete (it is gated on
- * `cfg && booking.googleEventId`). Lets the failure-injection tests exercise
- * the real try/catch in cancel.ts rather than short-circuiting on null cfg.
+ * `google && booking.googleEventId`). Lets the failure-injection tests
+ * exercise the real try/catch in cancel.ts rather than short-circuiting on
+ * null Google port.
  */
 async function seedConfirmedBookingWithGoogle(token: string): Promise<{
   bookingId: string;
@@ -159,14 +169,6 @@ async function seedConfirmedBookingWithGoogle(token: string): Promise<{
   if (!booking) throw new Error("seed booking");
   return { bookingId: booking.id, linkId: link.id, userId: user.id };
 }
-
-const fakeGoogleConfig = {
-  clientId: "x",
-  clientSecret: "y",
-  redirectUri: "z",
-  encryptionKey: Buffer.alloc(32),
-  appBaseUrl: "http://app",
-};
 
 describe("POST /public/cancel/:token", () => {
   test("400 on malformed token", async () => {
@@ -246,19 +248,15 @@ describe("POST /public/cancel/:token", () => {
     const token = randomUUID();
     const { bookingId } = await seedConfirmedBookingWithGoogle(token);
     let getAccessTokenCalls = 0;
-    const deps: PublicRouteDeps = {
-      loadCfg: () => fakeGoogleConfig,
-      createEvent: async () => {
-        throw new Error("createEvent should not be called on cancel");
-      },
-      getAccessToken: async () => {
+    const google: GooglePort = buildTestGooglePort(db, {
+      getValidAccessToken: async () => {
         getAccessTokenCalls++;
         throw new Error("google token endpoint 503");
       },
-      sendEmail: async (msg) => {
-        sentEmails.push({ to: msg.to, subject: msg.subject });
-      },
-      appBaseUrl: "https://app.test",
+    });
+    const deps: PublicRouteDeps = {
+      ...buildNoGoogleDeps(),
+      google,
     };
     const app = buildApp(deps);
 
@@ -290,10 +288,13 @@ describe("POST /public/cancel/:token", () => {
     const token = randomUUID();
     const { bookingId } = await seedConfirmedBooking(token);
     const failingDeps: PublicRouteDeps = {
-      ...noGoogleDeps,
-      sendEmail: async () => {
-        throw new Error("smtp 502");
-      },
+      ...buildNoGoogleDeps(),
+      notifier: createBookingNotifier({
+        sendEmail: async () => {
+          throw new Error("smtp 502");
+        },
+        appBaseUrl: "https://app.test",
+      }),
     };
     const app = buildApp(failingDeps);
 
