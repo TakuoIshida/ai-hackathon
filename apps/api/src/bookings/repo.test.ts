@@ -278,6 +278,11 @@ describe("bookings/repo", () => {
       expect(due[0]?.linkId).toBe(linkId);
       expect(due[0]?.guestEmail).toBe("guest-a@example.com");
       expect(due[0]?.cancellationToken).toBe(created.cancellationToken);
+      // ISH-149: link/owner fields are projected via JOIN so the cron job
+      // doesn't need a per-booking SELECT to render the notification body.
+      expect(due[0]?.linkTitle).toBe("30 min meeting");
+      expect(due[0]?.linkTimeZone).toBe("Asia/Tokyo");
+      expect(due[0]?.ownerEmail).toBe("owner@example.com");
     });
 
     test("excludes canceled bookings even if otherwise in window", async () => {
