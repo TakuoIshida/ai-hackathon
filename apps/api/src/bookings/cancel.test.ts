@@ -312,8 +312,22 @@ describe("cancelBookingByOwner", () => {
 
 describe("cancel side-effects — Google delete resilience", () => {
   // The cancel flow imports `deleteEvent` directly from `@/google/calendar`
-  // (not via a port), so we stub the global fetch to inject failure.
+  // (not via a port), so we stub the global fetch to inject failure. Only
+  // intercept Google Calendar API URLs — the CI test backend (Neon HTTP)
+  // routes DB queries through `globalThis.fetch` too, and a blanket override
+  // would corrupt the DB SELECT/UPDATE that surrounds the deleteEvent call.
+  const CALENDAR_API_PREFIX = "https://www.googleapis.com/calendar/";
   let originalFetch: typeof fetch;
+
+  function stubCalendarFetch(handler: () => Promise<Response>): void {
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = typeof input === "string" ? input : (input as URL | Request).toString();
+      if (!url.startsWith(CALENDAR_API_PREFIX)) {
+        return originalFetch(input, init);
+      }
+      return handler();
+    }) as typeof fetch;
+  }
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
@@ -346,11 +360,11 @@ describe("cancel side-effects — Google delete resilience", () => {
     });
 
     let fetchCalled = 0;
-    globalThis.fetch = (async () => {
+    stubCalendarFetch(async () => {
       fetchCalled += 1;
       // Surface a 500 — deleteEvent throws on non-2xx (and not 404/410).
       return new Response("kaboom", { status: 500 });
-    }) as unknown as typeof fetch;
+    });
 
     const result = await cancelBookingByToken(db, seed.cancellationToken, withCfg(), notifications);
 
@@ -369,9 +383,9 @@ describe("cancel side-effects — Google delete resilience", () => {
       withGoogleEvent: true,
     });
 
-    globalThis.fetch = (async () => {
+    stubCalendarFetch(async () => {
       throw new Error("network down");
-    }) as unknown as typeof fetch;
+    });
 
     const result = await cancelBookingByOwner(
       db,
