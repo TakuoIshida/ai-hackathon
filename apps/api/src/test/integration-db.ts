@@ -71,7 +71,15 @@ async function createPostgresTestDb(url: string): Promise<TestDb> {
   // with poolers that don't tolerate prepared-statement state across
   // connections. `max: 1` keeps the test process from holding extra
   // connections to the Neon Local container.
-  const sql = postgres(url, { max: 1, idle_timeout: 5, prepare: false });
+  // Neon Local presents a self-signed TLS cert; postgres-js doesn't natively
+  // map `sslmode=no-verify` from the URL, so translate it here.
+  const noVerify = new URL(url).searchParams.get("sslmode") === "no-verify";
+  const sql = postgres(url, {
+    max: 1,
+    idle_timeout: 5,
+    prepare: false,
+    ...(noVerify ? { ssl: { rejectUnauthorized: false } } : {}),
+  });
   const db = drizzlePostgres(sql, { schema });
 
   await applyMigrationsViaPostgres(sql);
