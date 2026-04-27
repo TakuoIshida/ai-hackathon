@@ -1,7 +1,7 @@
-import { useAuth } from "@clerk/clerk-react";
 import * as stylex from "@stylexjs/stylex";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ApiError, api } from "@/lib/api";
@@ -30,7 +30,7 @@ const styles = stylex.create({
 
 export default function WorkspaceDetailRoute() {
   const { id } = useParams<{ id: string }>();
-  const { getToken } = useAuth();
+  const { getToken } = auth.useAuth();
   const [workspace, setWorkspace] = useState<WorkspaceDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

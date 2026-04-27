@@ -130,6 +130,7 @@ export function createWorkspacesRoute(deps: WorkspacesRouteDeps = productionDeps
         createdAt: m.createdAt,
       })),
       callerRole: result.callerRole,
+      callerUserId: result.callerUserId,
     });
   });
 

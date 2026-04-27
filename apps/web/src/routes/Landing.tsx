@@ -1,6 +1,6 @@
-import { SignedIn, SignedOut } from "@clerk/clerk-react";
 import * as stylex from "@stylexjs/stylex";
 import { Link } from "react-router-dom";
+import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { colors, space } from "@/styles/tokens.stylex";
 
@@ -42,7 +42,7 @@ export default function Landing() {
 function AuthActions() {
   return (
     <div {...stylex.props(styles.row)}>
-      <SignedOut>
+      <auth.SignedOut>
         {/* ISH-55: navigate to dedicated /sign-in route instead of opening a
             modal so Clerk's nested flows (verification, factor-two, etc.)
             render inside the app shell. */}
@@ -52,12 +52,12 @@ function AuthActions() {
         <Button asChild variant="outline">
           <Link to="/sign-up">新規登録</Link>
         </Button>
-      </SignedOut>
-      <SignedIn>
+      </auth.SignedOut>
+      <auth.SignedIn>
         <Button asChild>
           <Link to="/dashboard">ダッシュボードへ</Link>
         </Button>
-      </SignedIn>
+      </auth.SignedIn>
     </div>
   );
 }

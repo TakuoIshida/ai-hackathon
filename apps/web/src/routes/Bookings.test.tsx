@@ -3,9 +3,11 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { BookingSummary } from "@/lib/types";
 
-vi.mock("@clerk/clerk-react", () => {
+vi.mock("@clerk/clerk-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@clerk/clerk-react")>();
   const getToken = async () => "fake-token";
   return {
+    ...actual,
     useAuth: () => ({ getToken }),
   };
 });

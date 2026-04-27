@@ -4,9 +4,11 @@ import { ApiError } from "@/lib/api";
 
 // Stable getToken reference — without this, every render returns a fresh
 // closure and downstream effects re-fire (see Settings.test.tsx).
-vi.mock("@clerk/clerk-react", () => {
+vi.mock("@clerk/clerk-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@clerk/clerk-react")>();
   const getToken = async () => "fake-token";
   return {
+    ...actual,
     useAuth: () => ({ getToken }),
   };
 });

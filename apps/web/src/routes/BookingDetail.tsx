@@ -1,7 +1,7 @@
-import { useAuth } from "@clerk/clerk-react";
 import * as stylex from "@stylexjs/stylex";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -39,7 +39,7 @@ type LoadState =
   | { status: "error"; message: string };
 
 export default function BookingDetail() {
-  const { getToken } = useAuth();
+  const { getToken } = auth.useAuth();
   const { id } = useParams<{ id: string }>();
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [canceling, setCanceling] = useState(false);

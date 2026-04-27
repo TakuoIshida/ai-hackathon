@@ -1,6 +1,6 @@
-import { useAuth } from "@clerk/clerk-react";
 import * as stylex from "@stylexjs/stylex";
 import { useState } from "react";
+import { auth } from "@/auth";
 import { ApiError, api } from "@/lib/api";
 import type { MembershipRole } from "@/lib/types";
 import { colors, space } from "@/styles/tokens.stylex";
@@ -57,7 +57,7 @@ export function MemberRoleSelect({
   canEdit,
   onChanged,
 }: MemberRoleSelectProps) {
-  const { getToken } = useAuth();
+  const { getToken } = auth.useAuth();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

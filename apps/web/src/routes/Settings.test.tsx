@@ -6,9 +6,11 @@ import type { GoogleConnection } from "@/lib/types";
 // Stable getToken reference — without this, every render returns a fresh
 // closure and `load`'s useCallback re-fires `useEffect`, eating queued
 // mockResolvedValueOnce responses.
-vi.mock("@clerk/clerk-react", () => {
+vi.mock("@clerk/clerk-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@clerk/clerk-react")>();
   const getToken = async () => "fake-token";
   return {
+    ...actual,
     useAuth: () => ({ getToken }),
   };
 });

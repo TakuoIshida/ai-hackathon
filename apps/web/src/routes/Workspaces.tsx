@@ -1,7 +1,7 @@
-import { useAuth } from "@clerk/clerk-react";
 import * as stylex from "@stylexjs/stylex";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -51,7 +51,7 @@ const styles = stylex.create({
 });
 
 export default function Workspaces() {
-  const { getToken } = useAuth();
+  const { getToken } = auth.useAuth();
   const navigate = useNavigate();
   const [list, setList] = useState<WorkspaceSummary[] | null>(null);
   const [loading, setLoading] = useState(true);

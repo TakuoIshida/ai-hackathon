@@ -2,11 +2,15 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-vi.mock("@clerk/clerk-react", () => ({
-  SignUp: (props: Record<string, unknown>) => (
-    <div data-testid="clerk-sign-up" data-props={JSON.stringify(props)} />
-  ),
-}));
+vi.mock("@clerk/clerk-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@clerk/clerk-react")>();
+  return {
+    ...actual,
+    SignUp: (props: Record<string, unknown>) => (
+      <div data-testid="clerk-sign-up" data-props={JSON.stringify(props)} />
+    ),
+  };
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();

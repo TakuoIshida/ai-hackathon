@@ -1,5 +1,5 @@
-import { RedirectToSignIn, SignedIn, SignedOut } from "@clerk/clerk-react";
 import { Navigate, Route, Routes } from "react-router-dom";
+import { auth } from "@/auth";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { PublicLayout } from "@/components/layout/PublicLayout";
 import AcceptInvite from "@/routes/AcceptInvite";
@@ -24,12 +24,13 @@ function ProtectedDashboard() {
   if (!HAS_CLERK) return <Navigate to="/" replace />;
   return (
     <>
-      <SignedIn>
+      <auth.SignedIn>
         <DashboardLayout />
-      </SignedIn>
-      <SignedOut>
-        <RedirectToSignIn />
-      </SignedOut>
+      </auth.SignedIn>
+      <auth.SignedOut>
+        {/* ISH-178: RedirectToSignIn 相当を router 経由で実現 */}
+        <Navigate to="/sign-in" replace />
+      </auth.SignedOut>
     </>
   );
 }

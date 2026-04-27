@@ -1,6 +1,6 @@
-import { UserButton } from "@clerk/clerk-react";
 import * as stylex from "@stylexjs/stylex";
 import { NavLink, Outlet } from "react-router-dom";
+import { auth } from "@/auth";
 import { colors, space } from "@/styles/tokens.stylex";
 
 const styles = stylex.create({
@@ -86,7 +86,7 @@ export function DashboardLayout() {
           ))}
         </nav>
         <div {...stylex.props(styles.footer)}>
-          <UserButton />
+          <auth.UserButton />
         </div>
       </aside>
       <main {...stylex.props(styles.main)}>

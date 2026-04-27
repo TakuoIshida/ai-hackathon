@@ -1,6 +1,6 @@
-import { useAuth, useUser } from "@clerk/clerk-react";
 import * as stylex from "@stylexjs/stylex";
 import { useCallback, useEffect, useState } from "react";
+import { auth } from "@/auth";
 import { MemberRoleSelect } from "@/components/MemberRoleSelect";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
@@ -34,6 +34,7 @@ const styles = stylex.create({
 type MembersData = {
   members: WorkspaceMember[];
   callerRole: WorkspaceRole;
+  callerUserId: string;
 };
 
 export type WorkspaceMembersProps = {
@@ -44,13 +45,10 @@ export type WorkspaceMembersProps = {
  * ISH-110: workspace members section. Shows the member list and lets owners
  * remove members. The caller's own row never shows a delete button (matching
  * the server-side `cannot_remove_self_owner` guard); we identify the caller
- * by their Clerk primary email — DB user emails are sourced from Clerk and
- * stay in sync via the webhook.
+ * by their app-internal userId returned in the `listMembers` response.
  */
 export default function WorkspaceMembers({ workspaceId }: WorkspaceMembersProps) {
-  const { getToken } = useAuth();
-  const { user } = useUser();
-  const callerEmail = user?.primaryEmailAddress?.emailAddress?.toLowerCase() ?? null;
+  const { getToken } = auth.useAuth();
 
   const [data, setData] = useState<MembersData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -62,7 +60,7 @@ export default function WorkspaceMembers({ workspaceId }: WorkspaceMembersProps)
     setError(null);
     try {
       const res = await api.listMembers(workspaceId, () => getToken());
-      setData({ members: res.members, callerRole: res.callerRole });
+      setData({ members: res.members, callerRole: res.callerRole, callerUserId: res.callerUserId });
     } catch (err) {
       setError(err instanceof ApiError ? `${err.status} ${err.code}` : "failed to load");
     } finally {
@@ -100,7 +98,7 @@ export default function WorkspaceMembers({ workspaceId }: WorkspaceMembersProps)
       {error && <p {...stylex.props(styles.error)}>{error}</p>}
       <div {...stylex.props(styles.list)}>
         {data.members.map((m) => {
-          const isSelf = callerEmail !== null && m.email.toLowerCase() === callerEmail;
+          const isSelf = m.userId === data.callerUserId;
           const canDelete = data.callerRole === "owner" && !isSelf;
           // ISH-111 integration: owners can change anyone else's role; their
           // own row stays read-only (use the dedicated PATCH-self flow when

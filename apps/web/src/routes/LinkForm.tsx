@@ -1,7 +1,7 @@
-import { useAuth } from "@clerk/clerk-react";
 import * as stylex from "@stylexjs/stylex";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -84,7 +84,7 @@ function parseTime(value: string): number | null {
 
 export default function LinkForm() {
   const navigate = useNavigate();
-  const { getToken } = useAuth();
+  const { getToken } = auth.useAuth();
   const { id } = useParams<{ id: string }>();
   const isEdit = Boolean(id);
 

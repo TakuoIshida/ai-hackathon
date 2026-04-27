@@ -6,13 +6,12 @@ import type { WorkspaceMember } from "@/lib/types";
 // Stable getToken reference — without this, every render returns a fresh
 // closure and `load`'s useCallback re-fires `useEffect`, eating queued
 // mockResolvedValueOnce responses. Mirrors the Settings.test.tsx pattern.
-vi.mock("@clerk/clerk-react", () => {
+vi.mock("@clerk/clerk-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@clerk/clerk-react")>();
   const getToken = async () => "fake-token";
   return {
+    ...actual,
     useAuth: () => ({ getToken }),
-    useUser: () => ({
-      user: { primaryEmailAddress: { emailAddress: "owner@example.com" } },
-    }),
   };
 });
 
@@ -71,6 +70,7 @@ describe("<WorkspaceMembers /> list rendering", () => {
     mockedApi.listMembers.mockResolvedValue({
       members: [ownerSelf, memberA, memberB],
       callerRole: "owner",
+      callerUserId: "u-owner",
     });
 
     render(<WorkspaceMembers workspaceId="ws-1" />);
@@ -90,7 +90,11 @@ describe("<WorkspaceMembers /> list rendering", () => {
   });
 
   test("shows an empty-state when there are no members", async () => {
-    mockedApi.listMembers.mockResolvedValue({ members: [], callerRole: "owner" });
+    mockedApi.listMembers.mockResolvedValue({
+      members: [],
+      callerRole: "owner",
+      callerUserId: "u-owner",
+    });
     render(<WorkspaceMembers workspaceId="ws-1" />);
     expect(await screen.findByText(/メンバーがいません/)).toBeInTheDocument();
   });
@@ -107,6 +111,7 @@ describe("<WorkspaceMembers /> delete button visibility", () => {
     mockedApi.listMembers.mockResolvedValue({
       members: [ownerSelf, memberA, memberB],
       callerRole: "owner",
+      callerUserId: "u-owner",
     });
 
     render(<WorkspaceMembers workspaceId="ws-1" />);
@@ -121,6 +126,7 @@ describe("<WorkspaceMembers /> delete button visibility", () => {
     mockedApi.listMembers.mockResolvedValue({
       members: [ownerSelf, memberA, memberB],
       callerRole: "member",
+      callerUserId: "u-owner",
     });
 
     render(<WorkspaceMembers workspaceId="ws-1" />);
@@ -134,6 +140,7 @@ describe("<WorkspaceMembers /> delete button visibility", () => {
     mockedApi.listMembers.mockResolvedValue({
       members: [ownerSelf],
       callerRole: "owner",
+      callerUserId: "u-owner",
     });
 
     render(<WorkspaceMembers workspaceId="ws-1" />);
@@ -149,10 +156,12 @@ describe("<WorkspaceMembers /> delete flow", () => {
       .mockResolvedValueOnce({
         members: [ownerSelf, memberA, memberB],
         callerRole: "owner",
+        callerUserId: "u-owner",
       })
       .mockResolvedValueOnce({
         members: [ownerSelf, memberB],
         callerRole: "owner",
+        callerUserId: "u-owner",
       });
     mockedApi.removeMember.mockResolvedValue({ ok: true });
 
@@ -179,6 +188,7 @@ describe("<WorkspaceMembers /> delete flow", () => {
     mockedApi.listMembers.mockResolvedValue({
       members: [ownerSelf, memberA],
       callerRole: "owner",
+      callerUserId: "u-owner",
     });
 
     const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(false);
@@ -195,6 +205,7 @@ describe("<WorkspaceMembers /> delete flow", () => {
     mockedApi.listMembers.mockResolvedValue({
       members: [ownerSelf, memberA],
       callerRole: "owner",
+      callerUserId: "u-owner",
     });
     mockedApi.removeMember.mockRejectedValue(new ApiError(409, "last_owner", "409 last_owner"));
 
