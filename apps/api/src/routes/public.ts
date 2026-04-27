@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { cancelBookingByToken } from "@/bookings/cancel";
 import { type CreateEventFn, confirmBooking, type GetAccessTokenFn } from "@/bookings/confirm";
-import { bookingInputSchema } from "@/bookings/schemas";
+import { bookingInputSchema, toConfirmBookingCommand } from "@/bookings/schemas";
 import { config } from "@/config";
 import { db } from "@/db/client";
 import { getValidAccessToken } from "@/google/access-token";
@@ -99,16 +99,15 @@ export function createPublicRoute(deps: PublicRouteDeps = productionDeps): Hono 
     const link = await findPublishedLinkBySlug(db, c.req.param("slug"));
     if (!link) return c.json({ error: "not_found" }, 404);
 
-    const input = c.req.valid("json");
-    const startMs = Date.parse(input.startAt);
-    if (!Number.isFinite(startMs)) {
+    const command = toConfirmBookingCommand(c.req.valid("json"));
+    if (!command) {
       return c.json({ error: "invalid_start_at" }, 400);
     }
 
     const result = await confirmBooking(
       db,
       link,
-      { ...input, startMs },
+      command,
       {
         cfg: deps.loadCfg(),
         createEvent: deps.createEvent,
