@@ -5,36 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1777130923259,
-      "tag": "0000_left_wendell_rand",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1777167812769,
-      "tag": "0001_flawless_tag",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1777184150771,
-      "tag": "0002_workspaces_memberships",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1777198474374,
-      "tag": "0003_link_owners",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1777199118408,
-      "tag": "0004_invitations",
+      "when": 1777307652220,
+      "tag": "0000_baseline",
       "breakpoints": true
     }
   ]

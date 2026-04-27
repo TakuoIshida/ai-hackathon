@@ -1,1 +1,0 @@
-CREATE UNIQUE INDEX "uniq_bookings_active_slot" ON "bookings" USING btree ("link_id","start_at") WHERE "bookings"."status" = 'confirmed';

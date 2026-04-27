@@ -9,6 +9,7 @@ import {
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
+import { ulidPk } from "../helpers/ulid";
 import { availabilityLinks } from "./links";
 
 export const bookingStatusValues = ["confirmed", "canceled"] as const;
@@ -17,8 +18,8 @@ export type BookingStatus = (typeof bookingStatusValues)[number];
 export const bookings = pgTable(
   "bookings",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
-    linkId: uuid("link_id")
+    id: ulidPk(),
+    linkId: text("link_id")
       .notNull()
       .references(() => availabilityLinks.id, { onDelete: "restrict" }),
     startAt: timestamp("start_at", { withTimezone: true }).notNull(),
@@ -30,6 +31,7 @@ export const bookings = pgTable(
     status: varchar("status", { length: 16 }).notNull().default("confirmed"),
     googleEventId: text("google_event_id"),
     meetUrl: text("meet_url"),
+    // Security token: keep UUIDv4 to avoid timestamp exposure (P-5 design doc)
     cancellationToken: uuid("cancellation_token").defaultRandom().notNull().unique(),
     reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
