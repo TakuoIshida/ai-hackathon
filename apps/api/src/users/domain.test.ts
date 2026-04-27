@@ -72,7 +72,7 @@ describe("deriveUserAttributes", () => {
         last_name: "Ko",
       }),
     );
-    expect(attrs).toEqual({ clerkId: "user_123", email: "a@b.com", name: "Hana Ko" });
+    expect(attrs).toEqual({ externalId: "user_123", email: "a@b.com", name: "Hana Ko" });
   });
 
   test("throws when no email is available", () => {

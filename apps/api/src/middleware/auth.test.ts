@@ -31,7 +31,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await testDb.$client.exec(`
     TRUNCATE TABLE bookings, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, users
+    availability_links, google_calendars, google_oauth_accounts, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
@@ -128,27 +128,32 @@ describe("getClerkUserId", () => {
 
 describe("attachDbUser", () => {
   test("sets dbUser on the context when the user already exists in DB", async () => {
-    const clerkId = `clerk_existing_${randomUUID()}`;
+    const externalId = `clerk_existing_${randomUUID()}`;
     const [seeded] = await testDb
       .insert(users)
-      .values({ clerkId, email: "existing@example.com", name: "Existing" })
+      .values({ externalId, email: "existing@example.com", name: "Existing" })
       .returning();
     if (!seeded) throw new Error("seed failed");
 
     const app = new Hono<{ Variables: AuthVars }>();
-    app.use("*", fakeClerkSession(clerkId));
+    app.use("*", fakeClerkSession(externalId));
     app.use("*", requireAuth);
     app.use("*", attachDbUser);
     app.get("/probe", (c) => {
       const u = getDbUser(c);
-      return c.json({ id: u.id, clerkId: u.clerkId, email: u.email, name: u.name });
+      return c.json({ id: u.id, externalId: u.externalId, email: u.email, name: u.name });
     });
 
     const res = await app.request("/probe");
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { id: string; clerkId: string; email: string; name: string };
+    const body = (await res.json()) as {
+      id: string;
+      externalId: string;
+      email: string;
+      name: string;
+    };
     expect(body.id).toBe(seeded.id);
-    expect(body.clerkId).toBe(clerkId);
+    expect(body.externalId).toBe(externalId);
     expect(body.email).toBe("existing@example.com");
     expect(body.name).toBe("Existing");
   });
@@ -160,13 +165,13 @@ describe("attachDbUser", () => {
     // (b) the request errors out (NOT silently logs in as an empty user),
     // (c) no row was created (ensureUserByClerkId only inserts after a
     // successful Clerk payload).
-    const clerkId = `clerk_missing_${randomUUID()}`;
+    const externalId = `clerk_missing_${randomUUID()}`;
 
     const before = await testDb.select().from(users);
-    expect(before.find((u) => u.clerkId === clerkId)).toBeUndefined();
+    expect(before.find((u) => u.externalId === externalId)).toBeUndefined();
 
     const app = new Hono<{ Variables: AuthVars }>();
-    app.use("*", fakeClerkSession(clerkId));
+    app.use("*", fakeClerkSession(externalId));
     app.use("*", requireAuth);
     app.use("*", attachDbUser);
     app.get("/probe", (c) => c.json({ id: getDbUser(c).id }));
@@ -177,12 +182,12 @@ describe("attachDbUser", () => {
 
     const res = await app.request("/probe");
     // We don't pin the exact status — only that it does NOT silently 200.
-    // What we DO pin: no user row was created with this clerkId, since
+    // What we DO pin: no user row was created with this externalId, since
     // ensureUserByClerkId only inserts after a successful Clerk payload.
     expect(res.status).not.toBe(200);
 
     const after = await testDb.select().from(users);
-    expect(after.find((u) => u.clerkId === clerkId)).toBeUndefined();
+    expect(after.find((u) => u.externalId === externalId)).toBeUndefined();
   });
 
   test("auto-creates the user when fetchClerkUser is provided (happy lazy-create path)", async () => {
@@ -200,22 +205,22 @@ describe("attachDbUser", () => {
         last_name: "User",
       }),
     });
-    expect(created.clerkId).toBe(clerkId);
+    expect(created.externalId).toBe(clerkId);
     expect(created.email).toBe(`${clerkId}@example.com`);
     expect(created.name).toBe("Lazy User");
 
     const found = await testDb.select().from(users);
-    expect(found.find((u) => u.clerkId === clerkId)).toBeDefined();
+    expect(found.find((u) => u.externalId === clerkId)).toBeDefined();
   });
 });
 
 describe("getDbUser", () => {
   test("returns the dbUser when attachDbUser has run", async () => {
-    const clerkId = `clerk_helper_${randomUUID()}`;
-    await testDb.insert(users).values({ clerkId, email: "helper@example.com", name: "Helper" });
+    const externalId = `clerk_helper_${randomUUID()}`;
+    await testDb.insert(users).values({ externalId, email: "helper@example.com", name: "Helper" });
 
     const app = new Hono<{ Variables: AuthVars }>();
-    app.use("*", fakeClerkSession(clerkId));
+    app.use("*", fakeClerkSession(externalId));
     app.use("*", requireAuth);
     app.use("*", attachDbUser);
     app.get("/probe", (c) => {

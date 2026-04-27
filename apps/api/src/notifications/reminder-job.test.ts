@@ -30,7 +30,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await testDb.$client.exec(`
     TRUNCATE TABLE bookings, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, users
+    availability_links, google_calendars, google_oauth_accounts, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
@@ -45,7 +45,7 @@ async function seedOwnerAndLink(): Promise<SeedFixture> {
   const ownerEmail = `owner-${randomUUID()}@example.com`;
   const [user] = await testDb
     .insert(users)
-    .values({ clerkId: `clerk_${randomUUID()}`, email: ownerEmail, name: "Owner" })
+    .values({ externalId: `clerk_${randomUUID()}`, email: ownerEmail, name: "Owner" })
     .returning();
   if (!user) throw new Error("seed user");
   const [link] = await testDb

@@ -1,15 +1,4 @@
-import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
-import { ulidPk } from "../helpers/ulid";
-
-export const users = pgTable("users", {
-  id: ulidPk(),
-  clerkId: text("clerk_id").notNull().unique(),
-  email: text("email").notNull(),
-  name: text("name"),
-  timeZone: text("time_zone").notNull().default("Asia/Tokyo"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
-
-export type User = typeof users.$inferSelect;
-export type NewUser = typeof users.$inferInsert;
+// NOTE: The users table has been moved to common.users (ISH-168 / D-1).
+// This file re-exports from common.ts for backward compatibility during migration.
+// Direct imports from "@/db/schema/users" still work, but prefer "@/db/schema/common".
+export { type NewUser, type User, users } from "./common";

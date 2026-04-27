@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import {
-  deleteUserByClerkId,
-  findUserByClerkId,
+  deleteUserByExternalId,
+  findUserByExternalId,
   findUserById,
   insertUser,
   upsertUserFromPayload,
@@ -23,27 +23,27 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await testDb.$client.exec(`TRUNCATE TABLE users RESTART IDENTITY CASCADE;`);
+  await testDb.$client.exec(`TRUNCATE TABLE common.users RESTART IDENTITY CASCADE;`);
 });
 
 describe("users/repo", () => {
-  test("insertUser creates a row and findUserByClerkId returns it", async () => {
-    const clerkId = `clerk_${randomUUID()}`;
-    const created = await insertUser(db, { clerkId, email: "a@b.com", name: "Alice" });
+  test("insertUser creates a row and findUserByExternalId returns it", async () => {
+    const externalId = `clerk_${randomUUID()}`;
+    const created = await insertUser(db, { externalId, email: "a@b.com", name: "Alice" });
     expect(created.email).toBe("a@b.com");
 
-    const found = await findUserByClerkId(db, clerkId);
+    const found = await findUserByExternalId(db, externalId);
     expect(found?.id).toBe(created.id);
     expect(found?.name).toBe("Alice");
   });
 
-  test("findUserByClerkId returns null when missing", async () => {
-    expect(await findUserByClerkId(db, "absent")).toBeNull();
+  test("findUserByExternalId returns null when missing", async () => {
+    expect(await findUserByExternalId(db, "absent")).toBeNull();
   });
 
   test("findUserById returns the row by id", async () => {
     const inserted = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "x@y.com",
       name: null,
     });
@@ -51,10 +51,10 @@ describe("users/repo", () => {
     expect(found?.id).toBe(inserted.id);
   });
 
-  test("insertUser is idempotent on clerkId conflict (updates email/name)", async () => {
-    const clerkId = `c_${randomUUID()}`;
-    await insertUser(db, { clerkId, email: "old@x.com", name: "Old" });
-    const updated = await insertUser(db, { clerkId, email: "new@x.com", name: "New" });
+  test("insertUser is idempotent on externalId conflict (updates email/name)", async () => {
+    const externalId = `c_${randomUUID()}`;
+    await insertUser(db, { externalId, email: "old@x.com", name: "Old" });
+    const updated = await insertUser(db, { externalId, email: "new@x.com", name: "New" });
     expect(updated.email).toBe("new@x.com");
     expect(updated.name).toBe("New");
   });
@@ -72,10 +72,10 @@ describe("users/repo", () => {
     expect(row.name).toBe("Sa Ku");
   });
 
-  test("deleteUserByClerkId removes the row", async () => {
-    const clerkId = `c_${randomUUID()}`;
-    await insertUser(db, { clerkId, email: "z@z.com", name: null });
-    await deleteUserByClerkId(db, clerkId);
-    expect(await findUserByClerkId(db, clerkId)).toBeNull();
+  test("deleteUserByExternalId removes the row", async () => {
+    const externalId = `c_${randomUUID()}`;
+    await insertUser(db, { externalId, email: "z@z.com", name: null });
+    await deleteUserByExternalId(db, externalId);
+    expect(await findUserByExternalId(db, externalId)).toBeNull();
   });
 });

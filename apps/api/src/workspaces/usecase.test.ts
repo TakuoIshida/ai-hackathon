@@ -2,7 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from "
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
-import { invitations, memberships, workspaces } from "@/db/schema/workspaces";
+import { tenantMembers, tenants } from "@/db/schema/common";
+import { invitations } from "@/db/schema/workspaces";
 import type { EmailMessage, SendEmailFn } from "@/notifications/types";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
@@ -33,12 +34,12 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(
-    `TRUNCATE TABLE invitations, memberships, workspaces, users RESTART IDENTITY CASCADE;`,
+    `TRUNCATE TABLE invitations, common.tenant_members, common.tenants, common.users RESTART IDENTITY CASCADE;`,
   );
 });
 
 async function seedUser(email = `u-${randomUUID()}@x.com`) {
-  return insertUser(db, { clerkId: `c_${randomUUID()}`, email, name: null });
+  return insertUser(db, { externalId: `c_${randomUUID()}`, email, name: null });
 }
 
 async function seedWorkspace(opts?: {
@@ -48,13 +49,13 @@ async function seedWorkspace(opts?: {
 }) {
   const owner = await seedUser(opts?.ownerEmail);
   const [ws] = await testDb
-    .insert(workspaces)
-    .values({ name: opts?.name ?? "Acme", slug: `acme-${randomUUID()}`, ownerUserId: owner.id })
+    .insert(tenants)
+    .values({ name: opts?.name ?? "Acme" })
     .returning();
-  if (!ws) throw new Error("seed: workspace insert failed");
+  if (!ws) throw new Error("seed: tenant insert failed");
   await testDb
-    .insert(memberships)
-    .values({ workspaceId: ws.id, userId: owner.id, role: opts?.ownerRole ?? "owner" });
+    .insert(tenantMembers)
+    .values({ userId: owner.id, tenantId: ws.id, role: opts?.ownerRole ?? "owner" });
   return { owner, workspace: ws };
 }
 
@@ -108,11 +109,16 @@ describe("workspaces/usecase: issueInvitation (ISH-108)", () => {
   });
 
   test("forbidden when the inviter is a member but not an owner", async () => {
+    // Note: with UNIQUE(user_id), we use a separate tenant for the member
     const { workspace } = await seedWorkspace();
     const memberUser = await seedUser();
-    await testDb
-      .insert(memberships)
-      .values({ workspaceId: workspace.id, userId: memberUser.id, role: "member" });
+    // Insert directly into a different tenant first (to give memberUser a tenantId)
+    // Actually with 1 user = 1 tenant, we insert tenantMembers pointing to the same workspace
+    // using raw SQL to bypass the UNIQUE constraint check (test scenario only).
+    await testDb.$client.exec(
+      `INSERT INTO common.tenant_members (id, user_id, tenant_id, role)
+       VALUES ('${randomUUID()}${randomUUID()}', '${memberUser.id}', '${workspace.id}', 'member')`,
+    );
     const result = await issueInvitation(db, memberUser.id, workspace.id, "x@x.com", baseDeps());
     expect(result.kind).toBe("forbidden");
   });
@@ -165,24 +171,14 @@ describe("workspaces/usecase: issueInvitation (ISH-108)", () => {
 describe("workspaces/usecase: createWorkspaceForUser (ISH-107)", () => {
   test("happy path: creates workspace + owner membership", async () => {
     const user = await seedUser();
-    const result = await createWorkspaceForUser(db, user.id, { name: "Acme", slug: "acme-x" });
+    const result = await createWorkspaceForUser(db, user.id, { name: "Acme" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    expect(result.workspace.slug).toBe("acme-x");
-    expect(result.workspace.ownerUserId).toBe(user.id);
+    expect(result.workspace.name).toBe("Acme");
     // listMembershipsForUser should now show this workspace as owner
     const list = await listWorkspacesForUser(db, user.id);
     expect(list.length).toBe(1);
     expect(list[0]?.role).toBe("owner");
-  });
-
-  test("returns slug_taken when another workspace already uses the slug", async () => {
-    const userA = await seedUser();
-    const userB = await seedUser();
-    const a = await createWorkspaceForUser(db, userA.id, { name: "A", slug: "shared" });
-    expect(a.kind).toBe("ok");
-    const b = await createWorkspaceForUser(db, userB.id, { name: "B", slug: "shared" });
-    expect(b.kind).toBe("slug_taken");
   });
 });
 
@@ -190,12 +186,12 @@ describe("workspaces/usecase: listWorkspacesForUser (ISH-107)", () => {
   test("scopes to caller membership, includes role per row", async () => {
     const userA = await seedUser();
     const userB = await seedUser();
-    await createWorkspaceForUser(db, userA.id, { name: "A1", slug: "ws-a1" });
-    await createWorkspaceForUser(db, userB.id, { name: "B1", slug: "ws-b1" });
+    await createWorkspaceForUser(db, userA.id, { name: "A1" });
+    await createWorkspaceForUser(db, userB.id, { name: "B1" });
 
     const aList = await listWorkspacesForUser(db, userA.id);
     expect(aList.length).toBe(1);
-    expect(aList[0]?.slug).toBe("ws-a1");
+    expect(aList[0]?.name).toBe("A1");
     expect(aList[0]?.role).toBe("owner");
   });
 });
@@ -204,7 +200,7 @@ describe("workspaces/usecase: getWorkspaceForUser (ISH-107)", () => {
   test("ok when caller is a member; not_found otherwise", async () => {
     const owner = await seedUser();
     const stranger = await seedUser();
-    const created = await createWorkspaceForUser(db, owner.id, { name: "X", slug: "ws-x" });
+    const created = await createWorkspaceForUser(db, owner.id, { name: "X" });
     if (created.kind !== "ok") throw new Error("seed");
 
     const okRes = await getWorkspaceForUser(db, owner.id, created.workspace.id);
@@ -241,7 +237,7 @@ describe("workspaces/usecase: acceptInvitation (ISH-109)", () => {
     expect(result.workspace.id).toBe(workspace.id);
 
     // Membership row exists.
-    const m = await testDb.select().from(memberships).where(eq(memberships.userId, invitee.id));
+    const m = await testDb.select().from(tenantMembers).where(eq(tenantMembers.userId, invitee.id));
     expect(m.length).toBe(1);
     expect(m[0]?.role).toBe("member");
 
@@ -262,7 +258,7 @@ describe("workspaces/usecase: acceptInvitation (ISH-109)", () => {
     const result = await acceptInvitation(db, invitee.id, invitee.email, invitation.token);
     expect(result.kind).toBe("expired");
     // Did NOT insert a membership.
-    const m = await testDb.select().from(memberships).where(eq(memberships.userId, invitee.id));
+    const m = await testDb.select().from(tenantMembers).where(eq(tenantMembers.userId, invitee.id));
     expect(m.length).toBe(0);
   });
 
@@ -296,14 +292,14 @@ describe("workspaces/usecase: acceptInvitation (ISH-109)", () => {
     const invitee = await seedUser(email);
     // Pre-seed membership as if the user had been added independently.
     await testDb
-      .insert(memberships)
-      .values({ workspaceId: workspace.id, userId: invitee.id, role: "member" });
+      .insert(tenantMembers)
+      .values({ userId: invitee.id, tenantId: workspace.id, role: "member" });
 
     const result = await acceptInvitation(db, invitee.id, invitee.email, invitation.token);
     expect(result.kind).toBe("ok");
 
     // Still exactly one membership row.
-    const m = await testDb.select().from(memberships).where(eq(memberships.userId, invitee.id));
+    const m = await testDb.select().from(tenantMembers).where(eq(tenantMembers.userId, invitee.id));
     expect(m.length).toBe(1);
     // Invitation is marked accepted.
     const reloaded = await findInvitationByToken(db, invitation.token);
@@ -355,9 +351,11 @@ describe("workspaces/usecase: changeMemberRole (ISH-111)", () => {
   test("ok: promotes a member to owner", async () => {
     const { owner, workspace } = await seedWorkspace();
     const member = await seedUser();
-    await testDb
-      .insert(memberships)
-      .values({ workspaceId: workspace.id, userId: member.id, role: "member" });
+    // Use raw SQL to bypass UNIQUE(user_id) for testing multi-member scenarios
+    await testDb.$client.exec(
+      `INSERT INTO common.tenant_members (id, user_id, tenant_id, role)
+       VALUES ('${randomUUID()}${randomUUID()}', '${member.id}', '${workspace.id}', 'member')`,
+    );
 
     const result = await changeMemberRole(db, owner.id, workspace.id, member.id, "owner");
     expect(result.kind).toBe("ok");
@@ -368,9 +366,10 @@ describe("workspaces/usecase: changeMemberRole (ISH-111)", () => {
   test("ok: demotes an owner to member when there is another owner", async () => {
     const { owner, workspace } = await seedWorkspace();
     const second = await seedUser();
-    await testDb
-      .insert(memberships)
-      .values({ workspaceId: workspace.id, userId: second.id, role: "owner" });
+    await testDb.$client.exec(
+      `INSERT INTO common.tenant_members (id, user_id, tenant_id, role)
+       VALUES ('${randomUUID()}${randomUUID()}', '${second.id}', '${workspace.id}', 'owner')`,
+    );
 
     const result = await changeMemberRole(db, owner.id, workspace.id, second.id, "member");
     expect(result.kind).toBe("ok");
@@ -381,13 +380,12 @@ describe("workspaces/usecase: changeMemberRole (ISH-111)", () => {
   test("forbidden when caller is a member, not an owner", async () => {
     const { workspace } = await seedWorkspace();
     const memberCaller = await seedUser();
-    await testDb
-      .insert(memberships)
-      .values({ workspaceId: workspace.id, userId: memberCaller.id, role: "member" });
     const target = await seedUser();
-    await testDb
-      .insert(memberships)
-      .values({ workspaceId: workspace.id, userId: target.id, role: "member" });
+    await testDb.$client.exec(
+      `INSERT INTO common.tenant_members (id, user_id, tenant_id, role)
+       VALUES ('${randomUUID()}${randomUUID()}', '${memberCaller.id}', '${workspace.id}', 'member'),
+              ('${randomUUID()}${randomUUID()}', '${target.id}', '${workspace.id}', 'member')`,
+    );
 
     const result = await changeMemberRole(db, memberCaller.id, workspace.id, target.id, "owner");
     expect(result.kind).toBe("forbidden");
@@ -404,9 +402,10 @@ describe("workspaces/usecase: changeMemberRole (ISH-111)", () => {
     const { workspace } = await seedWorkspace();
     const stranger = await seedUser();
     const target = await seedUser();
-    await testDb
-      .insert(memberships)
-      .values({ workspaceId: workspace.id, userId: target.id, role: "member" });
+    await testDb.$client.exec(
+      `INSERT INTO common.tenant_members (id, user_id, tenant_id, role)
+       VALUES ('${randomUUID()}${randomUUID()}', '${target.id}', '${workspace.id}', 'member')`,
+    );
 
     const result = await changeMemberRole(db, stranger.id, workspace.id, target.id, "owner");
     expect(result.kind).toBe("not_found");
@@ -424,9 +423,10 @@ describe("workspaces/usecase: changeMemberRole (ISH-111)", () => {
   test("noop: target's current role already equals newRole", async () => {
     const { owner, workspace } = await seedWorkspace();
     const member = await seedUser();
-    await testDb
-      .insert(memberships)
-      .values({ workspaceId: workspace.id, userId: member.id, role: "member" });
+    await testDb.$client.exec(
+      `INSERT INTO common.tenant_members (id, user_id, tenant_id, role)
+       VALUES ('${randomUUID()}${randomUUID()}', '${member.id}', '${workspace.id}', 'member')`,
+    );
 
     const result = await changeMemberRole(db, owner.id, workspace.id, member.id, "member");
     expect(result.kind).toBe("noop");
@@ -437,9 +437,10 @@ describe("workspaces/usecase: listWorkspaceMembers (ISH-110)", () => {
   test("ok: caller is a member; returns members + caller's role", async () => {
     const { owner, workspace } = await seedWorkspace();
     const otherUser = await seedUser("member@x.com");
-    await testDb
-      .insert(memberships)
-      .values({ workspaceId: workspace.id, userId: otherUser.id, role: "member" });
+    await testDb.$client.exec(
+      `INSERT INTO common.tenant_members (id, user_id, tenant_id, role)
+       VALUES ('${randomUUID()}${randomUUID()}', '${otherUser.id}', '${workspace.id}', 'member')`,
+    );
 
     const result = await listWorkspaceMembers(db, owner.id, workspace.id);
     expect(result.kind).toBe("ok");
@@ -468,13 +469,17 @@ describe("workspaces/usecase: removeMember (ISH-110)", () => {
   test("ok: owner removes a regular member; the row is gone", async () => {
     const { owner, workspace } = await seedWorkspace();
     const member = await seedUser("m@x.com");
-    await testDb
-      .insert(memberships)
-      .values({ workspaceId: workspace.id, userId: member.id, role: "member" });
+    await testDb.$client.exec(
+      `INSERT INTO common.tenant_members (id, user_id, tenant_id, role)
+       VALUES ('${randomUUID()}${randomUUID()}', '${member.id}', '${workspace.id}', 'member')`,
+    );
 
     const result = await removeMember(db, owner.id, workspace.id, member.id);
     expect(result.kind).toBe("ok");
-    const rows = await testDb.select().from(memberships).where(eq(memberships.userId, member.id));
+    const rows = await testDb
+      .select()
+      .from(tenantMembers)
+      .where(eq(tenantMembers.userId, member.id));
     expect(rows.length).toBe(0);
   });
 
@@ -482,12 +487,11 @@ describe("workspaces/usecase: removeMember (ISH-110)", () => {
     const { workspace } = await seedWorkspace();
     const memberA = await seedUser("a@x.com");
     const memberB = await seedUser("b@x.com");
-    await testDb
-      .insert(memberships)
-      .values({ workspaceId: workspace.id, userId: memberA.id, role: "member" });
-    await testDb
-      .insert(memberships)
-      .values({ workspaceId: workspace.id, userId: memberB.id, role: "member" });
+    await testDb.$client.exec(
+      `INSERT INTO common.tenant_members (id, user_id, tenant_id, role)
+       VALUES ('${randomUUID()}${randomUUID()}', '${memberA.id}', '${workspace.id}', 'member'),
+              ('${randomUUID()}${randomUUID()}', '${memberB.id}', '${workspace.id}', 'member')`,
+    );
 
     const result = await removeMember(db, memberA.id, workspace.id, memberB.id);
     expect(result.kind).toBe("forbidden");
@@ -511,24 +515,22 @@ describe("workspaces/usecase: removeMember (ISH-110)", () => {
     // Pins the "target is owner AND ownerCount > 1 → ok" branch.
     const { owner, workspace } = await seedWorkspace();
     const coOwner = await seedUser("co-owner@x.com");
-    await testDb
-      .insert(memberships)
-      .values({ workspaceId: workspace.id, userId: coOwner.id, role: "owner" });
+    await testDb.$client.exec(
+      `INSERT INTO common.tenant_members (id, user_id, tenant_id, role)
+       VALUES ('${randomUUID()}${randomUUID()}', '${coOwner.id}', '${workspace.id}', 'owner')`,
+    );
     const result = await removeMember(db, owner.id, workspace.id, coOwner.id);
     expect(result.kind).toBe("ok");
   });
 
-  // `last_owner` is defense-in-depth against a concurrent owner-demotion:
-  // the caller's owner role was confirmed at request start but the
-  // workspace's owner count dropped to 1 between the two repo reads. We
-  // trigger that state deterministically with a `spyOn` that forces the
-  // count query to return 1.
+  // `last_owner` is defense-in-depth against a concurrent owner-demotion.
   test("last_owner: count guard fires when target is the only remaining owner", async () => {
     const { owner, workspace } = await seedWorkspace();
     const coOwner = await seedUser("co-owner@x.com");
-    await testDb
-      .insert(memberships)
-      .values({ workspaceId: workspace.id, userId: coOwner.id, role: "owner" });
+    await testDb.$client.exec(
+      `INSERT INTO common.tenant_members (id, user_id, tenant_id, role)
+       VALUES ('${randomUUID()}${randomUUID()}', '${coOwner.id}', '${workspace.id}', 'owner')`,
+    );
     const repoModule = await import("./repo");
     const countSpy = spyOn(repoModule, "countOwnersForWorkspace").mockResolvedValue(1);
     try {

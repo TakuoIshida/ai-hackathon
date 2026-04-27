@@ -31,7 +31,7 @@ export function createInvitationsRoute() {
     if (!workspace) return c.json({ error: "not_found" }, 404);
     const expired = invitation.acceptedAt !== null || invitation.expiresAt.getTime() < Date.now();
     return c.json({
-      workspace: { name: workspace.name, slug: workspace.slug },
+      workspace: { name: workspace.name },
       email: invitation.email,
       expired,
     });
@@ -49,7 +49,6 @@ export function createInvitationsRoute() {
     return c.json({
       workspace: {
         id: result.workspace.id,
-        slug: result.workspace.slug,
         name: result.workspace.name,
       },
     });

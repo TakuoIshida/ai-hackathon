@@ -81,17 +81,17 @@ function buildApp(extra: Partial<BookingsRouteDeps> = {}): Hono {
   return app;
 }
 
-type SeededUser = { userId: string; clerkId: string };
+type SeededUser = { userId: string; externalId: string };
 type SeededLink = { linkId: string; slug: string; userId: string };
 
 async function seedUser(label: string): Promise<SeededUser> {
-  const clerkId = `clerk_${label}_${randomUUID()}`;
+  const externalId = `clerk_${label}_${randomUUID()}`;
   const [row] = await testDb
     .insert(users)
-    .values({ clerkId, email: `${label}@example.com`, name: label })
+    .values({ externalId, email: `${label}@example.com`, name: label })
     .returning();
   if (!row) throw new Error("seed user failed");
-  return { userId: row.id, clerkId };
+  return { userId: row.id, externalId };
 }
 
 async function seedLink(userId: string, slug: string, title = "30 min meet"): Promise<SeededLink> {
@@ -146,7 +146,7 @@ beforeEach(async () => {
   sentEmails = [];
   await testDb.$client.exec(`
     TRUNCATE TABLE bookings, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, users
+    availability_links, google_calendars, google_oauth_accounts, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
@@ -171,7 +171,7 @@ describe("GET /bookings (owner list)", () => {
 
     const app = buildApp();
     const res = await app.request("/bookings", {
-      headers: { "x-test-clerk-id": owner.clerkId },
+      headers: { "x-test-clerk-id": owner.externalId },
     });
     expect(res.status).toBe(200);
     const json = (await res.json()) as {
@@ -196,7 +196,7 @@ describe("GET /bookings (owner list)", () => {
 
     const app = buildApp();
     const res = await app.request("/bookings", {
-      headers: { "x-test-clerk-id": me.clerkId },
+      headers: { "x-test-clerk-id": me.externalId },
     });
     expect(res.status).toBe(200);
     const json = (await res.json()) as {
@@ -211,7 +211,7 @@ describe("GET /bookings (owner list)", () => {
     const me = await seedUser("me");
     const app = buildApp();
     const res = await app.request("/bookings", {
-      headers: { "x-test-clerk-id": me.clerkId },
+      headers: { "x-test-clerk-id": me.externalId },
     });
     expect(res.status).toBe(200);
     const json = (await res.json()) as { bookings: unknown[] };
@@ -234,7 +234,7 @@ describe("DELETE /bookings/:id (owner cancel)", () => {
     const app = buildApp();
     const res = await app.request(`/bookings/${bookingId}`, {
       method: "DELETE",
-      headers: { "x-test-clerk-id": owner.clerkId },
+      headers: { "x-test-clerk-id": owner.externalId },
     });
     expect(res.status).toBe(200);
     const json = (await res.json()) as { ok: boolean; alreadyCanceled?: boolean };
@@ -264,7 +264,7 @@ describe("DELETE /bookings/:id (owner cancel)", () => {
     const app = buildApp();
     const res = await app.request(`/bookings/${otherBookingId}`, {
       method: "DELETE",
-      headers: { "x-test-clerk-id": me.clerkId },
+      headers: { "x-test-clerk-id": me.externalId },
     });
     expect(res.status).toBe(404);
     const json = (await res.json()) as { error?: string };
@@ -285,7 +285,7 @@ describe("DELETE /bookings/:id (owner cancel)", () => {
     const app = buildApp();
     const res = await app.request(`/bookings/${randomUUID()}`, {
       method: "DELETE",
-      headers: { "x-test-clerk-id": owner.clerkId },
+      headers: { "x-test-clerk-id": owner.externalId },
     });
     expect(res.status).toBe(404);
   });
@@ -298,7 +298,7 @@ describe("DELETE /bookings/:id (owner cancel)", () => {
     const app = buildApp();
     const first = await app.request(`/bookings/${bookingId}`, {
       method: "DELETE",
-      headers: { "x-test-clerk-id": owner.clerkId },
+      headers: { "x-test-clerk-id": owner.externalId },
     });
     expect(first.status).toBe(200);
     expect(sentEmails.length).toBe(2);
@@ -306,7 +306,7 @@ describe("DELETE /bookings/:id (owner cancel)", () => {
     sentEmails = [];
     const second = await app.request(`/bookings/${bookingId}`, {
       method: "DELETE",
-      headers: { "x-test-clerk-id": owner.clerkId },
+      headers: { "x-test-clerk-id": owner.externalId },
     });
     expect(second.status).toBe(200);
     const json = (await second.json()) as { ok: boolean; alreadyCanceled?: boolean };
@@ -367,7 +367,7 @@ describe("DELETE /bookings/:id (owner cancel)", () => {
     const app = buildApp(failingDeps);
     const res = await app.request(`/bookings/${bookingId}`, {
       method: "DELETE",
-      headers: { "x-test-clerk-id": owner.clerkId },
+      headers: { "x-test-clerk-id": owner.externalId },
     });
     expect(res.status).toBe(200);
     const json = (await res.json()) as { ok: boolean };

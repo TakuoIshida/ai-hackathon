@@ -6,7 +6,8 @@ process.env.CLERK_PUBLISHABLE_KEY ??= "pk_test_ZXhhbXBsZS5jb20k";
 
 const { app } = await import("@/app");
 const { clearDbForTests, db, setDbForTests } = await import("@/db/client");
-const { invitations, memberships, workspaces } = await import("@/db/schema/workspaces");
+const { invitations } = await import("@/db/schema/workspaces");
+const { tenantMembers, tenants } = await import("@/db/schema/common");
 const { createTestDb } = await import("@/test/integration-db");
 const { insertUser } = await import("@/users/repo");
 
@@ -26,22 +27,19 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(
-    `TRUNCATE TABLE invitations, memberships, workspaces, users RESTART IDENTITY CASCADE;`,
+    `TRUNCATE TABLE invitations, common.tenant_members, common.tenants, common.users RESTART IDENTITY CASCADE;`,
   );
 });
 
 async function seedInvitation(opts?: { email?: string; expiresAt?: Date; acceptedAt?: Date }) {
   const owner = await insertUser(db, {
-    clerkId: `c_${randomUUID()}`,
+    externalId: `c_${randomUUID()}`,
     email: `owner-${randomUUID()}@x.com`,
     name: null,
   });
-  const [ws] = await testDb
-    .insert(workspaces)
-    .values({ name: "Acme", slug: `acme-${randomUUID()}`, ownerUserId: owner.id })
-    .returning();
-  if (!ws) throw new Error("seed: workspace");
-  await testDb.insert(memberships).values({ workspaceId: ws.id, userId: owner.id, role: "owner" });
+  const [ws] = await testDb.insert(tenants).values({ name: "Acme" }).returning();
+  if (!ws) throw new Error("seed: tenant");
+  await testDb.insert(tenantMembers).values({ userId: owner.id, tenantId: ws.id, role: "owner" });
   const [inv] = await testDb
     .insert(invitations)
     .values({
@@ -71,7 +69,7 @@ describe("GET /invitations/:token (public)", () => {
     const res = await app.request(`/invitations/${invitation.token}`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
-      workspace: { name: workspace.name, slug: workspace.slug },
+      workspace: { name: workspace.name },
       email: "i@example.com",
       expired: false,
     });
