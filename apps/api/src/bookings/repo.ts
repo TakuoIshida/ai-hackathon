@@ -2,6 +2,7 @@ import { and, desc, eq, gte, isNull, lt } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
 import { bookings } from "@/db/schema/bookings";
 import { availabilityLinks } from "@/db/schema/links";
+import { users } from "@/db/schema/users";
 
 type Database = typeof DbClient;
 
@@ -122,9 +123,14 @@ export async function markBookingCanceled(
 // ---------- ISH-98: reminder cron ----------
 
 /**
- * Projection used by the reminder cron. Slim by design: the job only needs
- * what `BookingNotificationContext` requires plus the link/booking ids so it
- * can hydrate the link + owner separately.
+ * Projection used by the reminder cron. Carries everything the notification
+ * context (`BookingNotificationContext`) needs so the job can render owner+
+ * guest emails without a follow-up SELECT per booking — N+1 → 1 query
+ * (ISH-149).
+ *
+ * `linkDescription` and `ownerName` are nullable in the schema; the templates
+ * already handle null. `linkTimeZone` is the link's IANA zone (used as the
+ * owner-side display TZ when the guest didn't supply one).
  */
 export type BookingDueForReminder = {
   bookingId: string;
@@ -136,6 +142,11 @@ export type BookingDueForReminder = {
   guestTimeZone: string | null;
   meetUrl: string | null;
   cancellationToken: string;
+  linkTitle: string;
+  linkDescription: string | null;
+  linkTimeZone: string;
+  ownerEmail: string;
+  ownerName: string | null;
 };
 
 /**
@@ -149,6 +160,10 @@ export type BookingDueForReminder = {
  * double-emitting. The `reminder_sent_at IS NULL` clause gives idempotency
  * across overlapping cron runs even before the per-row claim in
  * `markReminderSent` kicks in.
+ *
+ * INNER JOINs to `availability_links` and `users` are safe: bookings.link_id
+ * is `ON DELETE RESTRICT` and links.user_id is `ON DELETE CASCADE`, so a
+ * confirmed booking always has a live link + owner.
  */
 export async function findBookingsDueForReminder(
   database: Database,
@@ -168,8 +183,15 @@ export async function findBookingsDueForReminder(
       guestTimeZone: bookings.guestTimeZone,
       meetUrl: bookings.meetUrl,
       cancellationToken: bookings.cancellationToken,
+      linkTitle: availabilityLinks.title,
+      linkDescription: availabilityLinks.description,
+      linkTimeZone: availabilityLinks.timeZone,
+      ownerEmail: users.email,
+      ownerName: users.name,
     })
     .from(bookings)
+    .innerJoin(availabilityLinks, eq(bookings.linkId, availabilityLinks.id))
+    .innerJoin(users, eq(availabilityLinks.userId, users.id))
     .where(
       and(
         eq(bookings.status, "confirmed"),

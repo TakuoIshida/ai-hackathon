@@ -4,8 +4,6 @@ import {
   markReminderSent,
 } from "@/bookings/repo";
 import type { db as DbClient } from "@/db/client";
-import { findLinkById } from "@/links/repo";
-import { findUserById } from "@/users/repo";
 import type { BookingNotificationContext } from "./templates";
 import { guestReminderEmail, ownerReminderEmail } from "./templates";
 import type { SendEmailFn } from "./types";
@@ -58,10 +56,11 @@ const DEFAULT_WINDOW_MINUTES = 8;
  *   1. `markReminderSent(db, id, now)` — atomic claim. Partial WHERE
  *      `reminder_sent_at IS NULL` makes a second UPDATE a no-op.
  *   2. If the claim returned false → skipped.
- *   3. If the claim returned true → load link + owner → render and send the
- *      owner + guest emails. On failure we log and count as `failed` BUT do
- *      NOT clear `reminder_sent_at`. Rationale: the issue's hard constraint
- *      is "多重送信されない" (no double-sends); a missed reminder is the
+ *   3. If the claim returned true → render the owner + guest emails directly
+ *      from the JOIN-projected fields (ISH-149: no per-booking SELECT) and
+ *      send them. On failure we log and count as `failed` BUT do NOT clear
+ *      `reminder_sent_at`. Rationale: the issue's hard constraint is
+ *      "多重送信されない" (no double-sends); a missed reminder is the
  *      lesser harm. Operators can manually re-trigger by clearing the column
  *      if needed.
  */
@@ -88,7 +87,7 @@ export async function sendDueReminders(
   for (const booking of due) {
     const claimed = await tryClaim(database, booking, now, result);
     if (!claimed) continue;
-    await dispatch(database, booking, deps, result);
+    await dispatch(booking, deps, result);
   }
 
   return result;
@@ -115,36 +114,27 @@ async function tryClaim(
 }
 
 async function dispatch(
-  database: Database,
   booking: BookingDueForReminder,
   deps: ReminderJobDeps,
   result: ReminderJobResult,
 ): Promise<void> {
+  // ISH-149: link/owner fields are projected by the JOIN in
+  // findBookingsDueForReminder, so no per-booking SELECT is needed here.
+  const ctx: BookingNotificationContext = {
+    linkTitle: booking.linkTitle,
+    linkDescription: booking.linkDescription,
+    startAt: booking.startAt,
+    endAt: booking.endAt,
+    ownerEmail: booking.ownerEmail,
+    ownerName: booking.ownerName,
+    guestEmail: booking.guestEmail,
+    guestName: booking.guestName,
+    guestTimeZone: booking.guestTimeZone,
+    ownerTimeZone: booking.linkTimeZone,
+    meetUrl: booking.meetUrl,
+    cancelUrl: `${deps.appBaseUrl}/cancel/${booking.cancellationToken}`,
+  };
   try {
-    // Both lookups are FK-protected: bookings.link_id is ON DELETE RESTRICT
-    // and links.user_id is ON DELETE CASCADE, so a confirmed booking always
-    // has a live link + owner. The throws below exist for TS narrowing only;
-    // if either fires it's an invariant violation, not a normal flow.
-    const link = await findLinkById(database, booking.linkId);
-    if (!link) throw new Error(`reminder-job: link missing booking=${booking.bookingId}`);
-    const owner = await findUserById(database, link.userId);
-    if (!owner) throw new Error(`reminder-job: owner missing user=${link.userId}`);
-
-    const ctx: BookingNotificationContext = {
-      linkTitle: link.title,
-      linkDescription: link.description,
-      startAt: booking.startAt,
-      endAt: booking.endAt,
-      ownerEmail: owner.email,
-      ownerName: owner.name,
-      guestEmail: booking.guestEmail,
-      guestName: booking.guestName,
-      guestTimeZone: booking.guestTimeZone,
-      ownerTimeZone: link.timeZone,
-      meetUrl: booking.meetUrl,
-      cancelUrl: `${deps.appBaseUrl}/cancel/${booking.cancellationToken}`,
-    };
-
     await Promise.all([
       deps.sendEmail(ownerReminderEmail(ctx)),
       deps.sendEmail(guestReminderEmail(ctx)),
