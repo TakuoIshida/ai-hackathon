@@ -5,7 +5,13 @@ import type { GoogleConfig } from "@/google/config";
 import { getOauthAccountByUser, listUserCalendars } from "@/google/repo";
 import { findLinkById, listLinkCoOwnerUserIds } from "@/links/repo";
 import { computePublicSlots } from "@/links/usecase";
-import type { GooglePort, LinkAvailabilityPort, LinkLookupPort, UserLookupPort } from "@/ports";
+import type {
+  GooglePort,
+  IdentityProviderPort,
+  LinkAvailabilityPort,
+  LinkLookupPort,
+  UserLookupPort,
+} from "@/ports";
 import { findUserById } from "@/users/repo";
 
 type Database = typeof DbClient;
@@ -76,4 +82,21 @@ export function buildUserLookupPort(database: Database): UserLookupPort {
       return user ? { id: user.id, email: user.email, name: user.name } : null;
     },
   };
+}
+
+/**
+ * Build the production `IdentityProviderPort`.
+ *
+ * Skeleton only — the Clerk implementation is injected in D-5b (ISH-173).
+ * See docs/design/auth-vendor-abstraction.md for the full interface design.
+ *
+ * Note on existing ClerkPort (apps/api/src/users/clerk-port.ts):
+ *   `ClerkPort` is narrowly scoped to "fetch profile for DB user upsert".
+ *   `IdentityProviderPort.getUserByExternalId` covers that use-case via the
+ *   `IdentityProfile` abstraction type. D-5b will absorb `clerk-port.ts` into
+ *   `identity/clerk-identity-provider.ts` and update `users/usecase.ts` to
+ *   accept `IdentityProfile` instead of the `ClerkPort` shape.
+ */
+export function buildIdentityProvider(): IdentityProviderPort {
+  throw new Error("IdentityProvider not yet wired — implemented in D-5b (ISH-173)");
 }
