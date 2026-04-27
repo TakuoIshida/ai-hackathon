@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
+import type { CreateLinkCommand } from "./domain";
 import {
   createLink,
   deleteLink,
@@ -14,7 +15,6 @@ import {
   setLinkCoOwners,
   updateLink,
 } from "./repo";
-import type { LinkInput } from "./schemas";
 
 let testDb: TestDb;
 
@@ -44,7 +44,7 @@ async function seedUser(): Promise<string> {
   return u.id;
 }
 
-const baseInput = (overrides: Partial<LinkInput> = {}): LinkInput => ({
+const baseInput = (overrides: Partial<CreateLinkCommand> = {}): CreateLinkCommand => ({
   slug: "intro-30",
   title: "30 min",
   description: null,

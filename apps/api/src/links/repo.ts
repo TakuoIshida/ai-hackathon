@@ -8,8 +8,13 @@ import {
   availabilityRules,
   linkOwners,
 } from "@/db/schema/links";
-import type { Link, LinkRule, LinkWithRelations } from "./domain";
-import type { LinkInput, LinkUpdateInput } from "./schemas";
+import type {
+  CreateLinkCommand,
+  Link,
+  LinkRule,
+  LinkWithRelations,
+  UpdateLinkCommand,
+} from "./domain";
 
 type Database = typeof DbClient;
 
@@ -40,7 +45,7 @@ function toLinkDomain(row: AvailabilityLink): Link {
   };
 }
 
-const linkColumnsForUpsert = (input: Partial<LinkInput>) => {
+const linkColumnsForUpsert = (input: Partial<CreateLinkCommand>) => {
   const out: Record<string, unknown> = {};
   if (input.slug !== undefined) out.slug = input.slug;
   if (input.title !== undefined) out.title = input.title;
@@ -82,7 +87,7 @@ type BatchQuery = Parameters<Database["batch"]>[0][number];
 export async function createLink(
   database: Database,
   userId: string,
-  input: LinkInput,
+  input: CreateLinkCommand,
 ): Promise<LinkWithRelations> {
   const linkId = randomUUID();
   const queries: BatchQuery[] = [
@@ -150,7 +155,7 @@ export async function updateLink(
   database: Database,
   userId: string,
   linkId: string,
-  patch: LinkUpdateInput,
+  patch: UpdateLinkCommand,
 ): Promise<LinkWithRelations | null> {
   // Existence + ownership check happens outside the batch — neon-http cannot
   // return rows from a write inside a multi-statement HTTP transaction.

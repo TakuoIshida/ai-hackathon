@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { CreateLinkCommand, UpdateLinkCommand } from "./domain";
 
 const minute = z.number().int().min(0).max(1440);
 const weekday = z.number().int().min(0).max(6);
@@ -49,5 +50,56 @@ export const linkInputSchema = z.object({
 
 export const linkUpdateSchema = linkInputSchema.partial();
 
-export type LinkInput = z.infer<typeof linkInputSchema>;
-export type LinkUpdateInput = z.infer<typeof linkUpdateSchema>;
+// Wire-format types stay internal to this module + its sidecar test.
+// repo / usecase consume `CreateLinkCommand` / `UpdateLinkCommand` from
+// `./domain` instead — see `toCreateLinkCommand` / `toUpdateLinkCommand`.
+type LinkInput = z.infer<typeof linkInputSchema>;
+type LinkUpdateInput = z.infer<typeof linkUpdateSchema>;
+
+/**
+ * Convert the parsed wire format from `linkInputSchema` to a domain command.
+ * Normalizes the `nullable + optional` fields to a strict `T | null` so the
+ * repo never sees `undefined` for these slots (ISH-124).
+ */
+export function toCreateLinkCommand(input: LinkInput): CreateLinkCommand {
+  return {
+    slug: input.slug,
+    title: input.title,
+    description: input.description ?? null,
+    durationMinutes: input.durationMinutes,
+    bufferBeforeMinutes: input.bufferBeforeMinutes,
+    bufferAfterMinutes: input.bufferAfterMinutes,
+    slotIntervalMinutes: input.slotIntervalMinutes ?? null,
+    maxPerDay: input.maxPerDay ?? null,
+    leadTimeHours: input.leadTimeHours,
+    rangeDays: input.rangeDays,
+    timeZone: input.timeZone,
+    isPublished: input.isPublished,
+    rules: input.rules,
+    excludes: input.excludes,
+  };
+}
+
+/**
+ * Same idea for the partial update path. Only the keys present in the patch
+ * are forwarded; missing keys stay missing so the repo's UPDATE statement
+ * leaves the column untouched.
+ */
+export function toUpdateLinkCommand(input: LinkUpdateInput): UpdateLinkCommand {
+  const out: UpdateLinkCommand = {};
+  if (input.slug !== undefined) out.slug = input.slug;
+  if (input.title !== undefined) out.title = input.title;
+  if (input.description !== undefined) out.description = input.description;
+  if (input.durationMinutes !== undefined) out.durationMinutes = input.durationMinutes;
+  if (input.bufferBeforeMinutes !== undefined) out.bufferBeforeMinutes = input.bufferBeforeMinutes;
+  if (input.bufferAfterMinutes !== undefined) out.bufferAfterMinutes = input.bufferAfterMinutes;
+  if (input.slotIntervalMinutes !== undefined) out.slotIntervalMinutes = input.slotIntervalMinutes;
+  if (input.maxPerDay !== undefined) out.maxPerDay = input.maxPerDay;
+  if (input.leadTimeHours !== undefined) out.leadTimeHours = input.leadTimeHours;
+  if (input.rangeDays !== undefined) out.rangeDays = input.rangeDays;
+  if (input.timeZone !== undefined) out.timeZone = input.timeZone;
+  if (input.isPublished !== undefined) out.isPublished = input.isPublished;
+  if (input.rules !== undefined) out.rules = input.rules;
+  if (input.excludes !== undefined) out.excludes = input.excludes;
+  return out;
+}

@@ -3,7 +3,13 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { db } from "@/db/client";
-import { linkInputSchema, linkUpdateSchema, slugSchema } from "@/links/schemas";
+import {
+  linkInputSchema,
+  linkUpdateSchema,
+  slugSchema,
+  toCreateLinkCommand,
+  toUpdateLinkCommand,
+} from "@/links/schemas";
 import {
   checkSlugAvailability,
   createLinkForUser,
@@ -37,7 +43,11 @@ linksRoute.get("/", async (c) => {
 });
 
 linksRoute.post("/", zValidator("json", linkInputSchema), async (c) => {
-  const result = await createLinkForUser(db, getDbUser(c).id, c.req.valid("json"));
+  const result = await createLinkForUser(
+    db,
+    getDbUser(c).id,
+    toCreateLinkCommand(c.req.valid("json")),
+  );
   if (result.kind === "slug_taken") {
     throw new HTTPException(409, { message: "slug_already_taken" });
   }
@@ -55,7 +65,7 @@ linksRoute.patch("/:id", zValidator("json", linkUpdateSchema), async (c) => {
     db,
     getDbUser(c).id,
     c.req.param("id"),
-    c.req.valid("json"),
+    toUpdateLinkCommand(c.req.valid("json")),
   );
   if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
   if (result.kind === "slug_taken") {

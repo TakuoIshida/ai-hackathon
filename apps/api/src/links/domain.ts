@@ -39,6 +39,35 @@ export type LinkWithRelations = Link & {
   excludes: ReadonlyArray<string>;
 };
 
+/**
+ * Domain command for creating a link. Decoupled from the HTTP wire format
+ * (`linkInputSchema` in `schemas.ts`) so the repo / usecase do not depend
+ * on Zod (ISH-124). The route layer parses the wire format and maps it to
+ * this command via `toCreateLinkCommand`.
+ */
+export type CreateLinkCommand = {
+  slug: string;
+  title: string;
+  description: string | null;
+  durationMinutes: number;
+  bufferBeforeMinutes: number;
+  bufferAfterMinutes: number;
+  slotIntervalMinutes: number | null;
+  maxPerDay: number | null;
+  leadTimeHours: number;
+  rangeDays: number;
+  timeZone: string;
+  isPublished: boolean;
+  rules: ReadonlyArray<LinkRule>;
+  excludes: ReadonlyArray<string>;
+};
+
+/**
+ * Domain command for updating a link. All fields optional — repo only writes
+ * the keys that are present.
+ */
+export type UpdateLinkCommand = Partial<CreateLinkCommand>;
+
 export function rulesToWeekly(
   rules: ReadonlyArray<{ weekday: number; startMinute: number; endMinute: number }>,
 ): WeeklyAvailability {
