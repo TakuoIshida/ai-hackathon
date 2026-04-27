@@ -1,4 +1,5 @@
 import { createClerkClient } from "@clerk/backend";
+import { config } from "@/config";
 import type { ClerkUserPayload } from "./domain";
 import type { ClerkPort } from "./usecase";
 
@@ -13,7 +14,7 @@ import type { ClerkPort } from "./usecase";
 export function productionClerkPort(): ClerkPort {
   return {
     fetchUser: async (clerkId): Promise<ClerkUserPayload> => {
-      const secretKey = process.env.CLERK_SECRET_KEY;
+      const secretKey = config.clerkSecretKey;
       if (!secretKey) {
         throw new Error("CLERK_SECRET_KEY is not set; cannot lazy-fetch user from Clerk");
       }

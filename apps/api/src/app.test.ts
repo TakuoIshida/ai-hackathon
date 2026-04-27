@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Webhook } from "svix";
+import { setConfigForTests } from "./config";
 
 // pk_test_<base64("example.com$")> — a syntactically valid stub publishable key.
 process.env.CLERK_SECRET_KEY ??= "sk_test_unit_test_stub";
@@ -34,15 +35,17 @@ describe("POST /webhooks/clerk", () => {
   for (let i = 0; i < 32; i++) SECRET_BYTES[i] = 0xab;
   const SECRET = `whsec_${Buffer.from(SECRET_BYTES).toString("base64")}`;
 
-  let originalSecret: string | undefined;
+  let restoreConfig: Partial<{ clerkWebhookSecret: string | undefined }> = {};
 
   beforeAll(() => {
-    originalSecret = process.env.CLERK_WEBHOOK_SECRET;
-    process.env.CLERK_WEBHOOK_SECRET = SECRET;
+    // ISH-128: routes read from `config` (loaded once at startup), not
+    // process.env. Mutate the singleton via the test helper so the webhook
+    // route picks up the test secret while still asserting the centralized
+    // wiring works end-to-end.
+    restoreConfig = setConfigForTests({ clerkWebhookSecret: SECRET });
   });
   afterAll(() => {
-    if (originalSecret === undefined) delete process.env.CLERK_WEBHOOK_SECRET;
-    else process.env.CLERK_WEBHOOK_SECRET = originalSecret;
+    setConfigForTests(restoreConfig);
   });
 
   test("returns 400 when svix headers are missing", async () => {

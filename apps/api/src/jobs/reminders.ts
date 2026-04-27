@@ -18,13 +18,17 @@
 // ISH-146: `main` and `resolveSendEmail` are exported so the smoke test can
 // drive the CLI without spawning a subprocess. Production still goes through
 // the `import.meta.main` branch below, identical to the pre-ISH-146 behavior.
+import { config } from "@/config";
 import { db } from "@/db/client";
 import { sendDueReminders as defaultSendDueReminders } from "@/notifications/reminder-job";
 import { createResendSender, loadResendConfig } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
 
-export function resolveSendEmail(env: NodeJS.ProcessEnv = process.env): SendEmailFn {
-  const cfg = loadResendConfig(env);
+export function resolveSendEmail(env?: NodeJS.ProcessEnv): SendEmailFn {
+  // No-arg call → use the centralized `config.resend` singleton (loaded once
+  // at startup). Tests pass an explicit env so they can exercise the
+  // env-bound resolver path independently of process state.
+  const cfg = env ? loadResendConfig(env) : config.resend;
   return cfg ? createResendSender(cfg) : noopSendEmail;
 }
 
@@ -48,7 +52,7 @@ export async function main(deps: RemindersCliDeps = {}): Promise<void> {
     const database = deps.database ?? db;
     const sendDueReminders = deps.sendDueReminders ?? defaultSendDueReminders;
     const sendEmail = deps.sendEmail ?? resolveSendEmail();
-    const appBaseUrl = deps.appBaseUrl ?? process.env.APP_BASE_URL ?? "http://localhost:6173";
+    const appBaseUrl = deps.appBaseUrl ?? config.appBaseUrl;
 
     const result = await sendDueReminders(database, { sendEmail, appBaseUrl });
     logger.info("[reminder-job]", JSON.stringify(result));

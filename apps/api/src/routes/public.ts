@@ -4,14 +4,15 @@ import { z } from "zod";
 import { cancelBookingByToken } from "@/bookings/cancel";
 import { type CreateEventFn, confirmBooking, type GetAccessTokenFn } from "@/bookings/confirm";
 import { bookingInputSchema } from "@/bookings/schemas";
+import { config } from "@/config";
 import { db } from "@/db/client";
 import { getValidAccessToken } from "@/google/access-token";
 import { createEvent, queryFreeBusy } from "@/google/calendar";
-import { type GoogleConfig, loadGoogleConfig } from "@/google/config";
+import type { GoogleConfig } from "@/google/config";
 import { findPublishedLinkBySlug } from "@/links/repo";
 import { computePublicSlots, type GooglePort } from "@/links/usecase";
 import { createBookingNotifier } from "@/notifications/booking-notifier";
-import { createResendSender, loadResendConfig } from "@/notifications/sender";
+import { createResendSender } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
 
 export type PublicRouteDeps = {
@@ -22,27 +23,20 @@ export type PublicRouteDeps = {
   appBaseUrl: string;
 };
 
-function productionSendEmail(): SendEmailFn {
-  const cfg = loadResendConfig();
-  if (!cfg) {
+function buildProductionSendEmail(): SendEmailFn {
+  if (!config.resend) {
     console.info("[email] RESEND_API_KEY/EMAIL_FROM not set — emails are no-op");
     return noopSendEmail;
   }
-  return createResendSender(cfg);
+  return createResendSender(config.resend);
 }
 
 const productionDeps: PublicRouteDeps = {
-  loadCfg: () => {
-    try {
-      return loadGoogleConfig();
-    } catch {
-      return null;
-    }
-  },
+  loadCfg: () => config.google,
   createEvent,
   getAccessToken: getValidAccessToken,
-  sendEmail: productionSendEmail(),
-  appBaseUrl: process.env.APP_BASE_URL ?? "http://localhost:6173",
+  sendEmail: buildProductionSendEmail(),
+  appBaseUrl: config.appBaseUrl,
 };
 
 /**

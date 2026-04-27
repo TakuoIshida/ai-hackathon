@@ -2,13 +2,14 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { cancelBookingByOwner } from "@/bookings/cancel";
 import type { CreateEventFn, GetAccessTokenFn } from "@/bookings/confirm";
 import { listOwnerBookings } from "@/bookings/usecase";
+import { config } from "@/config";
 import { db } from "@/db/client";
 import { getValidAccessToken } from "@/google/access-token";
 import { createEvent } from "@/google/calendar";
-import { type GoogleConfig, loadGoogleConfig } from "@/google/config";
+import type { GoogleConfig } from "@/google/config";
 import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
 import { createBookingNotifier } from "@/notifications/booking-notifier";
-import { createResendSender, loadResendConfig } from "@/notifications/sender";
+import { createResendSender } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
 
 export type BookingsRouteDeps = {
@@ -23,23 +24,16 @@ export type BookingsRouteDeps = {
   authMiddlewares?: MiddlewareHandler[];
 };
 
-function productionSendEmail(): SendEmailFn {
-  const cfg = loadResendConfig();
-  return cfg ? createResendSender(cfg) : noopSendEmail;
-}
+const productionSendEmail: SendEmailFn = config.resend
+  ? createResendSender(config.resend)
+  : noopSendEmail;
 
 const productionDeps: BookingsRouteDeps = {
-  loadCfg: () => {
-    try {
-      return loadGoogleConfig();
-    } catch {
-      return null;
-    }
-  },
+  loadCfg: () => config.google,
   createEvent,
   getAccessToken: getValidAccessToken,
-  sendEmail: productionSendEmail(),
-  appBaseUrl: process.env.APP_BASE_URL ?? "http://localhost:6173",
+  sendEmail: productionSendEmail,
+  appBaseUrl: config.appBaseUrl,
 };
 
 export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): Hono<{
