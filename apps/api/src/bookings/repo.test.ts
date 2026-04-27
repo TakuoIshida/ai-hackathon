@@ -113,18 +113,10 @@ describe("bookings/repo", () => {
 
     // Fire both inserts truly concurrently via Promise.all. The partial unique
     // index must serialize them at the storage layer so that exactly one of
-    // the two onConflictDoNothing inserts succeeds.
-    //
-    // Note on PGlite vs production Postgres:
-    //   PGlite executes statements sequentially through a single WASM connection,
-    //   so in practice the two inserts never overlap — but the unique-index
-    //   contract is identical to upstream Postgres. If both inserts targeted
-    //   the same partial unique key in real concurrent sessions, exactly one
-    //   would commit and the other would either get a duplicate-key error
-    //   (without ON CONFLICT) or — as here — a no-op insert returning zero
-    //   rows. So the assertion of "exactly one fulfilled with a row, exactly
-    //   one fulfilled with null" is the same observable contract a real
-    //   concurrent client would see.
+    // the two onConflictDoNothing inserts succeeds. The test harness now runs
+    // against a real Postgres over TCP, so this exercises the same locking
+    // path production sees: exactly one commit, the other is a no-op insert
+    // returning zero rows.
     const results = await Promise.allSettled([
       tryInsertConfirmedBooking(db, bookingInput(linkId, { guestEmail: "racer-1@example.com" })),
       tryInsertConfirmedBooking(db, bookingInput(linkId, { guestEmail: "racer-2@example.com" })),
