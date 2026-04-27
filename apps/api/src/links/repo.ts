@@ -2,21 +2,43 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
 import {
+  type AvailabilityLink,
   availabilityExcludes,
   availabilityLinks,
   availabilityRules,
   linkOwners,
 } from "@/db/schema/links";
-import type { ExcludeEntity, LinkEntity, LinkWithRelations, RuleEntity } from "./domain";
+import type { Link, LinkRule, LinkWithRelations } from "./domain";
 import type { LinkInput, LinkUpdateInput } from "./schemas";
 
 type Database = typeof DbClient;
 
-// Backwards-compatible aliases for existing imports.
-export type LinkRow = LinkEntity;
-export type RuleRow = RuleEntity;
-export type ExcludeRow = ExcludeEntity;
-export type { LinkWithRelations };
+/**
+ * Row → domain mapper. The `Link` domain type is structurally identical to
+ * the DB row today, but routing every read through this function keeps a
+ * single chokepoint for future divergence (ex. computed fields, encrypted
+ * columns, type-tagged ids).
+ */
+function toLinkDomain(row: AvailabilityLink): Link {
+  return {
+    id: row.id,
+    userId: row.userId,
+    slug: row.slug,
+    title: row.title,
+    description: row.description,
+    durationMinutes: row.durationMinutes,
+    bufferBeforeMinutes: row.bufferBeforeMinutes,
+    bufferAfterMinutes: row.bufferAfterMinutes,
+    slotIntervalMinutes: row.slotIntervalMinutes,
+    maxPerDay: row.maxPerDay,
+    leadTimeHours: row.leadTimeHours,
+    rangeDays: row.rangeDays,
+    timeZone: row.timeZone,
+    isPublished: row.isPublished,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
 
 const linkColumnsForUpsert = (input: Partial<LinkInput>) => {
   const out: Record<string, unknown> = {};
@@ -38,7 +60,7 @@ const linkColumnsForUpsert = (input: Partial<LinkInput>) => {
 async function loadRelations(
   database: Database,
   linkId: string,
-): Promise<{ rules: LinkWithRelations["rules"]; excludes: string[] }> {
+): Promise<{ rules: LinkRule[]; excludes: string[] }> {
   const rules = await database
     .select({
       weekday: availabilityRules.weekday,
@@ -100,8 +122,12 @@ export async function createLink(
   return reloaded;
 }
 
-export async function listLinksForUser(database: Database, userId: string): Promise<LinkRow[]> {
-  return database.select().from(availabilityLinks).where(eq(availabilityLinks.userId, userId));
+export async function listLinksForUser(database: Database, userId: string): Promise<Link[]> {
+  const rows = await database
+    .select()
+    .from(availabilityLinks)
+    .where(eq(availabilityLinks.userId, userId));
+  return rows.map(toLinkDomain);
 }
 
 export async function getLinkForUser(
@@ -109,12 +135,13 @@ export async function getLinkForUser(
   userId: string,
   linkId: string,
 ): Promise<LinkWithRelations | null> {
-  const [link] = await database
+  const [row] = await database
     .select()
     .from(availabilityLinks)
     .where(and(eq(availabilityLinks.id, linkId), eq(availabilityLinks.userId, userId)))
     .limit(1);
-  if (!link) return null;
+  if (!row) return null;
+  const link = toLinkDomain(row);
   const relations = await loadRelations(database, link.id);
   return { ...link, ...relations };
 }
@@ -184,12 +211,13 @@ export async function findPublishedLinkBySlug(
   database: Database,
   slug: string,
 ): Promise<LinkWithRelations | null> {
-  const [link] = await database
+  const [row] = await database
     .select()
     .from(availabilityLinks)
     .where(and(eq(availabilityLinks.slug, slug), eq(availabilityLinks.isPublished, true)))
     .limit(1);
-  if (!link) return null;
+  if (!row) return null;
+  const link = toLinkDomain(row);
   const relations = await loadRelations(database, link.id);
   return { ...link, ...relations };
 }
@@ -227,10 +255,9 @@ export async function listLinkCoOwnerUserIds(
  */
 export async function setLinkCoOwners(
   database: Database,
-  link: Pick<LinkEntity, "id" | "userId">,
+  link: Pick<Link, "id" | "userId">,
   userIds: ReadonlyArray<string>,
 ): Promise<void> {
-  type BatchQuery = Parameters<Database["batch"]>[0][number];
   const filtered = Array.from(new Set(userIds)).filter((u) => u !== link.userId);
   const queries: BatchQuery[] = [database.delete(linkOwners).where(eq(linkOwners.linkId, link.id))];
   if (filtered.length > 0) {
