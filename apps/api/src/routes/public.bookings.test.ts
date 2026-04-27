@@ -276,6 +276,11 @@ describe("POST /public/links/:slug/bookings", () => {
     expect(rows.length).toBe(1);
   });
 
+  // Two full-pipeline bookings + cancel UPDATE + count query is the slowest
+  // test in this file. With the Neon Local HTTP backend (CI), every DB round
+  // trip is real network — the suite was running ~4s on main and the default
+  // 5s test timeout left no headroom. Give it 15s explicitly so unrelated
+  // CI-side variance doesn't flake the test.
   test("re-booking the same slot succeeds after the first booking is canceled", async () => {
     const seed = await seedPublishedLink(testDb);
     const app = buildApp();
@@ -301,7 +306,7 @@ describe("POST /public/links/:slug/bookings", () => {
 
     const totalBookings = await testDb.select({ count: sql<number>`count(*)::int` }).from(bookings);
     expect(totalBookings[0]?.count).toBe(2);
-  });
+  }, 15_000);
 
   test("with Google connected: creates the event and persists meetUrl", async () => {
     const seed = await seedPublishedLink(testDb);

@@ -1,6 +1,5 @@
+import { type FetchLike, httpFetch } from "@/lib/http";
 import type { Interval } from "../scheduling/types";
-
-type FetchLike = typeof fetch;
 
 const CALENDAR_API = "https://www.googleapis.com/calendar/v3";
 
@@ -24,7 +23,7 @@ type RawCalendarListResponse = {
 
 export async function listCalendars(
   accessToken: string,
-  fetchImpl: FetchLike = fetch,
+  fetchImpl: FetchLike = httpFetch,
 ): Promise<CalendarListItem[]> {
   const res = await fetchImpl(`${CALENDAR_API}/users/me/calendarList`, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -53,7 +52,7 @@ export async function queryFreeBusy(input: {
   rangeEnd: number;
   fetchImpl?: FetchLike;
 }): Promise<Interval[]> {
-  const { accessToken, calendarIds, rangeStart, rangeEnd, fetchImpl = fetch } = input;
+  const { accessToken, calendarIds, rangeStart, rangeEnd, fetchImpl = httpFetch } = input;
   if (calendarIds.length === 0) return [];
   const res = await fetchImpl(`${CALENDAR_API}/freeBusy`, {
     method: "POST",
@@ -131,7 +130,7 @@ export async function createEvent(input: EventCreateInput): Promise<CreatedEvent
     description,
     attendees,
     generateMeetUrl = true,
-    fetchImpl = fetch,
+    fetchImpl = httpFetch,
   } = input;
 
   const url = new URL(`${CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}/events`);
@@ -177,7 +176,7 @@ export async function deleteEvent(input: {
   eventId: string;
   fetchImpl?: FetchLike;
 }): Promise<void> {
-  const { accessToken, calendarId, eventId, fetchImpl = fetch } = input;
+  const { accessToken, calendarId, eventId, fetchImpl = httpFetch } = input;
   const url = new URL(
     `${CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
   );

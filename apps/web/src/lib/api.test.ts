@@ -1,17 +1,18 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "./api";
+import { httpFetch } from "./http";
 
-const originalFetch = globalThis.fetch;
+const mockHttpFetch = vi.mocked(httpFetch);
 
-afterEach(() => {
-  globalThis.fetch = originalFetch;
+beforeEach(() => {
+  mockHttpFetch.mockReset();
 });
 
-function mockFetch(impl: (url: string, init?: RequestInit) => Promise<Response>) {
-  globalThis.fetch = vi.fn((input, init) => {
+function setHandler(impl: (url: string, init?: RequestInit) => Promise<Response>) {
+  mockHttpFetch.mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : (input as URL | Request).toString();
     return impl(url, init);
-  }) as typeof fetch;
+  });
 }
 
 const noToken = async () => null;
@@ -19,7 +20,7 @@ const noToken = async () => null;
 describe("api.listLinks", () => {
   it("includes credentials and parses the links payload", async () => {
     let receivedInit: RequestInit | undefined;
-    mockFetch(async (_url, init) => {
+    setHandler(async (_url, init) => {
       receivedInit = init;
       return new Response(JSON.stringify({ links: [] }), { status: 200 });
     });
@@ -30,7 +31,7 @@ describe("api.listLinks", () => {
 
   it("attaches Bearer token when getToken returns one", async () => {
     let authHeader: string | null = null;
-    mockFetch(async (_url, init) => {
+    setHandler(async (_url, init) => {
       authHeader = new Headers(init?.headers).get("Authorization");
       return new Response(JSON.stringify({ links: [] }), { status: 200 });
     });
@@ -39,7 +40,9 @@ describe("api.listLinks", () => {
   });
 
   it("throws ApiError on non-2xx response", async () => {
-    mockFetch(async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }));
+    setHandler(
+      async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }),
+    );
     await expect(api.listLinks(noToken)).rejects.toBeInstanceOf(ApiError);
   });
 });
@@ -47,7 +50,7 @@ describe("api.listLinks", () => {
 describe("api.checkSlugAvailable", () => {
   it("URL-encodes the slug", async () => {
     let calledUrl = "";
-    mockFetch(async (url) => {
+    setHandler(async (url) => {
       calledUrl = url;
       return new Response(JSON.stringify({ slug: "my slug", available: true }), { status: 200 });
     });
@@ -60,7 +63,7 @@ describe("api.createLink", () => {
   it("posts JSON body with the input payload", async () => {
     let body: string | undefined;
     let method: string | undefined;
-    mockFetch(async (_url, init) => {
+    setHandler(async (_url, init) => {
       body = String(init?.body);
       method = init?.method;
       return new Response(JSON.stringify({ link: { id: "new-id" } }), { status: 201 });

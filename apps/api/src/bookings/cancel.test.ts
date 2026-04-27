@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
@@ -12,6 +12,10 @@ import {
 import { createBookingNotifier } from "@/notifications/booking-notifier";
 import type { BookingEvent, EmailMessage, SendEmailFn } from "@/notifications/types";
 import { createTestDb, type TestDb } from "@/test/integration-db";
+// Side-effect import: registers `mock.module("@/lib/http")` so the cancel
+// flow's `deleteEvent` call (transitively through @/google/calendar) hits
+// the mocked httpFetch instead of the real network.
+import { httpFetchMock } from "@/test/mock-http";
 import { cancelBookingByOwner, cancelBookingByToken } from "./cancel";
 import type { GoogleSinks, NotificationSinks } from "./confirm";
 
@@ -312,29 +316,15 @@ describe("cancelBookingByOwner", () => {
 
 describe("cancel side-effects — Google delete resilience", () => {
   // The cancel flow imports `deleteEvent` directly from `@/google/calendar`
-  // (not via a port), so we stub the global fetch to inject failure. Only
-  // intercept Google Calendar API URLs — the CI test backend (Neon HTTP)
-  // routes DB queries through `globalThis.fetch` too, and a blanket override
-  // would corrupt the DB SELECT/UPDATE that surrounds the deleteEvent call.
-  const CALENDAR_API_PREFIX = "https://www.googleapis.com/calendar/";
-  let originalFetch: typeof fetch;
-
+  // (not via a port). The httpFetchMock from @/test/mock-http intercepts the
+  // wrapper that `deleteEvent` calls; Neon Local DB queries go through
+  // `globalThis.fetch` directly and are unaffected.
   function stubCalendarFetch(handler: () => Promise<Response>): void {
-    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-      const url = typeof input === "string" ? input : (input as URL | Request).toString();
-      if (!url.startsWith(CALENDAR_API_PREFIX)) {
-        return originalFetch(input, init);
-      }
-      return handler();
-    }) as typeof fetch;
+    httpFetchMock.mockImplementation(async () => handler());
   }
 
   beforeEach(() => {
-    originalFetch = globalThis.fetch;
-  });
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
+    httpFetchMock.mockReset();
   });
 
   function withCfg(): GoogleSinks {
@@ -359,9 +349,7 @@ describe("cancel side-effects — Google delete resilience", () => {
       withGoogleEvent: true,
     });
 
-    let fetchCalled = 0;
     stubCalendarFetch(async () => {
-      fetchCalled += 1;
       // Surface a 500 — deleteEvent throws on non-2xx (and not 404/410).
       return new Response("kaboom", { status: 500 });
     });
@@ -369,7 +357,7 @@ describe("cancel side-effects — Google delete resilience", () => {
     const result = await cancelBookingByToken(db, seed.cancellationToken, withCfg(), notifications);
 
     expect(result.kind).toBe("ok");
-    expect(fetchCalled).toBeGreaterThan(0);
+    expect(httpFetchMock).toHaveBeenCalled();
 
     const [row] = await testDb.select().from(bookings).where(eq(bookings.id, seed.bookingId));
     expect(row?.status).toBe("canceled");

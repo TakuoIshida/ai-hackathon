@@ -1,6 +1,5 @@
+import { type FetchLike, httpFetch } from "@/lib/http";
 import type { EmailMessage, SendEmailFn } from "./types";
-
-type FetchLike = typeof fetch;
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 
@@ -16,7 +15,10 @@ export function loadResendConfig(env: NodeJS.ProcessEnv = process.env): ResendCo
   return { apiKey, from };
 }
 
-export function createResendSender(cfg: ResendConfig, fetchImpl: FetchLike = fetch): SendEmailFn {
+export function createResendSender(
+  cfg: ResendConfig,
+  fetchImpl: FetchLike = httpFetch,
+): SendEmailFn {
   return async (msg: EmailMessage) => {
     const res = await fetchImpl(RESEND_ENDPOINT, {
       method: "POST",

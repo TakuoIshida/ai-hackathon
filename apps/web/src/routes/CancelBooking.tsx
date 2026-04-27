@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { httpFetch } from "@/lib/http";
 import { PublicApiError } from "@/lib/public-api";
 import { colors, space } from "@/styles/tokens.stylex";
 
@@ -35,7 +36,7 @@ export default function CancelBooking() {
     if (!token) return;
     setState({ kind: "submitting" });
     try {
-      const res = await fetch(`${API_URL}/public/cancel/${encodeURIComponent(token)}`, {
+      const res = await httpFetch(`${API_URL}/public/cancel/${encodeURIComponent(token)}`, {
         method: "POST",
       });
       if (res.status === 404) {
