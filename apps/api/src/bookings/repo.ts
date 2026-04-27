@@ -3,7 +3,7 @@ import type { db as DbClient } from "@/db/client";
 import { type Booking as BookingTableRow, bookings } from "@/db/schema/bookings";
 import { availabilityLinks } from "@/db/schema/links";
 import { users } from "@/db/schema/users";
-import type { Booking, BookingDueForReminder, OwnerBooking } from "./domain";
+import type { Booking, BookingDueForReminder, BookingStatus, OwnerBooking } from "./domain";
 
 type Database = typeof DbClient;
 
@@ -29,7 +29,9 @@ function toBookingDomain(row: BookingTableRow): Booking {
     guestEmail: row.guestEmail,
     guestNote: row.guestNote,
     guestTimeZone: row.guestTimeZone,
-    status: row.status,
+    // Schema check constraint `status_values` restricts the column to
+    // 'confirmed' | 'canceled' at the DB level — narrowing here is safe.
+    status: row.status as BookingStatus,
     googleEventId: row.googleEventId,
     meetUrl: row.meetUrl,
     cancellationToken: row.cancellationToken,
