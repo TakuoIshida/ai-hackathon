@@ -8,4 +8,10 @@
 # `401` tests to fail with "Publishable key not valid").
 
 [test]
-preload = ["./src/test/env-bootstrap.ts"]
+# `env-bootstrap.ts` sets stub Clerk env (ISH-145).
+# `mock-http.ts` registers `mock.module("@/lib/http", ...)` BEFORE any test file
+# is evaluated, so SUT modules pick up the mocked httpFetch on first import.
+# Tests that don't touch httpFetch are unaffected (the mock is only invoked when
+# the wrapper is actually called); tests that pass their own `fetchImpl` argument
+# bypass httpFetch entirely.
+preload = ["./src/test/env-bootstrap.ts", "./src/test/mock-http.ts"]

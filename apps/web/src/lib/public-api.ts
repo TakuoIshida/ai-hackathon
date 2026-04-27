@@ -1,3 +1,5 @@
+import { httpFetch } from "./http";
+
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8787";
 
 export type PublicLink = {
@@ -37,7 +39,7 @@ export class PublicApiError extends Error {
 }
 
 async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`);
+  const res = await httpFetch(`${API_URL}${path}`);
   if (!res.ok) {
     let code = "request_failed";
     try {
@@ -74,7 +76,7 @@ export async function postPublicBooking(
   slug: string,
   body: BookingRequestBody,
 ): Promise<ConfirmedBooking> {
-  const res = await fetch(`${API_URL}/public/links/${encodeURIComponent(slug)}/bookings`, {
+  const res = await httpFetch(`${API_URL}/public/links/${encodeURIComponent(slug)}/bookings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

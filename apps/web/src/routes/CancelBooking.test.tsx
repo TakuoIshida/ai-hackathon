@@ -1,15 +1,16 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { httpFetch } from "@/lib/http";
 import CancelBooking from "./CancelBooking";
 
-const originalFetch = globalThis.fetch;
+const mockHttpFetch = vi.mocked(httpFetch);
 
-function mockFetch(impl: (url: string, init?: RequestInit) => Promise<Response>) {
-  globalThis.fetch = vi.fn((input, init) => {
+function setHandler(impl: (url: string, init?: RequestInit) => Promise<Response>) {
+  mockHttpFetch.mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : (input as URL | Request).toString();
     return impl(url, init);
-  }) as typeof fetch;
+  });
 }
 
 function renderAt(token: string) {
@@ -23,18 +24,14 @@ function renderAt(token: string) {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
-});
-
-afterEach(() => {
-  globalThis.fetch = originalFetch;
+  mockHttpFetch.mockReset();
 });
 
 describe("<CancelBooking />", () => {
   test("reads the token from the URL, posts to the cancel endpoint, and shows success", async () => {
     let calledUrl = "";
     let calledMethod = "";
-    mockFetch(async (url, init) => {
+    setHandler(async (url, init) => {
       calledUrl = url;
       calledMethod = String(init?.method);
       return new Response(JSON.stringify({ ok: true, alreadyCanceled: false }), { status: 200 });
@@ -52,7 +49,7 @@ describe("<CancelBooking />", () => {
   });
 
   test("shows the not-found pane when the API returns 404 for an invalid token", async () => {
-    mockFetch(async () => new Response(JSON.stringify({ error: "not_found" }), { status: 404 }));
+    setHandler(async () => new Response(JSON.stringify({ error: "not_found" }), { status: 404 }));
 
     renderAt("badtoken");
 

@@ -1,23 +1,24 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { httpFetch } from "./http";
 import { fetchPublicLink, fetchPublicSlots, PublicApiError, postPublicBooking } from "./public-api";
 
-const originalFetch = globalThis.fetch;
+const mockHttpFetch = vi.mocked(httpFetch);
 
-afterEach(() => {
-  globalThis.fetch = originalFetch;
+beforeEach(() => {
+  mockHttpFetch.mockReset();
 });
 
-function mockFetch(impl: (url: string, init?: RequestInit) => Promise<Response>) {
-  globalThis.fetch = vi.fn((input, init) => {
+function setHandler(impl: (url: string, init?: RequestInit) => Promise<Response>) {
+  mockHttpFetch.mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : (input as URL | Request).toString();
     return impl(url, init);
-  }) as typeof fetch;
+  });
 }
 
 describe("fetchPublicLink", () => {
   it("returns the parsed link payload on a 2xx response", async () => {
     let calledUrl = "";
-    mockFetch(async (url) => {
+    setHandler(async (url) => {
       calledUrl = url;
       return new Response(
         JSON.stringify({
@@ -38,7 +39,7 @@ describe("fetchPublicLink", () => {
 
   it("URL-encodes the slug", async () => {
     let calledUrl = "";
-    mockFetch(async (url) => {
+    setHandler(async (url) => {
       calledUrl = url;
       return new Response(
         JSON.stringify({
@@ -56,7 +57,7 @@ describe("fetchPublicLink", () => {
   });
 
   it("throws PublicApiError on a 4xx response carrying the server error code", async () => {
-    mockFetch(async () => new Response(JSON.stringify({ error: "not_found" }), { status: 404 }));
+    setHandler(async () => new Response(JSON.stringify({ error: "not_found" }), { status: 404 }));
     await expect(fetchPublicLink("missing")).rejects.toMatchObject({
       status: 404,
       code: "not_found",
@@ -65,7 +66,7 @@ describe("fetchPublicLink", () => {
   });
 
   it("falls back to request_failed when the error body is empty / not JSON", async () => {
-    mockFetch(async () => new Response("", { status: 500 }));
+    setHandler(async () => new Response("", { status: 500 }));
     await expect(fetchPublicLink("x")).rejects.toMatchObject({
       status: 500,
       code: "request_failed",
@@ -76,7 +77,7 @@ describe("fetchPublicLink", () => {
 describe("fetchPublicSlots", () => {
   it("passes from/to as query params", async () => {
     let calledUrl = "";
-    mockFetch(async (url) => {
+    setHandler(async (url) => {
       calledUrl = url;
       return new Response(
         JSON.stringify({ durationMinutes: 30, timeZone: "Asia/Tokyo", slots: [] }),
@@ -93,7 +94,7 @@ describe("postPublicBooking", () => {
   it("posts JSON body and returns the unwrapped booking", async () => {
     let receivedBody = "";
     let receivedMethod = "";
-    mockFetch(async (_url, init) => {
+    setHandler(async (_url, init) => {
       receivedBody = String(init?.body);
       receivedMethod = String(init?.method);
       return new Response(
@@ -124,7 +125,7 @@ describe("postPublicBooking", () => {
   });
 
   it("throws PublicApiError on 4xx", async () => {
-    mockFetch(async () => new Response(JSON.stringify({ error: "slot_taken" }), { status: 409 }));
+    setHandler(async () => new Response(JSON.stringify({ error: "slot_taken" }), { status: 409 }));
     await expect(
       postPublicBooking("x", {
         startAt: "2026-04-26T01:00:00Z",

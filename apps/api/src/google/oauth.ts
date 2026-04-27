@@ -1,3 +1,5 @@
+import { type FetchLike, httpFetch } from "@/lib/http";
+
 export type OauthConfig = {
   clientId: string;
   clientSecret: string;
@@ -46,8 +48,6 @@ export function buildAuthUrl(config: OauthConfig, state: string): string {
   return `${GOOGLE_AUTH_URL}?${params.toString()}`;
 }
 
-type FetchLike = typeof fetch;
-
 type RawTokenResponse = {
   access_token: string;
   refresh_token?: string;
@@ -70,7 +70,7 @@ function mapTokenResponse(raw: RawTokenResponse): TokenResponse {
 async function postForm(
   url: string,
   body: Record<string, string>,
-  fetchImpl: FetchLike = fetch,
+  fetchImpl: FetchLike = httpFetch,
 ): Promise<RawTokenResponse> {
   const res = await fetchImpl(url, {
     method: "POST",
@@ -121,7 +121,7 @@ export async function refreshAccessToken(
   return mapTokenResponse(raw);
 }
 
-export async function revokeToken(token: string, fetchImpl: FetchLike = fetch): Promise<void> {
+export async function revokeToken(token: string, fetchImpl: FetchLike = httpFetch): Promise<void> {
   const res = await fetchImpl(GOOGLE_REVOKE_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -135,7 +135,7 @@ export async function revokeToken(token: string, fetchImpl: FetchLike = fetch): 
 
 export async function fetchUserInfo(
   accessToken: string,
-  fetchImpl: FetchLike = fetch,
+  fetchImpl: FetchLike = httpFetch,
 ): Promise<GoogleUserInfo> {
   const res = await fetchImpl(GOOGLE_USERINFO_URL, {
     headers: { Authorization: `Bearer ${accessToken}` },

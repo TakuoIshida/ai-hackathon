@@ -1,9 +1,13 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
 import { googleOauthAccounts } from "@/db/schema/google";
 import { createTestDb, type TestDb } from "@/test/integration-db";
+// Side-effect import: registers `mock.module("@/lib/http")` swap so SUT modules
+// pick up the mocked httpFetch. Must come before any SUT import that
+// transitively reaches @/lib/http.
+import { httpFetchMock } from "@/test/mock-http";
 import { insertUser } from "@/users/repo";
 import { getValidAccessToken } from "./access-token";
 import type { GoogleConfig } from "./config";
@@ -20,29 +24,17 @@ const cfg: GoogleConfig = {
 };
 
 type FetchCall = { url: string; init: RequestInit | undefined };
-const originalFetch = globalThis.fetch;
-
-// Only intercept fetches to Google's OAuth token endpoint. The CI test backend
-// (Neon HTTP via local Neon container) routes DB queries through the same
-// `globalThis.fetch`, so a blanket override would catch the DB SELECT that
-// `getValidAccessToken` does before the Google call and surface the test's
-// guards/assertions there instead of at the Google call site. Pass-through for
-// every other URL keeps the DB layer working untouched.
-const GOOGLE_TOKEN_URL_PREFIX = "https://oauth2.googleapis.com/";
 
 function installFetch(responder: (call: FetchCall) => Response | Promise<Response>): {
   calls: FetchCall[];
 } {
   const calls: FetchCall[] = [];
-  globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+  httpFetchMock.mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : (input as URL | Request).toString();
-    if (!url.startsWith(GOOGLE_TOKEN_URL_PREFIX)) {
-      return originalFetch(input, init);
-    }
     const call = { url, init };
     calls.push(call);
     return responder(call);
-  }) as typeof fetch;
+  });
   return { calls };
 }
 
@@ -61,10 +53,7 @@ beforeEach(async () => {
     TRUNCATE TABLE google_calendars, google_oauth_accounts, users
     RESTART IDENTITY CASCADE;
   `);
-});
-
-afterEach(() => {
-  globalThis.fetch = originalFetch;
+  httpFetchMock.mockReset();
 });
 
 async function seedAccount(opts: {

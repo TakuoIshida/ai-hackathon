@@ -1,3 +1,4 @@
+import { httpFetch } from "./http";
 import type {
   AcceptedInvitationWorkspace,
   BookingSummary,
@@ -40,7 +41,7 @@ async function request<T>(
     const token = await init.getToken();
     if (token) headers.set("Authorization", `Bearer ${token}`);
   }
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await httpFetch(`${API_URL}${path}`, {
     ...init,
     credentials: "include",
     headers,
