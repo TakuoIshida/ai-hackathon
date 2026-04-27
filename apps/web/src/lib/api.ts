@@ -135,7 +135,7 @@ export const api = {
 
   // ISH-110: members.
   listMembers: (workspaceId: string, getToken: AuthTokenGetter) =>
-    request<{ members: WorkspaceMember[]; callerRole: WorkspaceRole }>(
+    request<{ members: WorkspaceMember[]; callerRole: WorkspaceRole; callerUserId: string }>(
       `/workspaces/${workspaceId}/members`,
       { getToken },
     ),

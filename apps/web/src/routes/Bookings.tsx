@@ -1,7 +1,7 @@
-import { useAuth } from "@clerk/clerk-react";
 import * as stylex from "@stylexjs/stylex";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ApiError, api } from "@/lib/api";
@@ -54,7 +54,7 @@ function browserTz(): string {
 }
 
 export default function Bookings() {
-  const { getToken } = useAuth();
+  const { getToken } = auth.useAuth();
   const [tab, setTab] = useState<Tab>("upcoming");
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const tz = browserTz();

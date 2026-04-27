@@ -1,7 +1,7 @@
-import { useAuth } from "@clerk/clerk-react";
 import * as stylex from "@stylexjs/stylex";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ApiError, api } from "@/lib/api";
@@ -45,7 +45,7 @@ type LoadState =
   | { status: "error"; message: string };
 
 export default function Links() {
-  const { getToken } = useAuth();
+  const { getToken } = auth.useAuth();
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
   const reload = useCallback(async () => {

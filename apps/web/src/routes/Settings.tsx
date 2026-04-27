@@ -1,6 +1,6 @@
-import { useAuth } from "@clerk/clerk-react";
 import * as stylex from "@stylexjs/stylex";
 import { useCallback, useEffect, useState } from "react";
+import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -49,7 +49,7 @@ const styles = stylex.create({
 });
 
 export default function Settings() {
-  const { getToken } = useAuth();
+  const { getToken } = auth.useAuth();
   const [conn, setConn] = useState<GoogleConnection | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
