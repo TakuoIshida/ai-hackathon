@@ -1,35 +1,55 @@
 import { and, desc, eq, gte, isNull, lt } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
-import { bookings } from "@/db/schema/bookings";
+import { type Booking as BookingTableRow, bookings } from "@/db/schema/bookings";
 import { availabilityLinks } from "@/db/schema/links";
 import { users } from "@/db/schema/users";
+import type { Booking, BookingDueForReminder, OwnerBooking } from "./domain";
 
 type Database = typeof DbClient;
 
-export type BookingRow = typeof bookings.$inferSelect;
+/**
+ * Drizzle insert shape kept as a repo-internal alias. Not part of the domain
+ * vocabulary — only `bookings/repo.ts` (and its sibling test) reach for it,
+ * which keeps `bookings/{confirm,cancel,usecase}.ts` Drizzle-free.
+ */
 export type NewBookingRow = typeof bookings.$inferInsert;
 
 /**
- * Booking row joined with the parent link's slug + title. Used by the owner
- * "My bookings" list view so the response can include link metadata in a
- * single round trip without N+1 lookups in the route handler.
+ * Row → domain mapper. Single chokepoint: every read funnels through this so
+ * the persistence shape never escapes `repo.ts`. Domain shape happens to mirror
+ * the row today, but the indirection lets schema drift stay local.
  */
-export type BookingWithLinkRow = BookingRow & {
-  linkSlug: string;
-  linkTitle: string;
-};
+function toBookingDomain(row: BookingTableRow): Booking {
+  return {
+    id: row.id,
+    linkId: row.linkId,
+    startAt: row.startAt,
+    endAt: row.endAt,
+    guestName: row.guestName,
+    guestEmail: row.guestEmail,
+    guestNote: row.guestNote,
+    guestTimeZone: row.guestTimeZone,
+    status: row.status,
+    googleEventId: row.googleEventId,
+    meetUrl: row.meetUrl,
+    cancellationToken: row.cancellationToken,
+    reminderSentAt: row.reminderSentAt,
+    createdAt: row.createdAt,
+    canceledAt: row.canceledAt,
+  };
+}
 
 /**
  * Inserts a confirmed booking, relying on the partial unique index
  * `uniq_bookings_active_slot` (link_id, start_at) WHERE status='confirmed'
  * to atomically reject races with another in-flight confirmation.
  *
- * @returns the inserted row, or null if another confirmation won the race.
+ * @returns the inserted booking, or null if another confirmation won the race.
  */
 export async function tryInsertConfirmedBooking(
   database: Database,
   input: Omit<NewBookingRow, "id" | "status" | "createdAt"> & { status?: never },
-): Promise<BookingRow | null> {
+): Promise<Booking | null> {
   const inserted = await database
     .insert(bookings)
     .values({ ...input, status: "confirmed" })
@@ -38,7 +58,7 @@ export async function tryInsertConfirmedBooking(
       where: eq(bookings.status, "confirmed"),
     })
     .returning();
-  return inserted[0] ?? null;
+  return inserted[0] ? toBookingDomain(inserted[0]) : null;
 }
 
 export async function attachGoogleEvent(
@@ -53,16 +73,17 @@ export async function attachGoogleEvent(
 export async function findBookingById(
   database: Database,
   bookingId: string,
-): Promise<BookingRow | null> {
+): Promise<Booking | null> {
   const [row] = await database.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1);
-  return row ?? null;
+  return row ? toBookingDomain(row) : null;
 }
 
 export async function findActiveBookingsForLink(
   database: Database,
   linkId: string,
-): Promise<BookingRow[]> {
-  return database.select().from(bookings).where(eq(bookings.linkId, linkId));
+): Promise<Booking[]> {
+  const rows = await database.select().from(bookings).where(eq(bookings.linkId, linkId));
+  return rows.map(toBookingDomain);
 }
 
 /**
@@ -78,7 +99,7 @@ export async function findActiveBookingsForLink(
 export async function findBookingsByOwner(
   database: Database,
   ownerId: string,
-): Promise<BookingWithLinkRow[]> {
+): Promise<OwnerBooking[]> {
   const rows = await database
     .select({
       booking: bookings,
@@ -89,19 +110,23 @@ export async function findBookingsByOwner(
     .innerJoin(availabilityLinks, eq(bookings.linkId, availabilityLinks.id))
     .where(eq(availabilityLinks.userId, ownerId))
     .orderBy(desc(bookings.startAt));
-  return rows.map((r) => ({ ...r.booking, linkSlug: r.linkSlug, linkTitle: r.linkTitle }));
+  return rows.map((r) => ({
+    ...toBookingDomain(r.booking),
+    linkSlug: r.linkSlug,
+    linkTitle: r.linkTitle,
+  }));
 }
 
 export async function findBookingByCancellationToken(
   database: Database,
   token: string,
-): Promise<BookingRow | null> {
+): Promise<Booking | null> {
   const [row] = await database
     .select()
     .from(bookings)
     .where(eq(bookings.cancellationToken, token))
     .limit(1);
-  return row ?? null;
+  return row ? toBookingDomain(row) : null;
 }
 
 /**
@@ -111,43 +136,16 @@ export async function findBookingByCancellationToken(
 export async function markBookingCanceled(
   database: Database,
   bookingId: string,
-): Promise<BookingRow | null> {
+): Promise<Booking | null> {
   const [row] = await database
     .update(bookings)
     .set({ status: "canceled", canceledAt: new Date() })
     .where(and(eq(bookings.id, bookingId), eq(bookings.status, "confirmed")))
     .returning();
-  return row ?? null;
+  return row ? toBookingDomain(row) : null;
 }
 
 // ---------- ISH-98: reminder cron ----------
-
-/**
- * Projection used by the reminder cron. Carries everything the notification
- * context (`BookingNotificationContext`) needs so the job can render owner+
- * guest emails without a follow-up SELECT per booking — N+1 → 1 query
- * (ISH-149).
- *
- * `linkDescription` and `ownerName` are nullable in the schema; the templates
- * already handle null. `linkTimeZone` is the link's IANA zone (used as the
- * owner-side display TZ when the guest didn't supply one).
- */
-export type BookingDueForReminder = {
-  bookingId: string;
-  linkId: string;
-  startAt: Date;
-  endAt: Date;
-  guestEmail: string;
-  guestName: string;
-  guestTimeZone: string | null;
-  meetUrl: string | null;
-  cancellationToken: string;
-  linkTitle: string;
-  linkDescription: string | null;
-  linkTimeZone: string;
-  ownerEmail: string;
-  ownerName: string | null;
-};
 
 /**
  * Confirmed bookings whose start_at falls in [now+leadMs-windowMs, now+leadMs+windowMs)

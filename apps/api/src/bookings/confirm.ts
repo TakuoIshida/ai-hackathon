@@ -7,7 +7,8 @@ import { listLinkCoOwnerUserIds } from "@/links/repo";
 import { computePublicSlots } from "@/links/usecase";
 import type { BookingNotifier } from "@/notifications/types";
 import { getUserById } from "@/users/usecase";
-import { attachGoogleEvent, type BookingRow, tryInsertConfirmedBooking } from "./repo";
+import type { Booking } from "./domain";
+import { attachGoogleEvent, tryInsertConfirmedBooking } from "./repo";
 import type { BookingInput } from "./schemas";
 
 type Database = typeof DbClient;
@@ -37,7 +38,7 @@ export type NotificationSinks = {
 };
 
 export type ConfirmResult =
-  | { kind: "ok"; booking: BookingRow }
+  | { kind: "ok"; booking: Booking }
   | { kind: "slot_unavailable" }
   | { kind: "race_lost" };
 
@@ -126,10 +127,10 @@ async function revalidateSlot(
 async function syncGoogleEvent(
   database: Database,
   link: LinkWithRelations,
-  booking: BookingRow,
+  booking: Booking,
   input: ConfirmInput,
   google: GoogleSinks,
-): Promise<BookingRow> {
+): Promise<Booking> {
   if (!google.cfg) return booking;
   try {
     const account = await getOauthAccountByUser(database, link.userId);
@@ -182,7 +183,7 @@ async function loadCoOwnerEmails(database: Database, linkId: string): Promise<st
 async function notifyConfirmed(
   database: Database,
   link: LinkWithRelations,
-  booking: BookingRow,
+  booking: Booking,
   notifications: NotificationSinks,
 ): Promise<void> {
   try {

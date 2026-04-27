@@ -1,4 +1,4 @@
-import type { BookingRow } from "@/bookings/repo";
+import type { Booking } from "@/bookings/domain";
 
 export type EmailMessage = {
   to: string;
@@ -38,7 +38,7 @@ export type BookingEventOwner = {
 
 export type BookingConfirmedEvent = {
   kind: "booking_confirmed";
-  booking: BookingRow;
+  booking: Booking;
   link: BookingEventLink;
   owner: BookingEventOwner;
   cancellationToken: string;
@@ -46,7 +46,7 @@ export type BookingConfirmedEvent = {
 
 export type BookingCanceledEvent = {
   kind: "booking_canceled";
-  booking: BookingRow;
+  booking: Booking;
   link: BookingEventLink;
   owner: BookingEventOwner;
   cancellationToken: string;

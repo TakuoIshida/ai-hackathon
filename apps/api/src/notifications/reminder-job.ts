@@ -1,8 +1,5 @@
-import {
-  type BookingDueForReminder,
-  findBookingsDueForReminder,
-  markReminderSent,
-} from "@/bookings/repo";
+import type { BookingDueForReminder } from "@/bookings/domain";
+import { findBookingsDueForReminder, markReminderSent } from "@/bookings/repo";
 import type { db as DbClient } from "@/db/client";
 import type { BookingNotificationContext } from "./templates";
 import { guestReminderEmail, ownerReminderEmail } from "./templates";

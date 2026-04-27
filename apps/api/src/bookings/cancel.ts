@@ -6,19 +6,15 @@ import { getOauthAccountByUser, listUserCalendars } from "@/google/repo";
 import { findPublishedLinkBySlug } from "@/links/repo";
 import { getUserById } from "@/users/usecase";
 import type { GoogleSinks, NotificationSinks } from "./confirm";
-import {
-  type BookingRow,
-  findBookingByCancellationToken,
-  findBookingById,
-  markBookingCanceled,
-} from "./repo";
+import type { Booking } from "./domain";
+import { findBookingByCancellationToken, findBookingById, markBookingCanceled } from "./repo";
 
 type Database = typeof DbClient;
 
 export type CancelActor = "owner" | "guest";
 
 export type CancelResult =
-  | { kind: "ok"; booking: BookingRow }
+  | { kind: "ok"; booking: Booking }
   | { kind: "not_found" }
   | { kind: "already_canceled" };
 
@@ -33,7 +29,7 @@ async function loadLinkForBooking(database: Database, linkId: string) {
 
 async function fireCancelSideEffects(
   database: Database,
-  booking: BookingRow,
+  booking: Booking,
   canceledBy: CancelActor,
   google: GoogleSinks,
   notifications: NotificationSinks,
