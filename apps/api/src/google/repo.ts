@@ -1,12 +1,52 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
-import { googleCalendars, googleOauthAccounts } from "@/db/schema/google";
+import {
+  type GoogleCalendar as CalendarTableRow,
+  googleCalendars,
+  googleOauthAccounts,
+  type GoogleOauthAccount as OauthAccountTableRow,
+} from "@/db/schema/google";
 import type { CalendarListItem } from "./calendar";
+import type { Calendar, OauthAccount } from "./domain";
 
 type Database = typeof DbClient;
 
-export type OauthAccountRow = typeof googleOauthAccounts.$inferSelect;
-export type CalendarRow = typeof googleCalendars.$inferSelect;
+/**
+ * Row → domain mappers. Single chokepoints: every read funnels through these
+ * so the persistence shape never escapes `repo.ts`. Domain types happen to
+ * mirror the rows today; the indirection lets schema drift stay local.
+ */
+function toOauthAccountDomain(row: OauthAccountTableRow): OauthAccount {
+  return {
+    id: row.id,
+    userId: row.userId,
+    googleUserId: row.googleUserId,
+    email: row.email,
+    encryptedRefreshToken: row.encryptedRefreshToken,
+    refreshTokenIv: row.refreshTokenIv,
+    refreshTokenAuthTag: row.refreshTokenAuthTag,
+    accessToken: row.accessToken,
+    accessTokenExpiresAt: row.accessTokenExpiresAt,
+    scope: row.scope,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function toCalendarDomain(row: CalendarTableRow): Calendar {
+  return {
+    id: row.id,
+    oauthAccountId: row.oauthAccountId,
+    googleCalendarId: row.googleCalendarId,
+    summary: row.summary,
+    timeZone: row.timeZone,
+    isPrimary: row.isPrimary,
+    usedForBusy: row.usedForBusy,
+    usedForWrites: row.usedForWrites,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
 
 /**
  * Pre-encrypted refresh-token payload + the rest of the OAuth account row.
@@ -29,7 +69,7 @@ export type StoreOauthAccountRawInput = {
 export async function upsertOauthAccountRaw(
   database: Database,
   input: StoreOauthAccountRawInput,
-): Promise<OauthAccountRow> {
+): Promise<OauthAccount> {
   const [row] = await database
     .insert(googleOauthAccounts)
     .values({
@@ -58,19 +98,19 @@ export async function upsertOauthAccountRaw(
     })
     .returning();
   if (!row) throw new Error("failed to upsert google_oauth_accounts");
-  return row;
+  return toOauthAccountDomain(row);
 }
 
 export async function getOauthAccountByUser(
   database: Database,
   userId: string,
-): Promise<OauthAccountRow | null> {
+): Promise<OauthAccount | null> {
   const [row] = await database
     .select()
     .from(googleOauthAccounts)
     .where(eq(googleOauthAccounts.userId, userId))
     .limit(1);
-  return row ?? null;
+  return row ? toOauthAccountDomain(row) : null;
 }
 
 export async function deleteOauthAccount(
@@ -121,23 +161,24 @@ export async function syncCalendars(
 export async function listUserCalendars(
   database: Database,
   oauthAccountId: string,
-): Promise<CalendarRow[]> {
-  return database
+): Promise<Calendar[]> {
+  const rows = await database
     .select()
     .from(googleCalendars)
     .where(eq(googleCalendars.oauthAccountId, oauthAccountId));
+  return rows.map(toCalendarDomain);
 }
 
 export async function findCalendarById(
   database: Database,
   calendarId: string,
-): Promise<CalendarRow | null> {
+): Promise<Calendar | null> {
   const [row] = await database
     .select()
     .from(googleCalendars)
     .where(eq(googleCalendars.id, calendarId))
     .limit(1);
-  return row ?? null;
+  return row ? toCalendarDomain(row) : null;
 }
 
 export type CalendarFlagsPatch = {

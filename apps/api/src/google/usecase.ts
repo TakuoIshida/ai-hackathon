@@ -2,15 +2,14 @@ import type { db as DbClient } from "@/db/client";
 import type { CalendarListItem } from "./calendar";
 import type { GoogleConfig } from "./config";
 import { decryptSecret, encryptSecret } from "./crypto";
+import type { Calendar, OauthAccount } from "./domain";
 import { buildAuthUrl, type GoogleUserInfo, hasRequiredScopes, type TokenResponse } from "./oauth";
 import {
   type CalendarFlagsPatch,
-  type CalendarRow,
   clearWritesFlagOnSiblings,
   deleteOauthAccount,
   findCalendarById,
   getOauthAccountByUser,
-  type OauthAccountRow,
   type StoreOauthAccountRawInput,
   updateCalendarFlagsRow,
   upsertOauthAccountRaw,
@@ -19,7 +18,7 @@ import {
 type Database = typeof DbClient;
 
 export type UpdateCalendarFlagsResult =
-  | { kind: "ok"; calendar: CalendarRow }
+  | { kind: "ok"; calendar: Calendar }
   | { kind: "not_found" }
   | { kind: "forbidden" }
   | { kind: "invalid"; reason: string };
@@ -50,7 +49,7 @@ export async function upsertOauthAccountWithEncryption(
   database: Database,
   input: UpsertOauthAccountWithEncryptionInput,
   encryptionKey: Buffer,
-): Promise<OauthAccountRow> {
+): Promise<OauthAccount> {
   const enc = encryptSecret(input.refreshToken, encryptionKey);
   const rawInput: StoreOauthAccountRawInput = {
     userId: input.userId,
@@ -71,7 +70,7 @@ export async function upsertOauthAccountWithEncryption(
  *
  * Lives at the usecase layer so the repo never imports `crypto`.
  */
-export function decryptOauthRefreshToken(account: OauthAccountRow, encryptionKey: Buffer): string {
+export function decryptOauthRefreshToken(account: OauthAccount, encryptionKey: Buffer): string {
   return decryptSecret(
     {
       ciphertext: account.encryptedRefreshToken,
@@ -94,9 +93,9 @@ export function decryptOauthRefreshToken(account: OauthAccountRow, encryptionKey
  */
 export async function setCalendarFlags(
   database: Database,
-  calendar: CalendarRow,
+  calendar: Calendar,
   patch: CalendarFlagsPatch,
-): Promise<CalendarRow | null> {
+): Promise<Calendar | null> {
   if (patch.usedForWrites === true) {
     await clearWritesFlagOnSiblings(database, calendar.oauthAccountId, calendar.id);
   }
@@ -179,7 +178,7 @@ export function buildOauthAuthUrl(cfg: GoogleConfig, state: string): string {
 }
 
 export type CompleteOauthCallbackResult =
-  | { kind: "ok"; account: OauthAccountRow; redirectTo: string }
+  | { kind: "ok"; account: OauthAccount; redirectTo: string }
   | { kind: "invalid_state" }
   | { kind: "missing_code" }
   | { kind: "missing_refresh_token" }
