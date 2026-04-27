@@ -1,12 +1,32 @@
-name: CI
+name: Frontend CI
 
+# Triggered only when something the web (or e2e) workspace cares about
+# actually changes. Shared config (biome / tsconfig.base / lockfile / setup
+# action) is included so that a change there still validates the frontend.
+# The backend has its own paths-filtered workflow in `backend-ci.yml`.
 on:
   pull_request:
+    paths:
+      - "apps/web/**"
+      - "apps/e2e/**"
+      - "package.json"
+      - "bun.lock"
+      - "biome.json"
+      - ".github/workflows/frontend-ci.yml"
+      - ".github/actions/setup/**"
   push:
     branches: [main]
+    paths:
+      - "apps/web/**"
+      - "apps/e2e/**"
+      - "package.json"
+      - "bun.lock"
+      - "biome.json"
+      - ".github/workflows/frontend-ci.yml"
+      - ".github/actions/setup/**"
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: frontend-ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -24,63 +44,25 @@ jobs:
           install: "true"
 
   format:
-    name: format (biome)
+    name: format (biome — web/e2e)
     needs: setup
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: bun run check
+      - run: bunx biome check apps/web apps/e2e
 
   typecheck:
-    name: typecheck
+    name: typecheck (web/e2e)
     needs: setup
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: bun run typecheck
-
-  test:
-    name: test
-    needs: setup
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # Run api tests against the official Neon Local container so the production
-    # `neon-http` driver path is exercised end-to-end. Neon Local provisions an
-    # ephemeral branch on the configured Neon project at start-up and deletes
-    # it on shutdown — each CI run gets a fresh DB without manual cleanup.
-    #
-    # Required repo secrets:
-    #   NEON_API_KEY    — created at https://console.neon.tech/app/settings/api-keys
-    #   NEON_PROJECT_ID — Project Settings → General → Project ID
-    #
-    # The previous PGlite-in-WASM setup flaked under heap exhaustion (#66 was
-    # the 4-batch hotfix). The local dev path stays on PGlite (no env var
-    # required) so contributor onboarding remains zero-setup.
-    services:
-      db:
-        image: neondatabase/neon_local:latest
-        ports:
-          - 5432:5432
-        env:
-          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
-          # DELETE_BRANCH defaults to true → ephemeral branch is removed on
-          # container shutdown. Leave at default so we don't litter the project.
-    env:
-      # `db.localtest.me` is a public DNS name that resolves to 127.0.0.1, so
-      # the runner reaches the service via that host. `integration-db.ts`
-      # recognises this hostname and re-points the @neondatabase/serverless
-      # driver's fetch endpoint to the local Neon container on :5432/sql.
-      # The DB name `neondb` is the Neon project default.
-      TEST_DATABASE_URL: postgres://neon:npg@db.localtest.me:5432/neondb?sslmode=no-verify
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-      - run: bun run test
+      - run: bun run --filter @app/web typecheck
+      - run: bun run --filter @app/e2e typecheck
 
   coverage:
     name: coverage (web)
@@ -90,7 +72,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: bun run test:coverage
+      - run: bun run --filter @app/web test:coverage
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v4
@@ -100,14 +82,14 @@ jobs:
           retention-days: 7
 
   build:
-    name: build
+    name: build (web)
     needs: setup
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - run: bun run build
+      - run: bun run --filter @app/web build
 
       - name: Upload web dist
         uses: actions/upload-artifact@v4
