@@ -38,6 +38,19 @@ export type OwnerBooking = Booking & {
 };
 
 /**
+ * Domain command for confirming a booking. Carries the resolved start
+ * timestamp (parsed at the route boundary) plus the guest fields. Decoupled
+ * from `bookingInputSchema` so `confirm.ts` does not import Zod (ISH-124).
+ */
+export type ConfirmBookingCommand = {
+  startMs: number;
+  guestName: string;
+  guestEmail: string;
+  guestNote: string | null;
+  guestTimeZone: string | null;
+};
+
+/**
  * Projection used by the reminder cron (ISH-149). Intentionally already a
  * "wide row" — the cron does not need a real `Booking` because the JOIN
  * pre-bakes the only fields it consumes (link title/desc/tz, owner email/name).

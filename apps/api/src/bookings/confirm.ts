@@ -7,9 +7,8 @@ import { listLinkCoOwnerUserIds } from "@/links/repo";
 import { computePublicSlots } from "@/links/usecase";
 import type { BookingNotifier } from "@/notifications/types";
 import { getUserById } from "@/users/usecase";
-import type { Booking } from "./domain";
+import type { Booking, ConfirmBookingCommand } from "./domain";
 import { attachGoogleEvent, tryInsertConfirmedBooking } from "./repo";
-import type { BookingInput } from "./schemas";
 
 type Database = typeof DbClient;
 
@@ -42,7 +41,7 @@ export type ConfirmResult =
   | { kind: "slot_unavailable" }
   | { kind: "race_lost" };
 
-export type ConfirmInput = BookingInput & { startMs: number };
+export type ConfirmInput = ConfirmBookingCommand;
 
 /**
  * Atomically confirm a booking for a published availability link.

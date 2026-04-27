@@ -174,10 +174,11 @@ function googleSinksWith(overrides: {
 const notifications: NotificationSinks = buildNotifications();
 
 const validInput = (): ConfirmInput => ({
-  startAt: SLOT_START_ISO,
   startMs: SLOT_START_MS,
   guestName: "Guest Name",
   guestEmail: "guest@example.com",
+  guestNote: null,
+  guestTimeZone: null,
 });
 
 beforeAll(async () => {
@@ -413,10 +414,11 @@ describe("confirmBooking — slot conflict / availability guards", () => {
       db,
       seed.link,
       {
-        startAt: "2026-12-13T05:00:00.000Z",
         startMs: sundayMs,
         guestName: "Guest",
         guestEmail: "guest@example.com",
+        guestNote: null,
+        guestTimeZone: null,
       },
       noGoogleSinks,
       notifications,
