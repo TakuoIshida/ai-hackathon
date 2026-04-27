@@ -1,32 +1,40 @@
 import { eq } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
-import { users } from "@/db/schema/users";
-import {
-  type ClerkUserPayload,
-  deriveUserAttributes,
-  type NewUserAttributes,
-  type UserEntity,
-} from "./domain";
+import { type NewUser, type User as UserRow, users } from "@/db/schema/users";
+import { type ClerkUserPayload, deriveUserAttributes, type User } from "./domain";
 
 type Database = typeof DbClient;
 
-export async function findUserByClerkId(
-  database: Database,
-  clerkId: string,
-): Promise<UserEntity | null> {
-  const [row] = await database.select().from(users).where(eq(users.clerkId, clerkId)).limit(1);
-  return row ?? null;
+/**
+ * Row → domain mapper. Single chokepoint for all reads. Drizzle row types
+ * never escape this file.
+ */
+function toUserDomain(row: UserRow): User {
+  return {
+    id: row.id,
+    clerkId: row.clerkId,
+    email: row.email,
+    name: row.name,
+    timeZone: row.timeZone,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
 }
 
-export async function findUserById(database: Database, id: string): Promise<UserEntity | null> {
+export async function findUserByClerkId(database: Database, clerkId: string): Promise<User | null> {
+  const [row] = await database.select().from(users).where(eq(users.clerkId, clerkId)).limit(1);
+  return row ? toUserDomain(row) : null;
+}
+
+export async function findUserById(database: Database, id: string): Promise<User | null> {
   const [row] = await database.select().from(users).where(eq(users.id, id)).limit(1);
-  return row ?? null;
+  return row ? toUserDomain(row) : null;
 }
 
 export async function insertUser(
   database: Database,
-  attrs: Pick<NewUserAttributes, "clerkId" | "email" | "name">,
-): Promise<UserEntity> {
+  attrs: Pick<NewUser, "clerkId" | "email" | "name">,
+): Promise<User> {
   const [created] = await database
     .insert(users)
     .values(attrs)
@@ -36,13 +44,13 @@ export async function insertUser(
     })
     .returning();
   if (!created) throw new Error("failed to upsert user");
-  return created;
+  return toUserDomain(created);
 }
 
 export async function upsertUserFromPayload(
   database: Database,
   payload: ClerkUserPayload,
-): Promise<UserEntity> {
+): Promise<User> {
   return insertUser(database, deriveUserAttributes(payload));
 }
 

@@ -1,7 +1,21 @@
-import type { users } from "@/db/schema/users";
-
-export type UserEntity = typeof users.$inferSelect;
-export type NewUserAttributes = typeof users.$inferInsert;
+/**
+ * Pure-domain user. Mirrors the persisted shape today, but `repo.ts` owns the
+ * row→domain mapper (`toUserDomain`) so future schema drift does not silently
+ * cross into usecase / route layers (ISH-120).
+ *
+ * No imports from `drizzle-orm` or `@/db/schema/*` — that boundary is
+ * enforced by structure: the only file that may turn rows into `User` is
+ * `users/repo.ts`.
+ */
+export type User = {
+  id: string;
+  clerkId: string;
+  email: string;
+  name: string | null;
+  timeZone: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
 
 export type ClerkUserPayload = {
   id: string;
