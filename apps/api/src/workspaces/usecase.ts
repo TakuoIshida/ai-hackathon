@@ -19,7 +19,6 @@ import {
   listMembersWithUserInfo,
   removeMembership,
   updateMembershipRole,
-  type WorkspaceMemberRow,
   type WorkspaceRow,
   type WorkspaceWithRole,
 } from "./repo";
