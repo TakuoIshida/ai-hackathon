@@ -67,12 +67,15 @@ async function seedPublishedLink(
     })
     .returning();
   if (!link) throw new Error("seed: link insert failed");
-  // Mon-Fri 9-17 JST
-  for (const weekday of [1, 2, 3, 4, 5]) {
-    await db
-      .insert(availabilityRules)
-      .values({ linkId: link.id, weekday, startMinute: 9 * 60, endMinute: 17 * 60 });
-  }
+  // Mon-Fri 9-17 JST — single multi-row INSERT (1 RTT vs 5 in CI Neon HTTP).
+  await db.insert(availabilityRules).values(
+    [1, 2, 3, 4, 5].map((weekday) => ({
+      linkId: link.id,
+      weekday,
+      startMinute: 9 * 60,
+      endMinute: 17 * 60,
+    })),
+  );
   return { userId: user.id, linkId: link.id, slug };
 }
 
