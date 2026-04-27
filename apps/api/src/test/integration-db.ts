@@ -68,16 +68,19 @@ let neonProxyConfigured = false;
 
 /**
  * Re-route the Neon serverless driver's HTTP fetch endpoint so requests for
- * `db.localtest.me` go to the local proxy on `:4444/sql` over plain HTTP.
- * `db.localtest.me` is a public DNS name that resolves to `127.0.0.1`, so this
- * works on any runner. Idempotent — only configures once per process.
+ * `db.localtest.me` go to the local Neon container on `:5432/sql` over plain
+ * HTTP. `db.localtest.me` is a public DNS name that resolves to `127.0.0.1`,
+ * so this works on any runner. Idempotent — only configures once per process.
  *
- * Image: ghcr.io/timowilhelm/local-neon-http-proxy:main (see ci.yml services).
+ * Image: neondatabase/neon_local:latest (see ci.yml services). The container
+ * provisions an ephemeral branch on the configured Neon project at boot and
+ * exposes both raw Postgres wire protocol AND the serverless `/sql` HTTP
+ * endpoint on the same port.
  */
 function configureLocalNeonProxy(host: string): void {
   if (neonProxyConfigured) return;
   if (host !== "db.localtest.me") return;
-  neonConfig.fetchEndpoint = (h) => `http://${h}:4444/sql`;
+  neonConfig.fetchEndpoint = (h) => `http://${h}:5432/sql`;
   neonConfig.useSecureWebSocket = false;
   neonConfig.poolQueryViaFetch = true;
   neonProxyConfigured = true;
