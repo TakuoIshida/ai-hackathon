@@ -82,7 +82,15 @@ export async function createTestDb(): Promise<TestDb> {
   // with poolers that don't tolerate prepared-statement state across
   // connections. `max: 1` keeps the test process from holding extra
   // connections to the Postgres container.
-  const sql = postgres(url, { max: 1, idle_timeout: 5, prepare: false });
+  // If the URL specifies sslmode=no-verify (e.g. self-signed CI containers),
+  // translate it explicitly since postgres-js doesn't map it from the URL.
+  const noVerify = new URL(url).searchParams.get("sslmode") === "no-verify";
+  const sql = postgres(url, {
+    max: 1,
+    idle_timeout: 5,
+    prepare: false,
+    ...(noVerify ? { ssl: { rejectUnauthorized: false } } : {}),
+  });
   const db = drizzle(sql, { schema });
 
   await applyMigrationsIfNeeded(sql);
