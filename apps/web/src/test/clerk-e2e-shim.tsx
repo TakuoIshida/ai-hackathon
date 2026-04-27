@@ -40,6 +40,20 @@ export function RedirectToSignIn() {
   return null;
 }
 
+// ISH-55: dedicated /sign-in and /sign-up routes mount Clerk's <SignIn /> /
+// <SignUp /> components. The e2e bundle never visits these routes (the spec
+// asserts the post-auth dashboard) but the production build still imports
+// them via App.tsx → SignIn/SignUp routes, so rollup needs the symbols to
+// resolve. Render a placeholder so the routes stay observable if someone
+// adds a future spec that hits them.
+export function SignIn() {
+  return <div data-testid="clerk-sign-in" />;
+}
+
+export function SignUp() {
+  return <div data-testid="clerk-sign-up" />;
+}
+
 export function UserButton() {
   return <div data-testid="user-button" />;
 }

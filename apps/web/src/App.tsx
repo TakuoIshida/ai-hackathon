@@ -13,6 +13,8 @@ import Links from "@/routes/Links";
 import NotFound from "@/routes/NotFound";
 import PublicLink from "@/routes/PublicLink";
 import Settings from "@/routes/Settings";
+import SignInPage from "@/routes/SignIn";
+import SignUpPage from "@/routes/SignUp";
 import WorkspaceDetail from "@/routes/WorkspaceDetail";
 import Workspaces from "@/routes/Workspaces";
 
@@ -36,6 +38,12 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Landing />} />
+
+      {/* ISH-55: dedicated in-app sign-in / sign-up routes. Wildcards let
+          Clerk's components own their own subpaths (factor-one, verify-email,
+          etc.) without requiring an explicit Route per step. */}
+      <Route path="/sign-in/*" element={<SignInPage />} />
+      <Route path="/sign-up/*" element={<SignUpPage />} />
 
       <Route path="/dashboard" element={<ProtectedDashboard />}>
         <Route index element={<DashboardHome />} />
