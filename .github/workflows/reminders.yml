@@ -1,0 +1,38 @@
+name: Booking reminder cron
+
+on:
+  schedule:
+    # Every 15 minutes. The job's `windowMinutes` default (8) is half this
+    # interval so each due booking is hit by exactly one tick.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+# Don't kill an in-flight run when the next 15-min tick fires — better to skip
+# the next tick than to interrupt a partially-dispatched send loop. The
+# per-row "claim then send" flow in `sendDueReminders` makes the next run safe
+# even if the previous one was interrupted.
+concurrency:
+  group: reminders-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  send-reminders:
+    name: Send due reminders
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      LEFTHOOK: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          install: "true"
+
+      - name: Run reminder job
+        working-directory: apps/api
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+        run: bun run src/jobs/reminders.ts

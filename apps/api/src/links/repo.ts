@@ -194,6 +194,21 @@ export async function findPublishedLinkBySlug(
   return { ...link, ...relations };
 }
 
+/**
+ * ISH-98: lookup a link by id WITHOUT scoping to a user. Used by the reminder
+ * cron job which operates as a system actor and only has the link id from the
+ * booking row — we need the link's title/timezone/userId to build the
+ * notification context. Not exposed via any user-facing route.
+ */
+export async function findLinkById(database: Database, linkId: string): Promise<LinkRow | null> {
+  const [row] = await database
+    .select()
+    .from(availabilityLinks)
+    .where(eq(availabilityLinks.id, linkId))
+    .limit(1);
+  return row ?? null;
+}
+
 export async function isSlugTaken(database: Database, slug: string): Promise<boolean> {
   const [row] = await database
     .select({ id: availabilityLinks.id })
