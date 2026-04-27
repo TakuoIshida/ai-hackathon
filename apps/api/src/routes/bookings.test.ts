@@ -52,8 +52,8 @@ function fakeAuthMiddlewares(): MiddlewareHandler[] {
       return c.json({ error: "unauthorized" }, 401);
     }
     // Route via the `db` proxy (which `setDbForTests` redirects to `testDb`)
-    // because `ensureUserByClerkId` is typed against the production NeonHttp
-    // drizzle instance, not PGlite.
+    // so `ensureUserByClerkId` — typed against the production postgres-js
+    // drizzle instance — sees the test database.
     const dbUser = await ensureUserByClerkId(db, clerkId, {
       // Avoid hitting the real Clerk API: synthesize a payload from the header.
       fetchUser: async (id) => ({

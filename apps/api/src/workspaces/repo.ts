@@ -19,8 +19,8 @@ export type WorkspaceRow = Workspace;
 export type MembershipRow = Membership;
 export type InvitationRow = Invitation;
 
-// Postgres unique-violation SQLSTATE. neon-http and pglite both surface this
-// as `code` on the thrown error.
+// Postgres unique-violation SQLSTATE. postgres-js surfaces this as `code` on
+// the thrown error.
 const PG_UNIQUE_VIOLATION = "23505";
 
 function isUniqueViolation(err: unknown): boolean {
@@ -39,9 +39,9 @@ export type CreateWorkspaceResult =
   | { kind: "ok"; workspace: WorkspaceRow }
   | { kind: "slug_taken" };
 
-// neon-http does not support callback transactions; we use db.batch (atomic,
-// single HTTP req) to insert the workspace + the owner membership row in one
-// shot. Slug uniqueness is enforced by a DB UNIQUE constraint on
+// We use db.batch (a thin wrapper over a postgres-js callback transaction;
+// see `src/db/client.ts`) to insert the workspace + the owner membership row
+// atomically. Slug uniqueness is enforced by a DB UNIQUE constraint on
 // workspaces.slug — we translate that into a structured `slug_taken` result.
 // (`BatchQuery` is declared once at the top of this module.)
 
@@ -293,13 +293,14 @@ export async function deleteInvitation(database: Database, id: string): Promise<
  * failures cannot leave the system half-redeemed.
  *
  * The UPDATE has a `accepted_at IS NULL` guard so a concurrent second accept
- * (which the read-then-write window in the usecase cannot itself prevent on
- * neon-http) becomes a no-op rather than overwriting the original
- * acceptance timestamp. The membership ON CONFLICT covers double-insert.
+ * (which the read-then-write window in the usecase cannot itself prevent)
+ * becomes a no-op rather than overwriting the original acceptance timestamp.
+ * The membership ON CONFLICT covers double-insert.
  *
- * neon-http does not support callback transactions; `db.batch` is the atomic
- * unit (see `links/repo.ts::createLink`). The PGlite test harness in
- * `test/integration-db.ts` shims `batch` to sequential awaits.
+ * `db.batch` is the atomic unit (see `links/repo.ts::createLink`). It wraps a
+ * postgres-js callback transaction in production; the test harness in
+ * `test/integration-db.ts` installs the same transactional shim so tests
+ * exercise the same atomicity guarantees.
  */
 export async function acceptInvitationAtomic(
   database: Database,
