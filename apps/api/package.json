@@ -17,9 +17,9 @@
     "@clerk/backend": "^1.21.0",
     "@hono/clerk-auth": "^2.0.0",
     "@hono/zod-validator": "^0.7.6",
-    "@neondatabase/serverless": "^0.10.4",
     "drizzle-orm": "^0.38.3",
     "hono": "^4.6.16",
+    "postgres": "^3.4.5",
     "svix": "^1.92.2",
     "zod": "^4.3.6"
   },

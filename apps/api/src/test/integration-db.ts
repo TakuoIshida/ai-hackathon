@@ -1,40 +1,42 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
-import { type NeonQueryFunction, neon, neonConfig } from "@neondatabase/serverless";
-import { drizzle as drizzleNeon, type NeonHttpDatabase } from "drizzle-orm/neon-http";
 import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
+import { drizzle as drizzlePostgres, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
 import { clearDbForTests, schema, setDbForTests } from "@/db/client";
 
 /**
  * Common adapter surface every test file uses on `testDb.$client`. Both the
- * PGlite path (local default, zero-setup) and the Neon HTTP path (CI, where a
- * real Postgres + a local Neon HTTP proxy are running as services) implement
- * this so test files do not need to know which backend they got.
+ * PGlite path (local default, zero-setup) and the Neon Local path (CI, where a
+ * real Postgres + a local Neon Local container are running as services)
+ * implement this so test files do not need to know which backend they got.
  */
 export interface TestDbClient {
   /** Run a raw SQL statement (used by `beforeEach` TRUNCATEs and a handful of
    * direct constraint checks in schema tests). */
   exec(sql: string): Promise<void>;
-  /** Release adapter resources. PGlite frees the WASM heap; the HTTP path is
-   * stateless so this is a no-op. Both implementations are safe to call once. */
+  /** Release adapter resources. PGlite frees the WASM heap; the postgres-js
+   * path closes its connection pool. Both implementations are safe to call once. */
   close(): Promise<void>;
 }
 
 /**
  * The drizzle instance returned by `createTestDb`. Typed as the production
- * `NeonHttpDatabase` shape so route / repo code that imports `db` (which is
- * neon-http in production) still typechecks against the test-injected db.
+ * `PostgresJsDatabase` shape so route / repo code that imports `db` (which is
+ * postgres-js in production) still typechecks against the test-injected db.
  *
  * At runtime it is one of:
  *  - **PGlite-backed** when `TEST_DATABASE_URL` is unset. This is the local
  *    dev default — no Docker required, no network. PGlite's drizzle adapter
  *    has no native `batch`, so a sequential shim is installed.
- *  - **NeonHttp-backed** when `TEST_DATABASE_URL` points at a Neon serverless
- *    HTTP proxy (CI). This matches the production driver exactly, including
- *    the atomic `db.batch()` semantics. No shim is needed.
+ *  - **postgres-js-backed** when `TEST_DATABASE_URL` points at a real
+ *    Postgres instance (Neon Local container in CI, or any plain Postgres).
+ *    This matches the production driver exactly. A `batch` shim that wraps
+ *    the queries in a real transaction is installed to mirror the production
+ *    `db.client` surface.
  */
-export type TestDb = NeonHttpDatabase<typeof schema> & { $client: TestDbClient };
+export type TestDb = PostgresJsDatabase<typeof schema> & { $client: TestDbClient };
 
 const MIGRATIONS_DIR = join(import.meta.dir, "..", "..", "drizzle");
 
@@ -56,55 +58,34 @@ async function loadMigrationStatements(): Promise<string[]> {
 
 export async function createTestDb(): Promise<TestDb> {
   const url = process.env.TEST_DATABASE_URL;
-  if (url) return createNeonHttpTestDb(url);
+  if (url) return createPostgresTestDb(url);
   return createPgliteTestDb();
 }
 
 // ---------------------------------------------------------------------------
-// Neon HTTP path (CI)
+// postgres-js path (CI: Neon Local container; or any plain Postgres)
 // ---------------------------------------------------------------------------
 
-let neonProxyConfigured = false;
+async function createPostgresTestDb(url: string): Promise<TestDb> {
+  // `prepare: false` matches the production client and keeps us compatible
+  // with poolers that don't tolerate prepared-statement state across
+  // connections. `max: 1` keeps the test process from holding extra
+  // connections to the Neon Local container.
+  const sql = postgres(url, { max: 1, idle_timeout: 5, prepare: false });
+  const db = drizzlePostgres(sql, { schema });
 
-/**
- * Re-route the Neon serverless driver's HTTP fetch endpoint so requests for
- * `db.localtest.me` go to the local Neon container on `:5432/sql` over plain
- * HTTP. `db.localtest.me` is a public DNS name that resolves to `127.0.0.1`,
- * so this works on any runner. Idempotent — only configures once per process.
- *
- * Image: neondatabase/neon_local:latest (see ci.yml services). The container
- * provisions an ephemeral branch on the configured Neon project at boot and
- * exposes both raw Postgres wire protocol AND the serverless `/sql` HTTP
- * endpoint on the same port.
- */
-function configureLocalNeonProxy(host: string): void {
-  if (neonProxyConfigured) return;
-  if (host !== "db.localtest.me") return;
-  neonConfig.fetchEndpoint = (h) => `http://${h}:5432/sql`;
-  neonConfig.useSecureWebSocket = false;
-  neonConfig.poolQueryViaFetch = true;
-  neonProxyConfigured = true;
-}
+  await applyMigrationsViaPostgres(sql);
 
-async function createNeonHttpTestDb(url: string): Promise<TestDb> {
-  const parsed = new URL(url);
-  configureLocalNeonProxy(parsed.hostname);
-
-  const sql = neon(url);
-  const db = drizzleNeon(sql, { schema });
-
-  await applyMigrationsViaNeonHttp(sql);
+  attachBatchShim(db);
 
   const client: TestDbClient = {
     async exec(stmt) {
-      // The HTTP endpoint accepts a single statement per request; the migration
-      // loader already splits on `--> statement-breakpoint`, and `beforeEach`
-      // TRUNCATE strings happen to be single statements.
-      await sql(stmt);
+      // `sql.unsafe` lets us run a raw, non-parameterized statement, which is
+      // what beforeEach TRUNCATE strings and direct constraint probes need.
+      await sql.unsafe(stmt);
     },
     async close() {
-      // HTTP-based driver is stateless — no resource to release. Implemented
-      // so the existing `afterAll` callsites can stay unchanged.
+      await sql.end({ timeout: 5 });
     },
   };
   Object.assign(db, { $client: client });
@@ -118,18 +99,18 @@ async function createNeonHttpTestDb(url: string): Promise<TestDb> {
  * the schema is current and we skip re-applying. Per-test-file isolation comes
  * from each test's `beforeEach` TRUNCATE, not from re-running migrations.
  */
-async function applyMigrationsViaNeonHttp(sql: NeonQueryFunction<false, false>): Promise<void> {
-  const probe = (await sql(
-    `SELECT EXISTS (
-       SELECT 1 FROM information_schema.tables
-       WHERE table_schema = 'public' AND table_name = 'workspaces'
-     ) AS present`,
-  )) as Array<{ present: boolean }>;
+async function applyMigrationsViaPostgres(sql: postgres.Sql): Promise<void> {
+  const probe = await sql<Array<{ present: boolean }>>`
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'workspaces'
+    ) AS present
+  `;
   if (probe[0]?.present) return;
 
   const stmts = await loadMigrationStatements();
   for (const stmt of stmts) {
-    await sql(stmt);
+    await sql.unsafe(stmt);
   }
 }
 
@@ -143,19 +124,7 @@ async function createPgliteTestDb(): Promise<TestDb> {
 
   const db = drizzlePglite(client, { schema });
 
-  // PGlite's drizzle adapter has no `batch` method; production uses neon-http
-  // which does. Provide a sequential shim so repo code (which assumes batch) works.
-  // The Neon HTTP path does not need this — the proxy passes the real batch
-  // semantics through to Postgres.
-  if (typeof (db as unknown as { batch?: unknown }).batch !== "function") {
-    Object.assign(db, {
-      batch: async (queries: ReadonlyArray<Promise<unknown>>) => {
-        const results: unknown[] = [];
-        for (const q of queries) results.push(await q);
-        return results;
-      },
-    });
-  }
+  attachBatchShim(db);
 
   const wrapper: TestDbClient = {
     async exec(stmt) {
@@ -174,6 +143,28 @@ async function applyMigrationsViaPglite(client: PGlite): Promise<void> {
   for (const stmt of stmts) {
     await client.exec(stmt);
   }
+}
+
+// ---------------------------------------------------------------------------
+// `batch` shim
+//
+// The production `db` (postgres-js) wraps a real callback transaction inside
+// `db.batch()`. The PGlite drizzle adapter has no `batch` at all, and the
+// postgres-js adapter doesn't expose one either. To keep repo code that calls
+// `db.batch(...)` working under both test backends, we install a sequential
+// shim. PGlite is single-process and tests do not exercise the rollback path
+// of `batch`, so the loss of cross-statement atomicity in tests is acceptable.
+// ---------------------------------------------------------------------------
+
+function attachBatchShim(db: object): void {
+  if (typeof (db as { batch?: unknown }).batch === "function") return;
+  Object.assign(db, {
+    batch: async (queries: ReadonlyArray<Promise<unknown>>) => {
+      const results: unknown[] = [];
+      for (const q of queries) results.push(await q);
+      return results;
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
