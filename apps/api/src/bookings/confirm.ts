@@ -158,12 +158,8 @@ async function loadCoOwnerEmails(
   users: UserLookupPort,
 ): Promise<string[]> {
   const coOwnerIds = await links.listLinkCoOwnerUserIds(linkId);
-  const emails: string[] = [];
-  for (const ownerId of coOwnerIds) {
-    const u = await users.findUserById(ownerId);
-    if (u) emails.push(u.email);
-  }
-  return emails;
+  const fetched = await Promise.all(coOwnerIds.map((id) => users.findUserById(id)));
+  return fetched.filter((u): u is NonNullable<typeof u> => u !== null).map((u) => u.email);
 }
 
 /**

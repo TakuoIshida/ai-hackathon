@@ -166,27 +166,36 @@ export async function computePublicSlots(
     excludeLocalDates: link.excludes,
   });
 
-  // ISH-112: merge busy across all owners (primary + co-owners).
-  // Per-owner failures are logged and skipped — the slot grid stays usable
-  // even if one owner's Google connection is broken.
-  const coOwnerIds = await listLinkCoOwnerUserIds(database, link.id);
-  const ownerIds = [link.userId, ...coOwnerIds];
-
+  // ISH-112: merge busy across all owners (primary + co-owners). The co-owner
+  // lookup and per-owner Google fetches are gated on `google` being present —
+  // production's booking-confirm revalidation passes `google=null` (see
+  // routes/public.ts) and skips all of this. ISH-152: per-owner work runs in
+  // parallel via allSettled; failures stay scoped to that owner so the slot
+  // grid remains usable when one Google connection is broken.
   const busy: Interval[] = [];
   if (google) {
-    for (const ownerId of ownerIds) {
-      const account = await google.getOauthAccountByUser(ownerId);
-      if (!account) continue;
-      try {
-        const accessToken = await google.getValidAccessToken(account.id);
-        const calendars = await google.listUserCalendars(account.id);
+    const coOwnerIds = await listLinkCoOwnerUserIds(database, link.id);
+    const ownerIds = [link.userId, ...coOwnerIds];
+    const settled = await Promise.allSettled(
+      ownerIds.map(async (ownerId) => {
+        const account = await google.getOauthAccountByUser(ownerId);
+        if (!account) return { ownerId, busy: [] as Interval[] };
+        const [accessToken, calendars] = await Promise.all([
+          google.getValidAccessToken(account.id),
+          google.listUserCalendars(account.id),
+        ]);
         const calendarIds = calendars.filter((c) => c.usedForBusy).map((c) => c.googleCalendarId);
         const fb = await google.getFreeBusy({ accessToken, calendarIds, rangeStart, rangeEnd });
-        busy.push(...fb);
-      } catch (err) {
+        return { ownerId, busy: [...fb] };
+      }),
+    );
+    for (const [i, r] of settled.entries()) {
+      if (r.status === "fulfilled") {
+        busy.push(...r.value.busy);
+      } else {
         console.warn(
-          `[public-slots] busy fetch failed for owner=${ownerId}; skipping that owner:`,
-          err,
+          `[public-slots] busy fetch failed for owner=${ownerIds[i]}; skipping that owner:`,
+          r.reason,
         );
       }
     }
