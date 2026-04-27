@@ -1,10 +1,13 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import * as bookingsRepo from "@/bookings/repo";
 import { tryInsertConfirmedBooking } from "@/bookings/repo";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
 import { availabilityLinks, bookings, users } from "@/db/schema";
+import * as linksRepo from "@/links/repo";
 import { createTestDb, type TestDb } from "@/test/integration-db";
+import * as usersRepo from "@/users/repo";
 import { sendDueReminders } from "./reminder-job";
 import type { EmailMessage, SendEmailFn } from "./types";
 
@@ -76,7 +79,15 @@ async function insertDueBooking(
   linkId: string,
   guestEmail: string,
 ): Promise<{ id: string; cancellationToken: string }> {
-  const start = new Date(NOW.getTime() + LEAD_MS);
+  return insertDueBookingAt(linkId, guestEmail, 0);
+}
+
+async function insertDueBookingAt(
+  linkId: string,
+  guestEmail: string,
+  offsetMs: number,
+): Promise<{ id: string; cancellationToken: string }> {
+  const start = new Date(NOW.getTime() + LEAD_MS + offsetMs);
   const end = new Date(start.getTime() + 30 * 60 * 1000);
   const created = await tryInsertConfirmedBooking(db, {
     linkId,
@@ -243,5 +254,157 @@ describe("sendDueReminders (ISH-98)", () => {
     });
     expect(result).toEqual({ considered: 1, sent: 1, skipped: 0, failed: 0 });
     expect(captured.length).toBe(2);
+  });
+
+  test("multiple due bookings: all processed, counters summed correctly", async () => {
+    const fixture = await seedOwnerAndLink();
+    // Three confirmed bookings, all in the same due window but at different
+    // start_at values (the bookings table has a partial unique index on
+    // (link_id, start_at) WHERE status='confirmed', so same-slot inserts
+    // collide). The default windowMinutes=8 covers the whole ±5-min spread.
+    const a = await insertDueBookingAt(fixture.linkId, "a@example.com", -5 * 60_000);
+    const b = await insertDueBookingAt(fixture.linkId, "b@example.com", 0);
+    const c = await insertDueBookingAt(fixture.linkId, "c@example.com", 5 * 60_000);
+
+    const { sendEmail, captured } = captureSender();
+    const result = await sendDueReminders(db, {
+      sendEmail,
+      appBaseUrl: APP_BASE_URL,
+      now: () => NOW.getTime(),
+    });
+
+    expect(result).toEqual({ considered: 3, sent: 3, skipped: 0, failed: 0 });
+    // 3 bookings × 2 recipients (owner + guest) = 6 messages.
+    expect(captured.length).toBe(6);
+    const guestRecipients = captured.map((m) => m.to).filter((to) => to.endsWith("@example.com"));
+    expect(guestRecipients).toContain("a@example.com");
+    expect(guestRecipients).toContain("b@example.com");
+    expect(guestRecipients).toContain("c@example.com");
+
+    // All three bookings have reminder_sent_at populated.
+    for (const id of [a.id, b.id, c.id]) {
+      const [row] = await testDb.select().from(bookings).where(eq(bookings.id, id));
+      expect(row?.reminderSentAt).toBeTruthy();
+    }
+  });
+
+  // FK constraints (`bookings.link_id` ON DELETE RESTRICT) make this branch
+  // unreachable in production, but the defensive check exists in dispatch().
+  // Pin it so a future FK relaxation surfaces test failures rather than
+  // silent crashes / null-deref.
+  test("link missing (orphan booking): result.failed incremented, no email sent", async () => {
+    const fixture = await seedOwnerAndLink();
+    await insertDueBooking(fixture.linkId, "guest@example.com");
+
+    const findLinkSpy = spyOn(linksRepo, "findLinkById").mockResolvedValue(null);
+    try {
+      const { sendEmail, captured } = captureSender();
+      const result = await sendDueReminders(db, {
+        sendEmail,
+        appBaseUrl: APP_BASE_URL,
+        now: () => NOW.getTime(),
+      });
+      expect(result).toEqual({ considered: 1, sent: 0, skipped: 0, failed: 1 });
+      expect(captured.length).toBe(0);
+    } finally {
+      findLinkSpy.mockRestore();
+    }
+  });
+
+  // Same rationale as the link-missing case: defensive code that production
+  // FK constraints currently keep dead. Pinned to catch regressions.
+  test("owner missing: result.failed incremented, no email sent", async () => {
+    const fixture = await seedOwnerAndLink();
+    await insertDueBooking(fixture.linkId, "guest@example.com");
+
+    const findUserSpy = spyOn(usersRepo, "findUserById").mockResolvedValue(null);
+    try {
+      const { sendEmail, captured } = captureSender();
+      const result = await sendDueReminders(db, {
+        sendEmail,
+        appBaseUrl: APP_BASE_URL,
+        now: () => NOW.getTime(),
+      });
+      expect(result).toEqual({ considered: 1, sent: 0, skipped: 0, failed: 1 });
+      expect(captured.length).toBe(0);
+    } finally {
+      findUserSpy.mockRestore();
+    }
+  });
+
+  test("mixed batch: 1 success + 1 already-sent + 1 send-fail → counters add up", async () => {
+    const fixture = await seedOwnerAndLink();
+    // (1) due, will succeed
+    const ok = await insertDueBookingAt(fixture.linkId, "ok@example.com", -5 * 60_000);
+    // (2) due, will lose the markReminderSent claim (simulates a race where
+    //     another worker stamped the row between findDue and markReminderSent).
+    //     Forced via a markReminderSent spy that returns false for this id.
+    const willSkip = await insertDueBookingAt(fixture.linkId, "skip@example.com", 0);
+    // (3) due, will fail at send time
+    const willFail = await insertDueBookingAt(fixture.linkId, "fail@example.com", 5 * 60_000);
+
+    // Spy: markReminderSent returns false for `willSkip`, true for the others.
+    // This simulates a race where another worker stamped the row between
+    // findDue and markReminderSent.
+    const realMark = bookingsRepo.markReminderSent;
+    const markSpy = spyOn(bookingsRepo, "markReminderSent").mockImplementation(
+      async (database, bookingId, now) => {
+        if (bookingId === willSkip.id) return false;
+        return realMark(database, bookingId, now);
+      },
+    );
+
+    const failingForGuestC: SendEmailFn = async (msg) => {
+      if (msg.to === "fail@example.com") throw new Error("smtp boom");
+      // owner sends (and ok@example.com / skip@example.com guest sends if any)
+    };
+
+    try {
+      const result = await sendDueReminders(db, {
+        sendEmail: failingForGuestC,
+        appBaseUrl: APP_BASE_URL,
+        now: () => NOW.getTime(),
+      });
+      expect(result.considered).toBe(3);
+      expect(result.sent).toBe(1);
+      expect(result.skipped).toBe(1);
+      expect(result.failed).toBe(1);
+
+      // ok was actually delivered → reminder_sent_at populated.
+      const [okRow] = await testDb.select().from(bookings).where(eq(bookings.id, ok.id));
+      expect(okRow?.reminderSentAt).toBeTruthy();
+      // skip lost the claim → reminder_sent_at still null (the spy bypassed
+      // the real UPDATE, so nothing was written for this booking).
+      const [skipRow] = await testDb.select().from(bookings).where(eq(bookings.id, willSkip.id));
+      expect(skipRow?.reminderSentAt).toBeNull();
+      // fail did claim AND send threw → reminder_sent_at intentionally STAYS
+      // populated (single-send dominates).
+      const [failRow] = await testDb.select().from(bookings).where(eq(bookings.id, willFail.id));
+      expect(failRow?.reminderSentAt).toBeTruthy();
+    } finally {
+      markSpy.mockRestore();
+    }
+  });
+
+  test("partial Promise.all failure (only guest send fails): result.failed=1, mark retained", async () => {
+    const fixture = await seedOwnerAndLink();
+    const due = await insertDueBooking(fixture.linkId, "guest@example.com");
+
+    // Owner email succeeds, guest email throws. Promise.all rejects → dispatch
+    // catches → counted as failed; reminder_sent_at stays SET.
+    const partialSender: SendEmailFn = async (msg) => {
+      if (msg.to === "guest@example.com") throw new Error("guest send fail");
+      // owner ok
+    };
+
+    const result = await sendDueReminders(db, {
+      sendEmail: partialSender,
+      appBaseUrl: APP_BASE_URL,
+      now: () => NOW.getTime(),
+    });
+    expect(result).toEqual({ considered: 1, sent: 0, skipped: 0, failed: 1 });
+
+    const [persisted] = await testDb.select().from(bookings).where(eq(bookings.id, due.id));
+    expect(persisted?.reminderSentAt).toBeTruthy();
   });
 });
