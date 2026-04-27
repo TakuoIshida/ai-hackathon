@@ -340,6 +340,46 @@ describe("sendDueReminders (ISH-98)", () => {
     }
   });
 
+  test("markReminderSent throws (DB error during claim) → failed++, dispatch not called, mark stays null (ISH-147)", async () => {
+    const fixture = await seedOwnerAndLink();
+    const due = await insertDueBooking(fixture.linkId, "guest@example.com");
+
+    // Simulate a DB-level failure during the claim UPDATE. tryClaim's catch
+    // path should:
+    //   - log to console.error (we capture to verify the path executed)
+    //   - increment result.failed
+    //   - return without invoking dispatch (so sendEmail is never called)
+    //   - leave reminder_sent_at NULL (the UPDATE never landed)
+    const markSpy = spyOn(bookingsRepo, "markReminderSent").mockRejectedValue(
+      new Error("connection terminated"),
+    );
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+
+    const { sendEmail, captured } = captureSender();
+    try {
+      const result = await sendDueReminders(db, {
+        sendEmail,
+        appBaseUrl: APP_BASE_URL,
+        now: () => NOW.getTime(),
+      });
+      expect(result).toEqual({ considered: 1, sent: 0, skipped: 0, failed: 1 });
+      expect(captured.length).toBe(0);
+
+      // The catch block specifically logs `[reminder-job] claim failed for booking=<id>`.
+      const logged = errorSpy.mock.calls.some((args) =>
+        args.some((a) => typeof a === "string" && a.includes(`booking=${due.id}`)),
+      );
+      expect(logged).toBe(true);
+
+      // Underlying row never got the UPDATE.
+      const [row] = await testDb.select().from(bookings).where(eq(bookings.id, due.id));
+      expect(row?.reminderSentAt).toBeNull();
+    } finally {
+      markSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
   test("partial Promise.all failure (only guest send fails): result.failed=1, mark retained", async () => {
     const fixture = await seedOwnerAndLink();
     const due = await insertDueBooking(fixture.linkId, "guest@example.com");
