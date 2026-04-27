@@ -1,5 +1,5 @@
 import type { db as DbClient } from "@/db/client";
-import type { ClerkUserPayload, UserEntity } from "./domain";
+import type { ClerkUserPayload, User } from "./domain";
 import {
   deleteUserByClerkId as deleteUserByClerkIdRepo,
   findUserByClerkId,
@@ -24,11 +24,11 @@ export type ClerkPort = {
 export async function getCurrentUserByClerkId(
   database: Database,
   clerkId: string,
-): Promise<UserEntity | null> {
+): Promise<User | null> {
   return findUserByClerkId(database, clerkId);
 }
 
-export async function getUserById(database: Database, id: string): Promise<UserEntity | null> {
+export async function getUserById(database: Database, id: string): Promise<User | null> {
   return findUserById(database, id);
 }
 
@@ -44,7 +44,7 @@ export async function ensureUserByClerkId(
   database: Database,
   clerkId: string,
   port: ClerkPort,
-): Promise<UserEntity> {
+): Promise<User> {
   const existing = await findUserByClerkId(database, clerkId);
   if (existing) return existing;
 
@@ -55,7 +55,7 @@ export async function ensureUserByClerkId(
 export async function applyClerkUserUpsert(
   database: Database,
   payload: ClerkUserPayload,
-): Promise<UserEntity> {
+): Promise<User> {
   return upsertUserFromPayload(database, payload);
 }
 
