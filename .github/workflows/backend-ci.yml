@@ -98,4 +98,59 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
+
+      # Snapshot existing Neon branch IDs BEFORE the test step so the post-step
+      # cleanup only deletes branches that appeared *during* this job. Without
+      # this snapshot, cleanup would also wipe branches belonging to concurrent
+      # CI runs on other PRs, breaking them.
+      #
+      # The Neon Local container is started by `services.db` above and creates
+      # an ephemeral branch on its first API call (during the test step), so the
+      # snapshot captures the project state pre-creation.
+      - name: Snapshot pre-existing Neon branch IDs
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+        run: |
+          curl -fsS \
+            -H "Authorization: Bearer $NEON_API_KEY" \
+            "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches" \
+            | jq -r '.branches[].id' | sort > /tmp/neon-branches-before.txt
+          echo "Snapshotted $(wc -l < /tmp/neon-branches-before.txt) branch(es)."
+
       - run: bun run --filter @app/api test
+
+      # Delete branches that exist now but didn't before this job. Runs even on
+      # test failure / cancel so leaks are bounded to a single job's worth of
+      # branches. ISH-153 — without this, a cancelled job's container can't
+      # finish DELETE_BRANCH cleanup and the project hits its branch quota
+      # within a few CI runs (422 Unprocessable Entity on next branch create).
+      #
+      # `set +e` on the inner deletes so one failure doesn't abort the loop;
+      # `comm -13` outputs lines unique to the second file (= newly created).
+      - name: Delete Neon branches created during this job
+        if: always()
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+        run: |
+          curl -fsS \
+            -H "Authorization: Bearer $NEON_API_KEY" \
+            "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches" \
+            | jq -r '.branches[].id' | sort > /tmp/neon-branches-after.txt
+          new=$(comm -13 /tmp/neon-branches-before.txt /tmp/neon-branches-after.txt)
+          if [ -z "$new" ]; then
+            echo "No new branches to delete."
+            exit 0
+          fi
+          echo "Deleting branches created during this job:"
+          echo "$new"
+          set +e
+          for id in $new; do
+            curl -fsS -X DELETE \
+              -H "Authorization: Bearer $NEON_API_KEY" \
+              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$id" \
+              -o /dev/null \
+              && echo "  deleted $id" \
+              || echo "  FAILED $id (manual cleanup may be needed)"
+          done
