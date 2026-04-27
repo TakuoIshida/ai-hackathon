@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { Webhook } from "svix";
+import { config } from "@/config";
 import { db } from "@/db/client";
 import type { ClerkUserPayload } from "@/users/domain";
 import { applyClerkUserDelete, applyClerkUserUpsert } from "@/users/usecase";
@@ -12,7 +13,7 @@ type ClerkEvent =
 export const clerkWebhookRoute = new Hono();
 
 clerkWebhookRoute.post("/clerk", async (c) => {
-  const secret = process.env.CLERK_WEBHOOK_SECRET;
+  const secret = config.clerkWebhookSecret;
   if (!secret) {
     console.error("[webhook] CLERK_WEBHOOK_SECRET is not set");
     return c.json({ error: "webhook not configured" }, 500);

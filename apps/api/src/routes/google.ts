@@ -3,9 +3,10 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
+import { config } from "@/config";
 import { db } from "@/db/client";
 import { listCalendars } from "@/google/calendar";
-import { loadGoogleConfig } from "@/google/config";
+import type { GoogleConfig } from "@/google/config";
 import { exchangeCodeForTokens, fetchUserInfo, revokeToken } from "@/google/oauth";
 import { getOauthAccountByUser, listUserCalendars, syncCalendars } from "@/google/repo";
 import {
@@ -16,6 +17,21 @@ import {
   updateCalendarFlagsForUser,
 } from "@/google/usecase";
 import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
+
+/**
+ * Resolve Google OAuth config or fail fast with a 500.
+ *
+ * Unlike the booking flow (which falls back to "no Google sync" gracefully),
+ * the OAuth routes themselves are unusable without Google config — there's no
+ * meaningful response we could return without it. Surfacing as a 500 with a
+ * clear message beats silently redirecting to a malformed auth URL.
+ */
+function requireGoogleConfig(): GoogleConfig {
+  if (!config.google) {
+    throw new Error("[google] GOOGLE_OAUTH_* env vars are not set");
+  }
+  return config.google;
+}
 
 const STATE_COOKIE = "google_oauth_state";
 const STATE_TTL_SECONDS = 600;
@@ -39,12 +55,12 @@ googleRoute.use("*", requireAuth);
 googleRoute.use("*", attachDbUser);
 
 googleRoute.get("/connect", (c) => {
-  const cfg = loadGoogleConfig();
+  const cfg = requireGoogleConfig();
   const state = randomBytes(32).toString("base64url");
   setCookie(c, STATE_COOKIE, state, {
     httpOnly: true,
     sameSite: "Lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: config.isProduction,
     maxAge: STATE_TTL_SECONDS,
     path: "/",
   });
@@ -56,7 +72,7 @@ googleRoute.get("/callback", async (c) => {
   const queryState = c.req.query("state");
   deleteCookie(c, STATE_COOKIE, { path: "/" });
 
-  const cfg = loadGoogleConfig();
+  const cfg = requireGoogleConfig();
   const dbUser = getDbUser(c);
   const result = await completeOauthCallback(
     db,
@@ -85,7 +101,7 @@ googleRoute.get("/callback", async (c) => {
 });
 
 googleRoute.post("/disconnect", async (c) => {
-  const cfg = loadGoogleConfig();
+  const cfg = requireGoogleConfig();
   const dbUser = getDbUser(c);
   const result = await disconnectGoogleAccount(db, cfg, dbUser.id, oauthSinks);
   if (result.kind === "already_disconnected") {

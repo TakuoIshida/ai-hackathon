@@ -2,9 +2,10 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
+import { config } from "@/config";
 import { db } from "@/db/client";
 import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
-import { createResendSender, loadResendConfig } from "@/notifications/sender";
+import { createResendSender } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
 import { createWorkspaceInputSchema } from "@/workspaces/schemas";
 import {
@@ -23,14 +24,13 @@ export type WorkspacesRouteDeps = {
   appBaseUrl: string;
 };
 
-function productionSendEmail(): SendEmailFn {
-  const cfg = loadResendConfig();
-  return cfg ? createResendSender(cfg) : noopSendEmail;
-}
+const productionSendEmail: SendEmailFn = config.resend
+  ? createResendSender(config.resend)
+  : noopSendEmail;
 
 const productionDeps: WorkspacesRouteDeps = {
-  sendEmail: productionSendEmail(),
-  appBaseUrl: process.env.APP_BASE_URL ?? "http://localhost:6173",
+  sendEmail: productionSendEmail,
+  appBaseUrl: config.appBaseUrl,
 };
 
 const inviteBodySchema = z.object({

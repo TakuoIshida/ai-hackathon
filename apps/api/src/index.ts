@@ -1,11 +1,13 @@
 import { app } from "./app";
+import { assertProductionConfig, config } from "./config";
 
-const port = Number(process.env.PORT ?? 8787);
+// ISH-128: surface missing required env at boot rather than at first request.
+assertProductionConfig();
 
 const server = Bun.serve({
-  port,
+  port: config.port,
   fetch: app.fetch,
-  development: process.env.NODE_ENV !== "production",
+  development: !config.isProduction,
 });
 
 console.info(`🚀 api listening on http://localhost:${server.port}`);
