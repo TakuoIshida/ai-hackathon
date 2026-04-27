@@ -18,7 +18,7 @@ export type Booking = {
   guestEmail: string;
   guestNote: string | null;
   guestTimeZone: string | null;
-  status: BookingStatus | string;
+  status: BookingStatus;
   googleEventId: string | null;
   meetUrl: string | null;
   cancellationToken: string;
