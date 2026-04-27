@@ -1,23 +1,20 @@
 import { Hono, type MiddlewareHandler } from "hono";
-import { cancelBookingByOwner } from "@/bookings/cancel";
-import type { CreateEventFn, GetAccessTokenFn } from "@/bookings/confirm";
+import { type CancelBookingPorts, cancelBookingByOwner } from "@/bookings/cancel";
 import { listOwnerBookings } from "@/bookings/usecase";
 import { config } from "@/config";
 import { db } from "@/db/client";
-import { getValidAccessToken } from "@/google/access-token";
-import { createEvent } from "@/google/calendar";
-import type { GoogleConfig } from "@/google/config";
 import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
 import { createBookingNotifier } from "@/notifications/booking-notifier";
 import { createResendSender } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
+import type { GooglePort, LinkLookupPort, NotificationPort, UserLookupPort } from "@/ports";
+import { buildGooglePort, buildLinkLookupPort, buildUserLookupPort } from "@/wiring";
 
 export type BookingsRouteDeps = {
-  loadCfg: () => GoogleConfig | null;
-  createEvent: CreateEventFn;
-  getAccessToken: GetAccessTokenFn;
-  sendEmail: SendEmailFn;
-  appBaseUrl: string;
+  google: GooglePort | null;
+  links: LinkLookupPort;
+  users: UserLookupPort;
+  notifier: NotificationPort;
   // Test escape hatch: integration tests can supply fake auth middleware to
   // populate `dbUser` without going through Clerk. Production keeps the real
   // Clerk + requireAuth + attachDbUser stack.
@@ -29,11 +26,13 @@ const productionSendEmail: SendEmailFn = config.resend
   : noopSendEmail;
 
 const productionDeps: BookingsRouteDeps = {
-  loadCfg: () => config.google,
-  createEvent,
-  getAccessToken: getValidAccessToken,
-  sendEmail: productionSendEmail,
-  appBaseUrl: config.appBaseUrl,
+  google: buildGooglePort(db, config.google),
+  links: buildLinkLookupPort(db),
+  users: buildUserLookupPort(db),
+  notifier: createBookingNotifier({
+    sendEmail: productionSendEmail,
+    appBaseUrl: config.appBaseUrl,
+  }),
 };
 
 export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): Hono<{
@@ -55,22 +54,13 @@ export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): H
   // Owner-side cancel.
   route.delete("/:id", async (c) => {
     const dbUser = getDbUser(c);
-    const result = await cancelBookingByOwner(
-      db,
-      c.req.param("id"),
-      dbUser.id,
-      {
-        cfg: deps.loadCfg(),
-        createEvent: deps.createEvent,
-        getAccessToken: deps.getAccessToken,
-      },
-      {
-        notifier: createBookingNotifier({
-          sendEmail: deps.sendEmail,
-          appBaseUrl: deps.appBaseUrl,
-        }),
-      },
-    );
+    const ports: CancelBookingPorts = {
+      google: deps.google,
+      links: deps.links,
+      users: deps.users,
+      notifier: deps.notifier,
+    };
+    const result = await cancelBookingByOwner(db, c.req.param("id"), dbUser.id, ports);
     if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
     if (result.kind === "already_canceled") return c.json({ ok: true, alreadyCanceled: true });
     return c.json({ ok: true });

@@ -11,7 +11,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { clearDbForTests, setDbForTests } from "@/db/client";
+import { clearDbForTests, db, setDbForTests } from "@/db/client";
 import {
   availabilityLinks,
   availabilityRules,
@@ -20,8 +20,12 @@ import {
   googleOauthAccounts,
   users,
 } from "@/db/schema";
+import { createBookingNotifier } from "@/notifications/booking-notifier";
+import type { GooglePort, NotificationPort } from "@/ports";
 import { createPublicRoute, type PublicRouteDeps } from "@/routes/public";
+import { buildTestGooglePort } from "@/test/booking-ports";
 import { createTestDb, type TestDb } from "@/test/integration-db";
+import { buildLinkAvailabilityPort, buildLinkLookupPort, buildUserLookupPort } from "@/wiring";
 
 const TZ = "Asia/Tokyo";
 // Pick a Monday far enough in the future that Date.now() is always earlier.
@@ -133,21 +137,39 @@ let testDb: TestDb;
 type CapturedEmail = { to: string; subject: string };
 let sentEmails: CapturedEmail[];
 
-const noGoogleDeps: PublicRouteDeps = {
-  loadCfg: () => null,
-  createEvent: async () => {
-    throw new Error("createEvent should not be called in no-Google tests");
-  },
-  getAccessToken: async () => {
-    throw new Error("getAccessToken should not be called in no-Google tests");
-  },
-  sendEmail: async (msg) => {
-    sentEmails.push({ to: msg.to, subject: msg.subject });
-  },
-  appBaseUrl: "https://app.test",
-};
+function captureNotifier(appBaseUrl = "https://app.test"): NotificationPort {
+  return createBookingNotifier({
+    sendEmail: async (msg) => {
+      sentEmails.push({ to: msg.to, subject: msg.subject });
+    },
+    appBaseUrl,
+  });
+}
 
-function buildApp(deps: PublicRouteDeps = noGoogleDeps): Hono {
+function buildNoGoogleDeps(): PublicRouteDeps {
+  return {
+    google: null,
+    links: buildLinkLookupPort(db),
+    // Slot revalidation in confirmBooking is rules-only — pass null so the
+    // re-check doesn't fan out to Google busy lookups (mirrors the historical
+    // behavior pinned by ISH-136 edge-case tests).
+    availability: buildLinkAvailabilityPort(db, null),
+    users: buildUserLookupPort(db),
+    notifier: captureNotifier(),
+  };
+}
+
+function buildGoogleDeps(google: GooglePort): PublicRouteDeps {
+  return {
+    google,
+    links: buildLinkLookupPort(db),
+    availability: buildLinkAvailabilityPort(db, null),
+    users: buildUserLookupPort(db),
+    notifier: captureNotifier(),
+  };
+}
+
+function buildApp(deps: PublicRouteDeps = buildNoGoogleDeps()): Hono {
   const app = new Hono();
   app.route("/public", createPublicRoute(deps));
   return app;
@@ -314,14 +336,7 @@ describe("POST /public/links/:slug/bookings", () => {
 
     let createEventCalled = 0;
     let receivedTitle: string | undefined;
-    const deps: PublicRouteDeps = {
-      loadCfg: () => ({
-        clientId: "x",
-        clientSecret: "y",
-        redirectUri: "z",
-        encryptionKey: Buffer.alloc(32),
-        appBaseUrl: "http://app",
-      }),
+    const google = buildTestGooglePort(db, {
       createEvent: async (input) => {
         createEventCalled++;
         receivedTitle = input.title;
@@ -331,12 +346,8 @@ describe("POST /public/links/:slug/bookings", () => {
           htmlLink: "https://www.google.com/calendar/event?eid=evt-google-1",
         };
       },
-      getAccessToken: async () => "fake-access-token",
-      sendEmail: async (msg) => {
-        sentEmails.push({ to: msg.to, subject: msg.subject });
-      },
-      appBaseUrl: "https://app.test",
-    };
+    });
+    const deps = buildGoogleDeps(google);
 
     const app = buildApp(deps);
     const res = await app.request("/public/links/intro-30min/bookings", {
@@ -363,10 +374,13 @@ describe("POST /public/links/:slug/bookings", () => {
   test("email send failure does not roll back the booking", async () => {
     await seedPublishedLink(testDb);
     const failingDeps: PublicRouteDeps = {
-      ...noGoogleDeps,
-      sendEmail: async () => {
-        throw new Error("smtp boom");
-      },
+      ...buildNoGoogleDeps(),
+      notifier: createBookingNotifier({
+        sendEmail: async () => {
+          throw new Error("smtp boom");
+        },
+        appBaseUrl: "https://app.test",
+      }),
     };
     const app = buildApp(failingDeps);
     const res = await app.request("/public/links/intro-30min/bookings", {
@@ -549,24 +563,13 @@ describe("POST /public/links/:slug/bookings — ISH-136 edge cases", () => {
     await seedGoogleCalendar(testDb, seed.userId);
 
     let createEventCalled = 0;
-    const deps: PublicRouteDeps = {
-      loadCfg: () => ({
-        clientId: "x",
-        clientSecret: "y",
-        redirectUri: "z",
-        encryptionKey: Buffer.alloc(32),
-        appBaseUrl: "http://app",
-      }),
+    const google = buildTestGooglePort(db, {
       createEvent: async () => {
         createEventCalled++;
         throw new Error("calendar boom");
       },
-      getAccessToken: async () => "fake-access-token",
-      sendEmail: async (msg) => {
-        sentEmails.push({ to: msg.to, subject: msg.subject });
-      },
-      appBaseUrl: "https://app.test",
-    };
+    });
+    const deps = buildGoogleDeps(google);
 
     const app = buildApp(deps);
     const res = await app.request("/public/links/intro-30min/bookings", {
@@ -596,27 +599,17 @@ describe("POST /public/links/:slug/bookings — ISH-136 edge cases", () => {
 
     let createEventCalled = 0;
     let getAccessTokenCalled = 0;
-    const deps: PublicRouteDeps = {
-      loadCfg: () => ({
-        clientId: "x",
-        clientSecret: "y",
-        redirectUri: "z",
-        encryptionKey: Buffer.alloc(32),
-        appBaseUrl: "http://app",
-      }),
+    const google = buildTestGooglePort(db, {
       createEvent: async () => {
         createEventCalled++;
         throw new Error("createEvent must not be called when calendars list is empty");
       },
-      getAccessToken: async () => {
+      getValidAccessToken: async () => {
         getAccessTokenCalled++;
-        throw new Error("getAccessToken must not be called when calendars list is empty");
+        throw new Error("getValidAccessToken must not be called when calendars list is empty");
       },
-      sendEmail: async (msg) => {
-        sentEmails.push({ to: msg.to, subject: msg.subject });
-      },
-      appBaseUrl: "https://app.test",
-    };
+    });
+    const deps = buildGoogleDeps(google);
 
     const app = buildApp(deps);
     const res = await app.request("/public/links/intro-30min/bookings", {

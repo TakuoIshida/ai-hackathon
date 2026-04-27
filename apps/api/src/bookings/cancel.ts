@@ -1,15 +1,22 @@
-import { eq } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
-import { availabilityLinks } from "@/db/schema/links";
-import { deleteEvent } from "@/google/calendar";
-import { getOauthAccountByUser, listUserCalendars } from "@/google/repo";
-import { findPublishedLinkBySlug } from "@/links/repo";
-import { getUserById } from "@/users/usecase";
-import type { GoogleSinks, NotificationSinks } from "./confirm";
+import type { GooglePort, Link, LinkLookupPort, NotificationPort, UserLookupPort } from "@/ports";
 import type { Booking } from "./domain";
 import { findBookingByCancellationToken, findBookingById, markBookingCanceled } from "./repo";
 
 type Database = typeof DbClient;
+
+/**
+ * Cross-feature dependencies for cancellation. Same shape as
+ * `ConfirmBookingPorts` minus `availability` (cancel doesn't re-check the
+ * slot grid). `google === null` means Google is disabled and the calendar
+ * delete step is skipped.
+ */
+export type CancelBookingPorts = {
+  google: GooglePort | null;
+  links: LinkLookupPort;
+  users: UserLookupPort;
+  notifier: NotificationPort;
+};
 
 export type CancelActor = "owner" | "guest";
 
@@ -18,35 +25,22 @@ export type CancelResult =
   | { kind: "not_found" }
   | { kind: "already_canceled" };
 
-async function loadLinkForBooking(database: Database, linkId: string) {
-  const [link] = await database
-    .select()
-    .from(availabilityLinks)
-    .where(eq(availabilityLinks.id, linkId))
-    .limit(1);
-  return link ?? null;
-}
-
 async function fireCancelSideEffects(
-  database: Database,
   booking: Booking,
   canceledBy: CancelActor,
-  google: GoogleSinks,
-  notifications: NotificationSinks,
+  link: Link,
+  ports: CancelBookingPorts,
 ): Promise<void> {
-  const link = await loadLinkForBooking(database, booking.linkId);
-  if (!link) return;
-
   // Best-effort Google Calendar event delete.
-  if (google.cfg && booking.googleEventId) {
+  if (ports.google && booking.googleEventId) {
     try {
-      const account = await getOauthAccountByUser(database, link.userId);
+      const account = await ports.google.getOauthAccountByUser(link.userId);
       if (account) {
-        const calendars = await listUserCalendars(database, account.id);
+        const calendars = await ports.google.listUserCalendars(account.id);
         const writeTarget = calendars.find((c) => c.usedForWrites) ?? calendars[0];
         if (writeTarget) {
-          const accessToken = await google.getAccessToken(database, google.cfg, account.id);
-          await deleteEvent({
+          const accessToken = await ports.google.getValidAccessToken(account.id);
+          await ports.google.deleteEvent({
             accessToken,
             calendarId: writeTarget.googleCalendarId,
             eventId: booking.googleEventId,
@@ -61,9 +55,9 @@ async function fireCancelSideEffects(
   // Best-effort cancel notification. Templates / transport are owned by the
   // notifier adapter — usecase only publishes the domain event.
   try {
-    const owner = await getUserById(database, link.userId);
+    const owner = await ports.users.findUserById(link.userId);
     if (owner) {
-      await notifications.notifier.notify({
+      await ports.notifier.notify({
         kind: "booking_canceled",
         booking,
         link: {
@@ -85,8 +79,7 @@ async function fireCancelSideEffects(
 export async function cancelBookingByToken(
   database: Database,
   token: string,
-  google: GoogleSinks,
-  notifications: NotificationSinks,
+  ports: CancelBookingPorts,
 ): Promise<CancelResult> {
   const booking = await findBookingByCancellationToken(database, token);
   if (!booking) return { kind: "not_found" };
@@ -95,7 +88,8 @@ export async function cancelBookingByToken(
   const canceled = await markBookingCanceled(database, booking.id);
   if (!canceled) return { kind: "already_canceled" };
 
-  await fireCancelSideEffects(database, canceled, "guest", google, notifications);
+  const link = await ports.links.findLinkById(canceled.linkId);
+  if (link) await fireCancelSideEffects(canceled, "guest", link, ports);
   return { kind: "ok", booking: canceled };
 }
 
@@ -103,23 +97,21 @@ export async function cancelBookingByOwner(
   database: Database,
   bookingId: string,
   ownerUserId: string,
-  google: GoogleSinks,
-  notifications: NotificationSinks,
+  ports: CancelBookingPorts,
 ): Promise<CancelResult> {
   const booking = await findBookingById(database, bookingId);
   if (!booking) return { kind: "not_found" };
-  // ownership check via the link
-  const link = await loadLinkForBooking(database, booking.linkId);
+  // Ownership check via the link.
+  const link = await ports.links.findLinkById(booking.linkId);
   if (!link || link.userId !== ownerUserId) return { kind: "not_found" };
   if (booking.status === "canceled") return { kind: "already_canceled" };
 
   const canceled = await markBookingCanceled(database, booking.id);
   if (!canceled) return { kind: "already_canceled" };
 
-  await fireCancelSideEffects(database, canceled, "owner", google, notifications);
+  await fireCancelSideEffects(canceled, "owner", link, ports);
   return { kind: "ok", booking: canceled };
 }
 
 // Re-export so route handlers can import from one place.
 export { findBookingByCancellationToken } from "./repo";
-export { findPublishedLinkBySlug };
