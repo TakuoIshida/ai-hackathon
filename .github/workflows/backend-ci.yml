@@ -22,9 +22,10 @@ on:
       - "biome.json"
       - ".github/workflows/backend-ci.yml"
       - ".github/actions/setup/**"
+  workflow_dispatch:
 
 concurrency:
-  group: backend-ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
