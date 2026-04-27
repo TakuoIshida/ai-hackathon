@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
+import type { GooglePort } from "@/ports";
+import { buildTestGooglePort } from "@/test/booking-ports";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
 import type { CreateLinkCommand } from "./domain";
@@ -9,7 +11,6 @@ import {
   computePublicSlots,
   createLinkForUser,
   deleteLinkForUser,
-  type GooglePort,
   getCoOwnersForLink,
   getLink,
   listLinks,
@@ -209,7 +210,7 @@ describe("links/usecase: computePublicSlots", () => {
 
     let getTokenCalls = 0;
     let getFreeBusyCalls = 0;
-    const port: GooglePort = {
+    const port: GooglePort = buildTestGooglePort(db, {
       getValidAccessToken: async () => {
         getTokenCalls++;
         return "fake-token";
@@ -218,7 +219,7 @@ describe("links/usecase: computePublicSlots", () => {
         getFreeBusyCalls++;
         return [];
       },
-    };
+    });
     const fromMs = Date.parse("2026-12-13T15:00:00.000Z");
     const toMs = fromMs + 24 * 60 * 60_000;
     const result = await computePublicSlots(
@@ -264,7 +265,7 @@ describe("links/usecase: computePublicSlots", () => {
     });
 
     let getTokenCalls = 0;
-    const port: GooglePort = {
+    const port: GooglePort = buildTestGooglePort(db, {
       getValidAccessToken: async () => {
         getTokenCalls++;
         throw new Error("token boom");
@@ -272,7 +273,7 @@ describe("links/usecase: computePublicSlots", () => {
       getFreeBusy: async () => {
         throw new Error("must not be called when token fetch fails");
       },
-    };
+    });
     const fromMs = Date.parse("2026-12-13T15:00:00.000Z");
     const toMs = fromMs + 24 * 60 * 60_000;
     const result = await computePublicSlots(
