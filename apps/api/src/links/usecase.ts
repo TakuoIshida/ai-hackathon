@@ -7,7 +7,13 @@ import {
   type Interval,
   type Slot,
 } from "@/scheduling";
-import { type Link, type LinkWithRelations, rulesToWeekly } from "./domain";
+import {
+  type CreateLinkCommand,
+  type Link,
+  type LinkWithRelations,
+  rulesToWeekly,
+  type UpdateLinkCommand,
+} from "./domain";
 import {
   createLink,
   deleteLink,
@@ -18,7 +24,6 @@ import {
   setLinkCoOwners,
   updateLink,
 } from "./repo";
-import type { LinkInput, LinkUpdateInput } from "./schemas";
 
 type Database = typeof DbClient;
 
@@ -81,7 +86,7 @@ export async function checkSlugAvailability(
 export async function createLinkForUser(
   database: Database,
   userId: string,
-  input: LinkInput,
+  input: CreateLinkCommand,
 ): Promise<CreateLinkResult> {
   if (await isSlugTaken(database, input.slug)) {
     return { kind: "slug_taken" };
@@ -94,7 +99,7 @@ export async function updateLinkForUser(
   database: Database,
   userId: string,
   linkId: string,
-  patch: LinkUpdateInput,
+  patch: UpdateLinkCommand,
 ): Promise<UpdateLinkResult> {
   if (patch.slug !== undefined) {
     const existing = await getLinkForUser(database, userId, linkId);
