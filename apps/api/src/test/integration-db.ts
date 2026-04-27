@@ -45,18 +45,18 @@ const MISSING_URL_HINT = [
   "See apps/api/.env.example for the full list of test env vars.",
 ].join("\n");
 
-async function loadMigrationStatements(): Promise<string[]> {
+async function loadMigrationFiles(): Promise<Array<{ name: string; stmts: string[] }>> {
   const entries = await readdir(MIGRATIONS_DIR);
   const sqlFiles = entries.filter((name) => name.endsWith(".sql")).sort();
-  const out: string[] = [];
+  const out: Array<{ name: string; stmts: string[] }> = [];
   for (const file of sqlFiles) {
-    const sql = await readFile(join(MIGRATIONS_DIR, file), "utf8");
+    const content = await readFile(join(MIGRATIONS_DIR, file), "utf8");
     // drizzle-kit emits `--> statement-breakpoint` between statements
-    const stmts = sql
+    const stmts = content
       .split("--> statement-breakpoint")
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
-    out.push(...stmts);
+    out.push({ name: file, stmts });
   }
   return out;
 }
@@ -112,25 +112,61 @@ export async function createTestDb(): Promise<TestDb> {
 }
 
 /**
- * Apply migrations against a shared Postgres instance that may already have
- * the schema from a previous test file in this CI job (or a previous
- * `bun test` invocation against the local container). Uses the presence of
- * the `workspaces` table (added in 0002) as a quick sentinel — if it's there,
- * the schema is current and we skip re-applying. Per-test-file isolation
- * comes from each test's `beforeEach` TRUNCATE, not from re-running migrations.
+ * Sentinels indexed by migration filename. A sentinel query returns `true` when
+ * the migration has already been applied, so we can skip it safely on
+ * subsequent `bun test` runs against the same shared Postgres instance.
+ *
+ * Add one entry per migration file. The sentinel should check for something
+ * created LAST in that migration (so a partially-applied migration retries).
  */
-async function applyMigrationsIfNeeded(sql: postgres.Sql): Promise<void> {
-  const probe = await sql<Array<{ present: boolean }>>`
+const MIGRATION_SENTINELS: Record<string, postgres.PendingQuery<Array<{ present: boolean }>>> = {};
+
+function makeSentinel(
+  sql: postgres.Sql,
+  schema: string,
+  table: string,
+): postgres.PendingQuery<Array<{ present: boolean }>> {
+  return sql<Array<{ present: boolean }>>`
     SELECT EXISTS (
       SELECT 1 FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name = 'workspaces'
+      WHERE table_schema = ${schema} AND table_name = ${table}
     ) AS present
   `;
-  if (probe[0]?.present) return;
+}
 
-  const stmts = await loadMigrationStatements();
-  for (const stmt of stmts) {
-    await sql.unsafe(stmt);
+/**
+ * Apply migrations against a shared Postgres instance that may already have
+ * the schema from a previous test file in this CI job (or a previous
+ * `bun test` invocation against the local container). Each migration file has
+ * its own sentinel check so that partially-migrated databases are handled
+ * gracefully — only the missing migrations are applied. Per-test-file
+ * isolation comes from each test's `beforeEach` TRUNCATE, not from
+ * re-running migrations.
+ */
+async function applyMigrationsIfNeeded(sql: postgres.Sql): Promise<void> {
+  const files = await loadMigrationFiles();
+
+  for (const { name, stmts } of files) {
+    // Determine if this migration needs to be applied.
+    // 0000_baseline: sentinel = public.bookings
+    // 0001_common-schema: sentinel = common.users
+    let probe: postgres.PendingQuery<Array<{ present: boolean }>>;
+    if (name.startsWith("0000_")) {
+      probe = makeSentinel(sql, "public", "bookings");
+    } else if (name.startsWith("0001_")) {
+      probe = makeSentinel(sql, "common", "users");
+    } else {
+      // Unknown migration: always apply (safe because SQL uses IF NOT EXISTS /
+      // IF EXISTS where appropriate, or will error loudly).
+      probe = makeSentinel(sql, "__never__", "__never__");
+    }
+
+    const result = await probe;
+    if (result[0]?.present) continue; // already applied
+
+    for (const stmt of stmts) {
+      await sql.unsafe(stmt);
+    }
   }
 }
 

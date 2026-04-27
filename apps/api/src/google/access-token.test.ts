@@ -50,7 +50,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(`
-    TRUNCATE TABLE google_calendars, google_oauth_accounts, users
+    TRUNCATE TABLE google_calendars, google_oauth_accounts, common.users
     RESTART IDENTITY CASCADE;
   `);
   httpFetchMock.mockReset();
@@ -62,7 +62,7 @@ async function seedAccount(opts: {
   expiresAt: Date;
 }): Promise<{ userId: string; accountId: string }> {
   const u = await insertUser(db, {
-    clerkId: `c_${randomUUID()}`,
+    externalId: `c_${randomUUID()}`,
     email: "owner@example.com",
     name: null,
   });

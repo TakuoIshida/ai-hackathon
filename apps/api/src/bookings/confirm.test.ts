@@ -42,7 +42,7 @@ async function seedPublishedLink(
 ): Promise<SeededLink> {
   const [user] = await db
     .insert(users)
-    .values({ clerkId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
+    .values({ externalId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
     .returning();
   if (!user) throw new Error("seed: user insert failed");
   const slug = overrides.slug ?? "intro-30min";
@@ -129,7 +129,7 @@ beforeEach(async () => {
   sinks = buildBookingTestSinks(db);
   await testDb.$client.exec(`
     TRUNCATE TABLE bookings, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, users
+    availability_links, google_calendars, google_oauth_accounts, common.users
     RESTART IDENTITY CASCADE;
   `);
 });

@@ -55,7 +55,6 @@ export function createWorkspacesRoute(deps: WorkspacesRouteDeps = productionDeps
       workspaces: list.map((w) => ({
         id: w.id,
         name: w.name,
-        slug: w.slug,
         role: w.role,
         createdAt: w.createdAt,
       })),
@@ -65,15 +64,11 @@ export function createWorkspacesRoute(deps: WorkspacesRouteDeps = productionDeps
   // ISH-107: create a workspace + owner membership atomically.
   route.post("/", zValidator("json", createWorkspaceInputSchema), async (c) => {
     const result = await createWorkspaceForUser(db, getDbUser(c).id, c.req.valid("json"));
-    if (result.kind === "slug_taken") {
-      throw new HTTPException(409, { message: "slug_already_taken" });
-    }
     return c.json(
       {
         workspace: {
           id: result.workspace.id,
           name: result.workspace.name,
-          slug: result.workspace.slug,
           createdAt: result.workspace.createdAt,
         },
       },
@@ -90,7 +85,6 @@ export function createWorkspacesRoute(deps: WorkspacesRouteDeps = productionDeps
       workspace: {
         id: result.workspace.id,
         name: result.workspace.name,
-        slug: result.workspace.slug,
         role: result.workspace.role,
         createdAt: result.workspace.createdAt,
       },

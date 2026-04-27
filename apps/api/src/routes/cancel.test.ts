@@ -61,7 +61,7 @@ beforeEach(async () => {
   sentEmails = [];
   await testDb.$client.exec(`
     TRUNCATE TABLE bookings, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, users
+    availability_links, google_calendars, google_oauth_accounts, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
@@ -69,7 +69,7 @@ beforeEach(async () => {
 async function seedConfirmedBooking(token: string): Promise<{ bookingId: string }> {
   const [user] = await testDb
     .insert(users)
-    .values({ clerkId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
+    .values({ externalId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
     .returning();
   if (!user) throw new Error("seed user");
   const [link] = await testDb
@@ -114,7 +114,7 @@ async function seedConfirmedBookingWithGoogle(token: string): Promise<{
 }> {
   const [user] = await testDb
     .insert(users)
-    .values({ clerkId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
+    .values({ externalId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
     .returning();
   if (!user) throw new Error("seed user");
   const [link] = await testDb

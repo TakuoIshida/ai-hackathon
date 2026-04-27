@@ -33,14 +33,14 @@ afterAll(async () => {
 beforeEach(async () => {
   await testDb.$client.exec(`
     TRUNCATE TABLE bookings, link_owners, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, users
+    availability_links, google_calendars, google_oauth_accounts, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
 
 async function seedUser(): Promise<string> {
   const u = await insertUser(db, {
-    clerkId: `c_${randomUUID()}`,
+    externalId: `c_${randomUUID()}`,
     email: "owner@example.com",
     name: null,
   });
@@ -99,7 +99,7 @@ describe("links/usecase: CRUD", () => {
   test("getLink returns null when not owned", async () => {
     const userA = await seedUser();
     const userB = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "b@x.com",
       name: null,
     });
@@ -660,7 +660,7 @@ describe("links/usecase: co-owner management (ISH-112)", () => {
   test("getCoOwnersForLink returns not_found when user does not own the link", async () => {
     const owner = await seedUser();
     const stranger = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "stranger@x.com",
       name: null,
     });
@@ -675,12 +675,12 @@ describe("links/usecase: co-owner management (ISH-112)", () => {
     const created = await createLinkForUser(db, userId, baseInput({ slug: "co-replace" }));
     if (created.kind !== "ok") throw new Error("seed");
     const u2 = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u2@x.com",
       name: null,
     });
     const u3 = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u3@x.com",
       name: null,
     });
@@ -692,7 +692,7 @@ describe("links/usecase: co-owner management (ISH-112)", () => {
   test("setCoOwnersForLink returns not_found when caller is not the primary owner", async () => {
     const owner = await seedUser();
     const stranger = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "stranger@x.com",
       name: null,
     });
