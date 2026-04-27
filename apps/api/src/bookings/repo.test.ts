@@ -8,7 +8,9 @@ import {
   attachGoogleEvent,
   findActiveBookingsForLink,
   findBookingById,
+  findBookingsDueForReminder,
   markBookingCanceled,
+  markReminderSent,
   type NewBookingRow,
   tryInsertConfirmedBooking,
 } from "./repo";
@@ -242,5 +244,149 @@ describe("bookings/repo", () => {
     expect(allRows.length).toBe(2);
     const statuses = allRows.map((r) => r.status).sort();
     expect(statuses).toEqual(["canceled", "confirmed"]);
+  });
+
+  // ---------- ISH-98: reminder cron repo helpers ----------
+
+  describe("findBookingsDueForReminder", () => {
+    // Reference clock: a stable fake "now". The reminder fires 24h ahead of
+    // start_at, so a booking starting at NOW + 24h with reminder_sent_at NULL
+    // is the canonical "in window" case. Window half-width: 8 minutes.
+    const NOW = new Date("2026-01-10T00:00:00.000Z");
+    const LEAD_MS = 24 * 60 * 60 * 1000;
+    const WINDOW_MS = 8 * 60 * 1000;
+
+    test("returns confirmed, unsent booking whose start_at is at the reminder mark", async () => {
+      const { linkId } = await seedLink();
+      const start = new Date(NOW.getTime() + LEAD_MS);
+      const created = await tryInsertConfirmedBooking(
+        db,
+        bookingInput(linkId, {
+          startAt: start,
+          endAt: new Date(start.getTime() + 30 * 60 * 1000),
+        }),
+      );
+      if (!created) throw new Error("precondition: insert");
+
+      const due = await findBookingsDueForReminder(db, {
+        now: NOW,
+        leadMs: LEAD_MS,
+        windowMs: WINDOW_MS,
+      });
+      expect(due.length).toBe(1);
+      expect(due[0]?.bookingId).toBe(created.id);
+      expect(due[0]?.linkId).toBe(linkId);
+      expect(due[0]?.guestEmail).toBe("guest-a@example.com");
+      expect(due[0]?.cancellationToken).toBe(created.cancellationToken);
+    });
+
+    test("excludes canceled bookings even if otherwise in window", async () => {
+      const { linkId } = await seedLink();
+      const start = new Date(NOW.getTime() + LEAD_MS);
+      const created = await tryInsertConfirmedBooking(
+        db,
+        bookingInput(linkId, {
+          startAt: start,
+          endAt: new Date(start.getTime() + 30 * 60 * 1000),
+        }),
+      );
+      if (!created) throw new Error("precondition: insert");
+      await markBookingCanceled(db, created.id);
+
+      const due = await findBookingsDueForReminder(db, {
+        now: NOW,
+        leadMs: LEAD_MS,
+        windowMs: WINDOW_MS,
+      });
+      expect(due.length).toBe(0);
+    });
+
+    test("excludes bookings where start_at is too early (before window lower bound)", async () => {
+      const { linkId } = await seedLink();
+      // start_at = now + lead - window - 1min (i.e. 9 min too early)
+      const start = new Date(NOW.getTime() + LEAD_MS - WINDOW_MS - 60_000);
+      await tryInsertConfirmedBooking(
+        db,
+        bookingInput(linkId, {
+          startAt: start,
+          endAt: new Date(start.getTime() + 30 * 60 * 1000),
+        }),
+      );
+      const due = await findBookingsDueForReminder(db, {
+        now: NOW,
+        leadMs: LEAD_MS,
+        windowMs: WINDOW_MS,
+      });
+      expect(due.length).toBe(0);
+    });
+
+    test("excludes bookings where start_at is too late (at/beyond window upper bound)", async () => {
+      const { linkId } = await seedLink();
+      // start_at = now + lead + window (exclusive upper bound)
+      const start = new Date(NOW.getTime() + LEAD_MS + WINDOW_MS);
+      await tryInsertConfirmedBooking(
+        db,
+        bookingInput(linkId, {
+          startAt: start,
+          endAt: new Date(start.getTime() + 30 * 60 * 1000),
+        }),
+      );
+      const due = await findBookingsDueForReminder(db, {
+        now: NOW,
+        leadMs: LEAD_MS,
+        windowMs: WINDOW_MS,
+      });
+      expect(due.length).toBe(0);
+    });
+
+    test("excludes bookings whose reminder_sent_at is already populated", async () => {
+      const { linkId } = await seedLink();
+      const start = new Date(NOW.getTime() + LEAD_MS);
+      const created = await tryInsertConfirmedBooking(
+        db,
+        bookingInput(linkId, {
+          startAt: start,
+          endAt: new Date(start.getTime() + 30 * 60 * 1000),
+        }),
+      );
+      if (!created) throw new Error("precondition: insert");
+      await testDb
+        .update(bookings)
+        .set({ reminderSentAt: new Date(NOW.getTime() - 60_000) })
+        .where(eq(bookings.id, created.id));
+
+      const due = await findBookingsDueForReminder(db, {
+        now: NOW,
+        leadMs: LEAD_MS,
+        windowMs: WINDOW_MS,
+      });
+      expect(due.length).toBe(0);
+    });
+  });
+
+  describe("markReminderSent", () => {
+    const NOW = new Date("2026-01-10T00:00:00.000Z");
+
+    test("returns true on first call and stamps reminder_sent_at; second call returns false and preserves the original timestamp", async () => {
+      const { linkId } = await seedLink();
+      const created = await tryInsertConfirmedBooking(db, bookingInput(linkId));
+      if (!created) throw new Error("precondition: insert");
+
+      const first = await markReminderSent(db, created.id, NOW);
+      expect(first).toBe(true);
+
+      const afterFirst = await findBookingById(db, created.id);
+      expect(afterFirst?.reminderSentAt?.toISOString()).toBe(NOW.toISOString());
+
+      // Second call: race-pin. Must NOT bump the timestamp — the partial WHERE
+      // clause must short-circuit so concurrent overlapping cron workers can
+      // never re-stamp (and therefore re-send).
+      const later = new Date(NOW.getTime() + 5 * 60_000);
+      const second = await markReminderSent(db, created.id, later);
+      expect(second).toBe(false);
+
+      const afterSecond = await findBookingById(db, created.id);
+      expect(afterSecond?.reminderSentAt?.toISOString()).toBe(NOW.toISOString());
+    });
   });
 });
