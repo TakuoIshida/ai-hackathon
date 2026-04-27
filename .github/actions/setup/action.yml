@@ -12,7 +12,10 @@ inputs:
   bun-version:
     description: Bun version to install via oven-sh/setup-bun.
     required: false
-    default: latest
+    # Pinned: `latest` resolved to 1.3.13 in CI which hangs the test runner at
+    # src/links/usecase.test.ts (run 24977474740). 1.3.5 is what developers run
+    # locally and what the pre-push hook validates. Bump intentionally.
+    default: 1.3.5
 
 runs:
   using: composite
