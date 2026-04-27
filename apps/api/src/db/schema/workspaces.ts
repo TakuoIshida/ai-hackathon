@@ -1,12 +1,13 @@
 import { sql } from "drizzle-orm";
 import { pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { ulidPk } from "../helpers/ulid";
 import { users } from "./users";
 
 export const workspaces = pgTable("workspaces", {
-  id: uuid("id").defaultRandom().primaryKey(),
+  id: ulidPk(),
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
-  ownerUserId: uuid("owner_user_id")
+  ownerUserId: text("owner_user_id")
     .notNull()
     .references(() => users.id, { onDelete: "restrict" }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -19,11 +20,11 @@ export type NewWorkspace = typeof workspaces.$inferInsert;
 export const memberships = pgTable(
   "memberships",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
-    workspaceId: uuid("workspace_id")
+    id: ulidPk(),
+    workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
-    userId: uuid("user_id")
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     role: text("role", { enum: ["owner", "member"] })
@@ -46,13 +47,14 @@ export type MembershipRole = Membership["role"];
 export const invitations = pgTable(
   "invitations",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
-    workspaceId: uuid("workspace_id")
+    id: ulidPk(),
+    workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     email: text("email").notNull(),
+    // Security token: keep UUIDv4 to avoid timestamp exposure (P-5 design doc)
     token: uuid("token").notNull().unique().defaultRandom(),
-    invitedByUserId: uuid("invited_by_user_id")
+    invitedByUserId: text("invited_by_user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),

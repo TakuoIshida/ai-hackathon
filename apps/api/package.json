@@ -21,6 +21,7 @@
     "hono": "^4.6.16",
     "postgres": "^3.4.5",
     "svix": "^1.92.2",
+    "ulidx": "^2.4.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

@@ -9,16 +9,16 @@ import {
   text,
   timestamp,
   uniqueIndex,
-  uuid,
   varchar,
 } from "drizzle-orm/pg-core";
+import { ulidPk } from "../helpers/ulid";
 import { users } from "./users";
 
 export const availabilityLinks = pgTable(
   "availability_links",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
-    userId: uuid("user_id")
+    id: ulidPk(),
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     slug: varchar("slug", { length: 64 }).notNull().unique(),
@@ -46,8 +46,8 @@ export const availabilityLinks = pgTable(
 export const availabilityRules = pgTable(
   "availability_rules",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
-    linkId: uuid("link_id")
+    id: ulidPk(),
+    linkId: text("link_id")
       .notNull()
       .references(() => availabilityLinks.id, { onDelete: "cascade" }),
     weekday: smallint("weekday").notNull(),
@@ -67,8 +67,8 @@ export const availabilityRules = pgTable(
 export const availabilityExcludes = pgTable(
   "availability_excludes",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
-    linkId: uuid("link_id")
+    id: ulidPk(),
+    linkId: text("link_id")
       .notNull()
       .references(() => availabilityLinks.id, { onDelete: "cascade" }),
     localDate: varchar("local_date", { length: 10 }).notNull(),
@@ -87,11 +87,11 @@ export const availabilityExcludes = pgTable(
 export const linkOwners = pgTable(
   "link_owners",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
-    linkId: uuid("link_id")
+    id: ulidPk(),
+    linkId: text("link_id")
       .notNull()
       .references(() => availabilityLinks.id, { onDelete: "cascade" }),
-    userId: uuid("user_id")
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

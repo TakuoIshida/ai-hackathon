@@ -1,11 +1,12 @@
-import { boolean, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { ulidPk } from "../helpers/ulid";
 import { users } from "./users";
 
 export const googleOauthAccounts = pgTable(
   "google_oauth_accounts",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
-    userId: uuid("user_id")
+    id: ulidPk(),
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     googleUserId: text("google_user_id").notNull(),
@@ -25,8 +26,8 @@ export const googleOauthAccounts = pgTable(
 export const googleCalendars = pgTable(
   "google_calendars",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
-    oauthAccountId: uuid("oauth_account_id")
+    id: ulidPk(),
+    oauthAccountId: text("oauth_account_id")
       .notNull()
       .references(() => googleOauthAccounts.id, { onDelete: "cascade" }),
     googleCalendarId: text("google_calendar_id").notNull(),

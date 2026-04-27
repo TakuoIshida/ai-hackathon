@@ -46,7 +46,7 @@ describe("workspaces table (ISH-105)", () => {
   test("inserts a row with required fields and returns defaults", async () => {
     const owner = await seedUser();
     const row = await seedWorkspace(owner.id, "acme", "Acme");
-    expect(row.id).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(row.id).toMatch(/^[0-9A-Z]{26}$/);
     expect(row.createdAt).toBeInstanceOf(Date);
     expect(row.updatedAt).toBeInstanceOf(Date);
   });
