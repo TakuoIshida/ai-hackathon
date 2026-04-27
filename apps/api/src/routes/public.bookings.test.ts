@@ -153,9 +153,10 @@ function buildApp(deps: PublicRouteDeps = noGoogleDeps): Hono {
   return app;
 }
 
-// PGlite WASM init is the slow part — do it once for the whole file. Between
-// tests we just TRUNCATE so each test sees a fresh schema. The 30s timeout
-// covers cold WASM init on slow CI runners (Bun's default 5s isn't enough).
+// Spin up the test DB once for the whole file (a postgres-js connection plus
+// idempotent migration application). Between tests we just TRUNCATE so each
+// test sees a fresh schema. The 30s timeout covers initial schema bootstrap
+// on slow CI runners.
 beforeAll(async () => {
   testDb = await createTestDb();
   setDbForTests(testDb);
@@ -400,11 +401,11 @@ describe("POST /public/links/:slug/bookings — ISH-136 edge cases", () => {
   });
 
   test("true Promise.all concurrent confirm: exactly one 201, one 409", async () => {
-    // Promise.all kicks both `app.request`s off in the same microtask. PGlite
-    // is single-threaded WASM so the two INSERTs serialize at the DB level —
-    // the partial unique index on (link_id, start_at) WHERE status='confirmed'
-    // is what guarantees exactly one winner. We intentionally do NOT skip the
-    // race when serialized: the unique index must still produce 201 + 409.
+    // Promise.all kicks both `app.request`s off in the same microtask. The
+    // partial unique index on (link_id, start_at) WHERE status='confirmed' is
+    // what guarantees exactly one winner: against the real Postgres test DB
+    // the two INSERTs race at the storage layer and the unique index produces
+    // the 201 + 409 outcome.
     await seedPublishedLink(testDb);
     const app = buildApp();
 

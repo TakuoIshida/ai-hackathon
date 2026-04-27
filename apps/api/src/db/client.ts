@@ -57,7 +57,8 @@ function getDb(): Db {
 }
 
 // Test escape hatch: integration tests can swap in a different drizzle instance
-// (e.g. PGlite-backed) without rewriting routes that import `db` directly.
+// (a postgres-js handle bound to the test database) without rewriting routes
+// that import `db` directly.
 export function setDbForTests(db: unknown): void {
   testOverride = db;
 }
