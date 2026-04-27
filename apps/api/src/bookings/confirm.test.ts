@@ -10,7 +10,7 @@ import {
   googleOauthAccounts,
   users,
 } from "@/db/schema";
-import type { LinkWithRelations } from "@/links/repo";
+import type { LinkWithRelations } from "@/links/domain";
 import { findPublishedLinkBySlug } from "@/links/repo";
 import { createBookingNotifier } from "@/notifications/booking-notifier";
 import type { BookingEvent, EmailMessage, SendEmailFn } from "@/notifications/types";

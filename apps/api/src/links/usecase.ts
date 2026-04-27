@@ -7,13 +7,12 @@ import {
   type Interval,
   type Slot,
 } from "@/scheduling";
-import { type LinkWithRelations, rulesToWeekly } from "./domain";
+import { type Link, type LinkWithRelations, rulesToWeekly } from "./domain";
 import {
   createLink,
   deleteLink,
   getLinkForUser,
   isSlugTaken,
-  type LinkRow,
   listLinkCoOwnerUserIds,
   listLinksForUser,
   setLinkCoOwners,
@@ -59,7 +58,7 @@ export type UpdateLinkResult =
   | { kind: "not_found" }
   | { kind: "slug_taken" };
 
-export async function listLinks(database: Database, userId: string): Promise<LinkRow[]> {
+export async function listLinks(database: Database, userId: string): Promise<Link[]> {
   return listLinksForUser(database, userId);
 }
 
