@@ -1,0 +1,11 @@
+# Bun configuration scoped to the @app/api workspace.
+#
+# `[test] preload` runs the listed files exactly once at the start of
+# `bun test`, before any test file is imported. We use it to force-set
+# Clerk publishable / secret / webhook stubs that pass the SDK's
+# `parsePublishableKey` validator regardless of what `.env` supplies —
+# fixes ISH-145 (cross-file test pollution / load order causing 21
+# `401` tests to fail with "Publishable key not valid").
+
+[test]
+preload = ["./src/test/env-bootstrap.ts"]
