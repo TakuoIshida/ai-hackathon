@@ -40,14 +40,26 @@ cp .env.example apps/web/.env        # fill VITE_*
 ローカル開発では `docker-compose.dev.yml` で本物の Postgres 17 を立ち上げて
 `DATABASE_URL` を向けます (PGlite はテスト用)。
 
+### DB ロール設計 (RLS 対応)
+
+| 環境変数 | ロール | 用途 |
+|----------|--------|------|
+| `DATABASE_URL` | `app` | API サーバー runtime — RLS が適用される |
+| `DATABASE_URL_ADMIN` | `admin` | `drizzle-kit` migration 専用 — `BYPASSRLS` 付き |
+
+- `app` / `admin` ロールは `0003_rls.sql` migration が初回実行時に自動作成します
+- `DATABASE_URL_ADMIN` は API コンテナに渡さず、CI/CD の Secret Manager のみで管理します
+- ローカルでは `.env.example` のデフォルト値をそのまま使えます
+
 ```bash
 # 起動 (バックグラウンド)
 docker compose -f docker-compose.dev.yml up -d
 
 # apps/api/.env に以下を設定 (.env.example のデフォルト):
-# DATABASE_URL=postgres://postgres:postgres@localhost:5432/app_dev
+# DATABASE_URL=postgres://app:app@localhost:5432/app_dev       (runtime — RLS 適用)
+# DATABASE_URL_ADMIN=postgres://admin:admin@localhost:5432/app_dev  (migration 専用)
 
-# スキーマ適用 (drizzle-kit push)
+# スキーマ適用 (drizzle-kit — DATABASE_URL_ADMIN を使用)
 bun run --filter @app/api db:push
 
 # 接続確認
