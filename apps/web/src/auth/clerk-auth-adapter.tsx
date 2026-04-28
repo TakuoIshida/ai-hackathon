@@ -39,8 +39,8 @@ function Provider({ children }: { children: React.ReactNode }) {
       publishableKey={PUBLISHABLE_KEY}
       signInUrl="/sign-in"
       signUpUrl="/sign-up"
-      signInFallbackRedirectUrl="/dashboard"
-      signUpFallbackRedirectUrl="/dashboard"
+      signInFallbackRedirectUrl="/onboarding"
+      signUpFallbackRedirectUrl="/onboarding"
     >
       {children}
     </ClerkProvider>
@@ -58,13 +58,13 @@ function useAuth(): UseAuthResult {
 
 function ClerkSignInPage() {
   return (
-    <SignIn path="/sign-in" routing="path" signUpUrl="/sign-up" fallbackRedirectUrl="/dashboard" />
+    <SignIn path="/sign-in" routing="path" signUpUrl="/sign-up" fallbackRedirectUrl="/onboarding" />
   );
 }
 
 function ClerkSignUpPage() {
   return (
-    <SignUp path="/sign-up" routing="path" signInUrl="/sign-in" fallbackRedirectUrl="/dashboard" />
+    <SignUp path="/sign-up" routing="path" signInUrl="/sign-in" fallbackRedirectUrl="/onboarding" />
   );
 }
 

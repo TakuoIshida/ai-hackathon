@@ -1,3 +1,16 @@
+/**
+ * /invite/:token — 招待承認ページ (ISH-179)
+ *
+ * 新仕様 (ISH-176 D-7):
+ *   GET /invitations/:token         → { workspace: { name }, email, expired }
+ *   POST /invitations/:token/accept → { tenantId, role }
+ *                                    401 / 403 email_mismatch / 404 not_found
+ *                                    409 already_accepted | user_already_in_tenant
+ *                                    410 expired
+ *
+ * - 未サインインユーザーへはモーダルでサインイン/サインアップを促す。
+ * - サインイン済みユーザーが承認ボタンを押すと POST を呼び、成功時に /dashboard へ遷移。
+ */
 import * as stylex from "@stylexjs/stylex";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -12,7 +25,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { ApiError, api } from "@/lib/api";
-import type { InvitationSummary } from "@/lib/types";
 import { colors, space } from "@/styles/tokens.stylex";
 
 const styles = stylex.create({
@@ -22,9 +34,15 @@ const styles = stylex.create({
   error: { color: colors.destructive, fontSize: "0.875rem" },
 });
 
+type PreviewData = {
+  workspaceName: string;
+  email: string;
+  expired: boolean;
+};
+
 type LoadState =
   | { kind: "loading" }
-  | { kind: "loaded"; invitation: InvitationSummary }
+  | { kind: "loaded"; preview: PreviewData }
   | { kind: "not_found" }
   | { kind: "error"; message: string };
 
@@ -55,13 +73,13 @@ export default function AcceptInvite() {
     let alive = true;
     (async () => {
       try {
+        // GET /invitations/:token (public preview — no auth required)
         const data = await api.getInvitation(token);
         if (!alive) return;
         setLoad({
           kind: "loaded",
-          invitation: {
+          preview: {
             workspaceName: data.workspace.name,
-            workspaceSlug: data.workspace.slug,
             email: data.email,
             expired: data.expired,
           },
@@ -88,15 +106,25 @@ export default function AcceptInvite() {
     if (!token) return;
     setAccept({ kind: "submitting" });
     try {
-      const res = await api.acceptInvitation(token, () => getToken());
-      navigate(res.workspace.id ? `/dashboard/workspaces/${res.workspace.id}` : "/dashboard");
+      // POST /invitations/:token/accept → { tenantId, role }
+      await api.acceptTenantInvitation(token, getToken);
+      navigate("/dashboard", { replace: true });
     } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 409) {
+          // already_accepted or user_already_in_tenant → already belongs to tenant
+          navigate("/dashboard", { replace: true });
+          return;
+        }
+        setAccept({
+          kind: "error",
+          message: `${err.status} ${err.code}`,
+        });
+        return;
+      }
       setAccept({
         kind: "error",
-        message:
-          err instanceof ApiError
-            ? `${err.status} ${err.code}`
-            : "ワークスペース参加に失敗しました",
+        message: "ワークスペース参加に失敗しました",
       });
     }
   }, [token, getToken, navigate]);
@@ -135,16 +163,14 @@ export default function AcceptInvite() {
     );
   }
 
-  const { invitation } = load;
+  const { preview } = load;
 
-  if (invitation.expired) {
+  if (preview.expired) {
     return (
       <Card>
         <CardHeader>
           <CardTitle>招待の有効期限が切れています</CardTitle>
-          <CardDescription>
-            ワークスペースのオーナーに、新しい招待リンクの発行を依頼してください。
-          </CardDescription>
+          <CardDescription>管理者に、新しい招待リンクの発行を依頼してください。</CardDescription>
         </CardHeader>
       </Card>
     );
@@ -154,18 +180,22 @@ export default function AcceptInvite() {
     <div {...stylex.props(styles.page)}>
       <Card>
         <CardHeader>
-          <CardTitle>{invitation.workspaceName} に招待されています</CardTitle>
+          <CardTitle>{preview.workspaceName} に招待されています</CardTitle>
           <CardDescription>
-            <span {...stylex.props(styles.meta)}>{invitation.email}</span> 宛の招待です。
+            <span {...stylex.props(styles.meta)}>{preview.email}</span> 宛の招待です。
           </CardDescription>
         </CardHeader>
         <CardBody>
-          {accept.kind === "error" && <p {...stylex.props(styles.error)}>{accept.message}</p>}
+          {accept.kind === "error" && (
+            <p role="alert" {...stylex.props(styles.error)}>
+              {accept.message}
+            </p>
+          )}
         </CardBody>
         <CardFooter>
           {isSignedIn ? (
             <Button type="button" onClick={onAccept} disabled={accept.kind === "submitting"}>
-              {accept.kind === "submitting" ? "参加中..." : "ワークスペースに参加"}
+              {accept.kind === "submitting" ? "参加中..." : "テナントに参加"}
             </Button>
           ) : (
             <div {...stylex.props(styles.row)}>
