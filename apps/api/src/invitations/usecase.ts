@@ -90,7 +90,6 @@ export type AcceptInvitationResult =
   | { kind: "not_found" }
   | { kind: "expired" }
   | { kind: "already_accepted" }
-  | { kind: "email_mismatch" }
   | { kind: "user_already_in_tenant" };
 
 /**
@@ -102,9 +101,26 @@ export type AcceptInvitationResult =
  *
  * Flow:
  *   1. Find invitation by token (baseline db, bypasses RLS)
- *   2. Validate expiry, already-accepted, email match
+ *   2. Validate expiry, already-accepted
  *   3. Check that the user is not already a tenant member (different tenant)
- *   4. Atomically: INSERT tenant_members + UPDATE invitations.accepted_at
+ *   4. Validate email match LAST (and as a not_found, to avoid leaking that
+ *      the token is otherwise live to a non-invitee — see ISH-194)
+ *   5. Atomically: INSERT tenant_members + UPDATE invitations.accepted_at
+ *
+ * Error precedence rationale (ISH-194):
+ *   not_found → expired → already_accepted → user_already_in_tenant → not_found (email)
+ *
+ * The email check is LAST and collapses to `not_found` (not a distinct
+ * `email_mismatch` kind). Returning `email_mismatch` (403) before this
+ * point would leak that the token is live to an attacker who stole the
+ * URL — they could trigger the full chain to learn:
+ *   - the token exists (no 404)
+ *   - it's not expired (no 410)
+ *   - it's not accepted (no 409 already_accepted)
+ *   - the caller has no other tenant (no 409 user_already_in_tenant)
+ * Collapsing to `not_found` makes the response indistinguishable from
+ * "this token never existed", costing only the legitimate "you signed
+ * in with the wrong email" UX hint (rare, recoverable by re-issuing).
  */
 export async function acceptInvitation(
   database: Database,
@@ -115,16 +131,12 @@ export async function acceptInvitation(
   const invitation = await findOpenInvitationByToken(database, token);
   if (!invitation) return { kind: "not_found" };
 
-  if (invitation.acceptedAt !== null) {
-    return { kind: "already_accepted" };
-  }
-
   if (invitation.expiresAt.getTime() < Date.now()) {
     return { kind: "expired" };
   }
 
-  if (invitation.email.toLowerCase() !== callerEmail.toLowerCase()) {
-    return { kind: "email_mismatch" };
+  if (invitation.acceptedAt !== null) {
+    return { kind: "already_accepted" };
   }
 
   // Check if the user is already a member of any tenant.
@@ -137,6 +149,12 @@ export async function acceptInvitation(
 
   if (existingMembership) {
     return { kind: "user_already_in_tenant" };
+  }
+
+  // Email check LAST — and we collapse to `not_found` rather than returning
+  // a distinct `email_mismatch` kind. See JSDoc above for the leak rationale.
+  if (invitation.email.toLowerCase() !== callerEmail.toLowerCase()) {
+    return { kind: "not_found" };
   }
 
   // Since the tenant.invitations schema does not store role, all accepted

@@ -148,8 +148,9 @@ export function createInvitationsRoute(deps: InvitationsRouteDeps = {}): Hono<an
    * Responses:
    *   201 { tenantId, role }
    *   401 unauthenticated
-   *   403 email_mismatch (invitee email ≠ caller email)
-   *   404 not_found (invalid token)
+   *   404 not_found (invalid token OR caller email ≠ invitee email — the
+   *                 mismatch case collapses to not_found per ISH-194 to avoid
+   *                 leaking that the token is otherwise live to a non-invitee)
    *   409 already_accepted | user_already_in_tenant
    *   410 expired
    */
@@ -171,7 +172,6 @@ export function createInvitationsRoute(deps: InvitationsRouteDeps = {}): Hono<an
     if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
     if (result.kind === "expired") return c.json({ error: "expired" }, 410);
     if (result.kind === "already_accepted") return c.json({ error: "already_accepted" }, 409);
-    if (result.kind === "email_mismatch") return c.json({ error: "email_mismatch" }, 403);
     if (result.kind === "user_already_in_tenant") {
       return c.json({ error: "user_already_in_tenant" }, 409);
     }

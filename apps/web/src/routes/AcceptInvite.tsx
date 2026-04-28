@@ -1,10 +1,10 @@
 /**
  * /invite/:token — 招待承認ページ (ISH-179)
  *
- * 新仕様 (ISH-176 D-7):
+ * 新仕様 (ISH-176 D-7, ISH-194):
  *   GET /invitations/:token         → { workspace: { name }, email, expired }
  *   POST /invitations/:token/accept → { tenantId, role }
- *                                    401 / 403 email_mismatch / 404 not_found
+ *                                    401 / 404 not_found (ISH-194: email mismatch も 404 に collapse)
  *                                    409 already_accepted | user_already_in_tenant
  *                                    410 expired
  *

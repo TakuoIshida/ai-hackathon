@@ -159,7 +159,11 @@ describe("<AcceptInvite />", () => {
     expect(await screen.findByText("landed-on-dashboard")).toBeInTheDocument();
   });
 
-  test("auth + accept 403 email_mismatch: shows error and does not navigate", async () => {
+  test("auth + accept 404 email-mismatch (collapsed to not_found, ISH-194): shows error and does not navigate", async () => {
+    // Per ISH-194 the BE no longer distinguishes a wrong-email caller from a
+    // bogus token — both surface as 404 not_found to avoid leaking that the
+    // token is otherwise live. The FE must still render the error and stay
+    // on the page (no redirect).
     authMockState.isSignedIn = true;
     mockedApi.getInvitation.mockResolvedValueOnce({
       workspace: { name: "Acme" },
@@ -167,14 +171,14 @@ describe("<AcceptInvite />", () => {
       expired: false,
     });
     mockedApi.acceptTenantInvitation.mockRejectedValueOnce(
-      new ApiError(403, "email_mismatch", "403 email_mismatch"),
+      new ApiError(404, "not_found", "404 not_found"),
     );
 
     renderAt("good-token");
     const joinBtn = await screen.findByRole("button", { name: "テナントに参加" });
     fireEvent.click(joinBtn);
 
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/403 email_mismatch/));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/404 not_found/));
   });
 
   test("auth + accept 410 expired: shows error", async () => {
