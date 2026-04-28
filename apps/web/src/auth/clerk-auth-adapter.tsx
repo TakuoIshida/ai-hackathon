@@ -48,8 +48,9 @@ function Provider({ children }: { children: React.ReactNode }) {
 }
 
 function useAuth(): UseAuthResult {
-  const { isSignedIn, userId, getToken } = useClerkAuth();
+  const { isLoaded, isSignedIn, userId, getToken } = useClerkAuth();
   return {
+    isLoaded: isLoaded ?? false,
     isSignedIn: isSignedIn ?? false,
     externalId: userId ?? null,
     getToken,

@@ -12,6 +12,9 @@ vi.mock("@clerk/clerk-react", () => {
   return {
     useAuth: () => ({
       getToken,
+      // `isLoaded: true` mirrors the Clerk SDK contract that AuthAdapter relies
+      // on to gate redirects (avoids the loading-state flash).
+      isLoaded: true,
       isSignedIn: authMockState.isSignedIn,
       userId: authMockState.isSignedIn ? "user-1" : null,
     }),

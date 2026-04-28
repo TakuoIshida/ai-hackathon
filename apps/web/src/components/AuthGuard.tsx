@@ -1,32 +1,31 @@
 /**
  * AuthGuard — redirects unauthenticated users to /sign-in.
  *
- * Wraps children with a sign-in check using Clerk's useAuth hook. If the user
- * is not signed in, renders a <Navigate to="/sign-in" replace /> so React
- * Router handles the redirect without a full page reload.
+ * Wraps children with a sign-in check using the auth adapter (NOT @clerk/clerk-react
+ * directly), so the implementation stays vendor-neutral. If the user is not
+ * signed in, renders <Navigate to="/sign-in" replace /> so React Router handles
+ * the redirect without a full page reload.
+ *
+ * While the adapter is still loading (`isLoaded === false`) we render `null`
+ * instead of redirecting — without this, the guard would briefly treat an
+ * unloaded session as signed-out and flash-redirect signed-in users away.
  *
  * Usage:
  *   <AuthGuard>
  *     <ProtectedPage />
  *   </AuthGuard>
- *
- * Note: ProtectedDashboard in App.tsx already uses <SignedIn>/<SignedOut> with
- * Clerk's RedirectToSignIn for dashboard routes. This component is a
- * lightweight alternative for routes that need a self-contained auth check.
  */
-import { useAuth } from "@clerk/clerk-react";
 import { Navigate } from "react-router-dom";
+import { auth } from "@/auth";
 
 type AuthGuardProps = {
   children: React.ReactNode;
 };
 
 export function AuthGuard({ children }: AuthGuardProps) {
-  const { isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn } = auth.useAuth();
 
-  if (!isSignedIn) {
-    return <Navigate to="/sign-in" replace />;
-  }
-
+  if (!isLoaded) return null;
+  if (!isSignedIn) return <Navigate to="/sign-in" replace />;
   return <>{children}</>;
 }

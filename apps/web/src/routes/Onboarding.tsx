@@ -91,14 +91,15 @@ function validateTenantName(value: string): string | null {
 }
 
 function OnboardingForm() {
-  const { isSignedIn, getToken } = auth.useAuth();
+  const { isLoaded, isSignedIn, getToken } = auth.useAuth();
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>({ kind: "idle" });
 
-  if (!isSignedIn) {
-    return <Navigate to="/sign-in" replace />;
-  }
+  // Wait for the auth adapter to finish loading before deciding to redirect —
+  // otherwise we flash signed-in users to /sign-in during the initial mount.
+  if (!isLoaded) return null;
+  if (!isSignedIn) return <Navigate to="/sign-in" replace />;
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
