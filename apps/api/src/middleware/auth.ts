@@ -5,7 +5,6 @@ import { db } from "@/db/client";
 import { requestScope } from "@/db/request-scope";
 import { tenantMembers } from "@/db/schema";
 import type { TenantMemberRole } from "@/db/schema/common";
-import { buildClerkIdentityProvider } from "@/identity/clerk-identity-provider";
 import type { IdentityClaims, IdentityProviderPort } from "@/ports/identity";
 import type { User } from "@/users/domain";
 import { ensureUserByClerkId } from "@/users/usecase";
@@ -37,19 +36,13 @@ export type AuthVars = {
   tenantId: string;
   /** Caller's role within the tenant. Set by attachTenantContext alongside tenantId. */
   tenantRole: TenantRole;
+  /**
+   * The active identity provider for this request — stashed by `attachAuth` so
+   * `attachDbUser` can call `idp.getUserByExternalId` without reaching for a
+   * module-level singleton. ISH-190.
+   */
+  idp: IdentityProviderPort;
 };
-
-// ---------------------------------------------------------------------------
-// Module-level Clerk identity provider singleton
-// ---------------------------------------------------------------------------
-
-/**
- * Singleton used by `attachDbUser` for the lazy-create path.
- * Initialized once at module load so the Clerk client is constructed once,
- * not on every request. `attachAuth` replaces this when called (to support
- * dependency injection in tests that supply a fake idp).
- */
-let _idp: IdentityProviderPort = buildClerkIdentityProvider();
 
 // ---------------------------------------------------------------------------
 // attachAuth — composition-root helper
@@ -63,16 +56,24 @@ let _idp: IdentityProviderPort = buildClerkIdentityProvider();
  * Public routes (health, webhooks, invitation previews) remain accessible
  * because the 401 guard is NOT applied globally here — use `requireAuth`
  * per-route to gate protected endpoints.
+ *
+ * ISH-190: the idp is propagated through the Hono context (`c.set("idp", ...)`)
+ * instead of a module-level mutable singleton. This eliminates a hidden
+ * global state and the parallel-app race that came with it.
  */
 export function attachAuth(app: Hono, idp: IdentityProviderPort): void {
-  // Store idp so attachDbUser's lazy-create path uses the same provider.
-  _idp = idp;
+  // 1. Stash idp on the context so attachDbUser can find it without reaching
+  //    for a module-level singleton.
+  app.use("*", async (c, next) => {
+    c.set("idp", idp);
+    await next();
+  });
 
-  // 1. Vendor middleware: Clerk (or future provider) sets its auth state in
+  // 2. Vendor middleware: Clerk (or future provider) sets its auth state in
   //    the hono context so getClaims() can read it.
   app.use("*", idp.middleware());
 
-  // 2. Resolve claims and stash on context. Does NOT throw for unauthenticated
+  // 3. Resolve claims and stash on context. Does NOT throw for unauthenticated
   //    requests — public routes must remain accessible without a session.
   app.use("*", async (c, next) => {
     const claims = idp.getClaims(c);
@@ -127,17 +128,32 @@ export function getClerkUserId(c: Context): string {
  * it on the context. Mount AFTER `requireAuth` on routes that need the local
  * user record.
  *
- * Uses `_idp.getUserByExternalId` (the module-level identity provider set by
- * `attachAuth`) for the lazy-create path when the user is not yet in the DB.
- * In production this is the Clerk implementation; tests can supply a fake idp
- * via `attachAuth(app, fakeIdp)` or bypass this middleware entirely through
+ * Uses `c.get("idp").getUserByExternalId` (set by `attachAuth`) for the
+ * lazy-create path when the user is not yet in the DB. In production this is
+ * the Clerk implementation; tests can supply a fake idp via
+ * `attachAuth(testApp, fakeIdp)` or bypass this middleware entirely through
  * `authMiddlewares` dependency injection in the route factory.
+ *
+ * ISH-190: the idp now lives on the request context, not in a module-level
+ * mutable singleton — eliminates the hidden race when multiple Hono apps
+ * are constructed in parallel.
  */
 export const attachDbUser: MiddlewareHandler<{ Variables: AuthVars }> = async (c, next) => {
   const externalId = getClerkUserId(c);
-  const idp = _idp;
+  // idp is checked lazily — `ensureUserByClerkId` only calls `getUserByExternalId`
+  // when the user is missing from the DB. Tests that seed the user up front
+  // never hit this branch, so they don't need to mount `attachAuth`.
+  const idp = c.get("idp") as IdentityProviderPort | undefined;
   const dbUser = await ensureUserByClerkId(db, externalId, {
-    getUserByExternalId: (id) => idp.getUserByExternalId(id),
+    getUserByExternalId: async (id) => {
+      if (!idp) {
+        throw new HTTPException(500, {
+          message:
+            "idp missing on context — call attachAuth(app, idp) before mounting attachDbUser, or inject via route factory authMiddlewares",
+        });
+      }
+      return idp.getUserByExternalId(id);
+    },
   });
   c.set("dbUser", dbUser);
   await next();
