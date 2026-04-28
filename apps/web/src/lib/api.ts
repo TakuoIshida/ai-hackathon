@@ -52,11 +52,18 @@ async function request<T>(
     } catch {
       // not JSON
     }
-    throw new ApiError(
+    const err = new ApiError(
       res.status,
       body.error ?? "request_failed",
       `${res.status} ${res.statusText}`,
     );
+    // 401: session expired or token invalid → redirect to sign-in.
+    // window check guards against SSR / test environments that don't set
+    // window.location.replace.
+    if (res.status === 401 && typeof window !== "undefined" && window.location.replace) {
+      window.location.replace("/sign-in");
+    }
+    throw err;
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

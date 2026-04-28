@@ -2,6 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "./api";
 import { httpFetch } from "./http";
 
+// Capture window.location.replace calls so we can assert on redirect behaviour
+// without triggering an actual navigation in JSDOM.
+const replaceMock = vi.fn();
+Object.defineProperty(window, "location", {
+  value: { ...window.location, replace: replaceMock },
+  writable: true,
+});
+
 const mockHttpFetch = vi.mocked(httpFetch);
 
 beforeEach(() => {
@@ -44,6 +52,22 @@ describe("api.listLinks", () => {
       async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }),
     );
     await expect(api.listLinks(noToken)).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("calls window.location.replace('/sign-in') on 401", async () => {
+    replaceMock.mockClear();
+    setHandler(
+      async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }),
+    );
+    await expect(api.listLinks(noToken)).rejects.toBeInstanceOf(ApiError);
+    expect(replaceMock).toHaveBeenCalledWith("/sign-in");
+  });
+
+  it("does not call window.location.replace on non-401 errors", async () => {
+    replaceMock.mockClear();
+    setHandler(async () => new Response(JSON.stringify({ error: "not_found" }), { status: 404 }));
+    await expect(api.listLinks(noToken)).rejects.toBeInstanceOf(ApiError);
+    expect(replaceMock).not.toHaveBeenCalled();
   });
 });
 
