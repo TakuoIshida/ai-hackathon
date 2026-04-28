@@ -96,6 +96,65 @@ describe("invitations/usecase: createInvitation (ISH-176)", () => {
     });
     expect(result.kind).toBe("already_member");
   });
+
+  test("ISH-195: case-insensitive — second invite with different casing is rejected as already_invited", async () => {
+    // Bob@x.com の招待を発行 → 大文字違いの bob@x.com で再発行を試みる
+    // → uniqueness check で already_invited が返る (insert 時 lowercase 正規化により)。
+    const owner = await seedUser();
+    const tenant = await seedTenant(owner.id);
+
+    const first = await createInvitation(db, tenant.id, owner.id, {
+      email: "Bob@Example.COM",
+      role: "member",
+    });
+    expect(first.kind).toBe("ok");
+
+    const second = await createInvitation(db, tenant.id, owner.id, {
+      email: "bob@example.com",
+      role: "member",
+    });
+    expect(second.kind).toBe("already_invited");
+  });
+
+  test("ISH-195: case-insensitive — already_member detection ignores casing", async () => {
+    // 既存 member の email が大文字 → 招待時の email を小文字で投入しても
+    // already_member を検出する。
+    const owner = await seedUser();
+    const tenant = await seedTenant(owner.id);
+    // Seed member with mixed-case email
+    const member = await seedUser("Charlie@Example.COM".toLowerCase());
+    await testDb
+      .insert(tenantMembers)
+      .values({ userId: member.id, tenantId: tenant.id, role: "member" });
+
+    const result = await createInvitation(db, tenant.id, owner.id, {
+      email: "CHARLIE@example.com",
+      role: "member",
+    });
+    expect(result.kind).toBe("already_member");
+  });
+
+  test("ISH-195: invitation row is stored with lowercase email", async () => {
+    // The schema-level partial unique index `uniq_tenant_email_open` is case-
+    // sensitive (text equality). Storing the lowercase form keeps the
+    // constraint effective regardless of how the inviter typed the email.
+    const owner = await seedUser();
+    const tenant = await seedTenant(owner.id);
+
+    const result = await createInvitation(db, tenant.id, owner.id, {
+      email: "Mixed@CASE.com",
+      role: "member",
+    });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+
+    const row = await testDb
+      .select({ email: invitations.email })
+      .from(invitations)
+      .where(eq(invitations.id, result.invitationId))
+      .limit(1);
+    expect(row[0]?.email).toBe("mixed@case.com");
+  });
 });
 
 // ---------------------------------------------------------------------------

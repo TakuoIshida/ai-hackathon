@@ -52,12 +52,20 @@ export async function createInvitation(
   inviterUserId: string,
   input: CreateInvitationInput,
 ): Promise<CreateInvitationResult> {
+  // ISH-195: normalize email to lowercase BEFORE every read/write so the
+  // uniqueness checks, the partial unique index `uniq_tenant_email_open`,
+  // and the future acceptance comparison all see one canonical form.
+  // Previously: `Bob@x.com` invite + `bob@x.com` sign-up bypassed the
+  // already_invited / already_member checks because they string-compared
+  // the raw values.
+  const email = input.email.toLowerCase();
+
   // Check if a user with this email is already a tenant member.
   const [existingMember] = await database
     .select({ id: tenantMembers.id })
     .from(tenantMembers)
     .innerJoin(users, eq(tenantMembers.userId, users.id))
-    .where(eq(users.email, input.email))
+    .where(eq(users.email, email))
     .limit(1);
 
   if (existingMember) {
@@ -65,7 +73,7 @@ export async function createInvitation(
   }
 
   // Check for an open invitation for this email in this tenant.
-  const existing = await findOpenInvitationByEmail(database, tenantId, input.email);
+  const existing = await findOpenInvitationByEmail(database, tenantId, email);
   if (existing) {
     return { kind: "already_invited" };
   }
@@ -73,7 +81,7 @@ export async function createInvitation(
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
   const invitation = await insertInvitation(database, {
     tenantId,
-    email: input.email,
+    email,
     invitedByUserId: inviterUserId,
     expiresAt,
   });
