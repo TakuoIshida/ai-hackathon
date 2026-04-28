@@ -6,8 +6,8 @@ import {
   type TenantMemberRole,
   tenantMembers,
   tenants,
+  users,
 } from "@/db/schema/common";
-import { users } from "@/db/schema/users";
 import { type Invitation, invitations } from "@/db/schema/workspaces";
 
 type Database = typeof DbClient;

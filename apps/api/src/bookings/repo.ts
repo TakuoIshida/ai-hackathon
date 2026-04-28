@@ -1,8 +1,8 @@
 import { and, desc, eq, gte, isNull, lt } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
 import { type Booking as BookingTableRow, bookings } from "@/db/schema/bookings";
+import { users } from "@/db/schema/common";
 import { availabilityLinks } from "@/db/schema/links";
-import { users } from "@/db/schema/users";
 import type { Booking, BookingDueForReminder, BookingStatus, OwnerBooking } from "./domain";
 
 type Database = typeof DbClient;
