@@ -77,6 +77,16 @@ export function clearDbForTests(): void {
 // has `app.tenant_id` set via SET LOCAL.  Outside of a request scope (during
 // migrations, seed scripts, or tests that bypass the middleware) the proxy
 // falls back to the baseline connection pool.
+//
+// IMPORTANT: nested transaction semantics.
+// Calling `db.transaction(...)` while already inside a request scope will be
+// handled by the *transaction-bound* client (not the baseline pool), which
+// drizzle-postgres-js implements as a SAVEPOINT — NOT a fresh top-level
+// transaction. This means rollback inside the inner block reverts only that
+// SAVEPOINT, and the outer request transaction continues. If you ever need a
+// genuinely independent top-level tx (e.g. for an outbox-style write that
+// must commit even if the request later rolls back), grab the baseline
+// connection directly via `getDb()` rather than going through this proxy.
 export const db = new Proxy({} as Db, {
   get(_target, prop) {
     // Prefer the transaction-bound client when inside a request scope.
