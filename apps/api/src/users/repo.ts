@@ -1,7 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
-import { tenantMembers } from "@/db/schema/common";
-import { type NewUser, type User as UserRow, users } from "@/db/schema/users";
+import { type NewUser, tenantMembers, type User as UserRow, users } from "@/db/schema/common";
 import { type ClerkUserPayload, deriveUserAttributes, type User } from "./domain";
 
 type Database = typeof DbClient;
