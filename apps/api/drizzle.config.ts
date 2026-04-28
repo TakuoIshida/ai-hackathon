@@ -8,7 +8,9 @@ export default defineConfig({
   schema: "./src/db/schema/index.ts",
   out: "./drizzle",
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? "",
+    // Prefer admin role for migrations (BYPASSRLS + DDL).
+    // Falls back to DATABASE_URL for local dev without a separate admin credential.
+    url: process.env.DATABASE_URL_ADMIN ?? process.env.DATABASE_URL ?? "",
   },
   strict: true,
   verbose: true,
