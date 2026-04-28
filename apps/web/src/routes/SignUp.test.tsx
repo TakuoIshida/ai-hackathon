@@ -40,7 +40,7 @@ describe("<SignUpPage />", () => {
     expect(props.path).toBe("/sign-up");
     expect(props.routing).toBe("path");
     expect(props.signInUrl).toBe("/sign-in");
-    expect(props.fallbackRedirectUrl).toBe("/dashboard");
+    expect(props.fallbackRedirectUrl).toBe("/onboarding");
   });
 
   test("redirects to / when VITE_CLERK_PUBLISHABLE_KEY is unset", async () => {

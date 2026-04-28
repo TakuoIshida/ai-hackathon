@@ -2,6 +2,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "./api";
 import { httpFetch } from "./http";
 
+// Capture window.location.replace calls so we can assert on redirect behaviour
+// without triggering an actual navigation in JSDOM. We carry pathname through
+// because the 401 handler reads it to skip the redirect on unauth landing
+// pages (/sign-* and /invite/*).
+const locationState: { pathname: string } = { pathname: "/dashboard" };
+const replaceMock = vi.fn();
+Object.defineProperty(window, "location", {
+  value: {
+    ...window.location,
+    replace: replaceMock,
+    get pathname() {
+      return locationState.pathname;
+    },
+  },
+  writable: true,
+});
+
 const mockHttpFetch = vi.mocked(httpFetch);
 
 beforeEach(() => {
@@ -44,6 +61,44 @@ describe("api.listLinks", () => {
       async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }),
     );
     await expect(api.listLinks(noToken)).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("calls window.location.replace('/sign-in') on 401", async () => {
+    replaceMock.mockClear();
+    setHandler(
+      async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }),
+    );
+    await expect(api.listLinks(noToken)).rejects.toBeInstanceOf(ApiError);
+    expect(replaceMock).toHaveBeenCalledWith("/sign-in");
+  });
+
+  it("does not call window.location.replace on non-401 errors", async () => {
+    replaceMock.mockClear();
+    setHandler(async () => new Response(JSON.stringify({ error: "not_found" }), { status: 404 }));
+    await expect(api.listLinks(noToken)).rejects.toBeInstanceOf(ApiError);
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("does not call window.location.replace on 401 when on /sign-in (avoids redirect loop)", async () => {
+    replaceMock.mockClear();
+    locationState.pathname = "/sign-in";
+    setHandler(
+      async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }),
+    );
+    await expect(api.listLinks(noToken)).rejects.toBeInstanceOf(ApiError);
+    expect(replaceMock).not.toHaveBeenCalled();
+    locationState.pathname = "/dashboard";
+  });
+
+  it("does not call window.location.replace on 401 when on /invite/:token (preserves landing)", async () => {
+    replaceMock.mockClear();
+    locationState.pathname = "/invite/abc123";
+    setHandler(
+      async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }),
+    );
+    await expect(api.listLinks(noToken)).rejects.toBeInstanceOf(ApiError);
+    expect(replaceMock).not.toHaveBeenCalled();
+    locationState.pathname = "/dashboard";
   });
 });
 
