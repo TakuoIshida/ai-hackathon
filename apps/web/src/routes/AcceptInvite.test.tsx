@@ -84,7 +84,6 @@ describe("<AcceptInvite />", () => {
   test("expired: shows the expired message", async () => {
     mockedApi.getInvitation.mockResolvedValueOnce({
       workspace: { name: "Acme" },
-      email: "invitee@example.com",
       expired: true,
     });
     renderAt("expired-token");
@@ -95,7 +94,6 @@ describe("<AcceptInvite />", () => {
     authMockState.isSignedIn = false;
     mockedApi.getInvitation.mockResolvedValueOnce({
       workspace: { name: "Acme" },
-      email: "invitee@example.com",
       expired: false,
     });
     renderAt("good-token");
@@ -107,7 +105,6 @@ describe("<AcceptInvite />", () => {
     authMockState.isSignedIn = true;
     mockedApi.getInvitation.mockResolvedValueOnce({
       workspace: { name: "Acme" },
-      email: "invitee@example.com",
       expired: false,
     });
     mockedApi.acceptTenantInvitation.mockResolvedValueOnce({
@@ -138,7 +135,6 @@ describe("<AcceptInvite />", () => {
     authMockState.isSignedIn = true;
     mockedApi.getInvitation.mockResolvedValueOnce({
       workspace: { name: "Acme" },
-      email: "invitee@example.com",
       expired: false,
     });
     mockedApi.acceptTenantInvitation.mockRejectedValueOnce(
@@ -167,7 +163,6 @@ describe("<AcceptInvite />", () => {
     authMockState.isSignedIn = true;
     mockedApi.getInvitation.mockResolvedValueOnce({
       workspace: { name: "Acme" },
-      email: "invitee@example.com",
       expired: false,
     });
     mockedApi.acceptTenantInvitation.mockRejectedValueOnce(
@@ -185,7 +180,6 @@ describe("<AcceptInvite />", () => {
     authMockState.isSignedIn = true;
     mockedApi.getInvitation.mockResolvedValueOnce({
       workspace: { name: "Acme" },
-      email: "invitee@example.com",
       expired: false,
     });
     mockedApi.acceptTenantInvitation.mockRejectedValueOnce(

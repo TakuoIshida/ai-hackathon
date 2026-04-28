@@ -385,3 +385,34 @@ describe("POST /invitations/:token/accept — acceptance flow", () => {
     expect(body.error).toBe("user_already_in_tenant");
   });
 });
+
+describe("GET /invitations/:token — public preview (ISH-208)", () => {
+  test("200 returns workspace name + expired flag, but does NOT echo the invited email (anti-enumeration)", async () => {
+    const { owner, tenant } = await seedOwnerAndTenant();
+    const inviteeEmail = `secret-${randomUUID()}@x.com`;
+    const inv = await seedInvitation(tenant.id, owner.id, { email: inviteeEmail });
+
+    const testApp = new Hono();
+    testApp.route("/invitations", createInvitationsRoute({}));
+
+    const res = await testApp.request(`/invitations/${inv.token}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+
+    // Allowed fields.
+    expect(body.workspace).toEqual({ name: tenant.name });
+    expect(body.expired).toBe(false);
+    // ISH-208: the response MUST NOT include the invited email. A guessed or
+    // stolen token would otherwise let an attacker enumerate invitee emails.
+    expect(body).not.toHaveProperty("email");
+    // Defensive: also pin that no field happens to leak the email by value.
+    expect(JSON.stringify(body)).not.toContain(inviteeEmail);
+  });
+
+  test("404 for unknown token (no leakage of any field)", async () => {
+    const testApp = new Hono();
+    testApp.route("/invitations", createInvitationsRoute({}));
+    const res = await testApp.request(`/invitations/${randomUUID()}`);
+    expect(res.status).toBe(404);
+  });
+});
