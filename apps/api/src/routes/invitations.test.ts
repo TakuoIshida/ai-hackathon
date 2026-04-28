@@ -27,7 +27,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(
-    `TRUNCATE TABLE invitations, common.tenant_members, common.tenants, common.users RESTART IDENTITY CASCADE;`,
+    `TRUNCATE TABLE tenant.invitations, common.tenant_members, common.tenants, common.users RESTART IDENTITY CASCADE;`,
   );
 });
 
@@ -43,7 +43,7 @@ async function seedInvitation(opts?: { email?: string; expiresAt?: Date; accepte
   const [inv] = await testDb
     .insert(invitations)
     .values({
-      workspaceId: ws.id,
+      tenantId: ws.id,
       email: opts?.email ?? "invitee@example.com",
       invitedByUserId: owner.id,
       expiresAt: opts?.expiresAt ?? new Date(Date.now() + 7 * 24 * 60 * 60_000),

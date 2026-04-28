@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { randomBytes, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
-import { googleOauthAccounts } from "@/db/schema/google";
+import { googleOauthAccounts, tenants } from "@/db/schema";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 // Side-effect import: registers `mock.module("@/lib/http")` swap so SUT modules
 // pick up the mocked httpFetch. Must come before any SUT import that
@@ -50,7 +50,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(`
-    TRUNCATE TABLE google_calendars, google_oauth_accounts, common.users
+    TRUNCATE TABLE tenant.google_calendars, tenant.google_oauth_accounts,
+    common.tenants, common.users
     RESTART IDENTITY CASCADE;
   `);
   httpFetchMock.mockReset();
@@ -61,6 +62,8 @@ async function seedAccount(opts: {
   accessToken?: string | null;
   expiresAt: Date;
 }): Promise<{ userId: string; accountId: string }> {
+  const [tenant] = await testDb.insert(tenants).values({ name: "Test Tenant" }).returning();
+  if (!tenant) throw new Error("seed: tenant insert failed");
   const u = await insertUser(db, {
     externalId: `c_${randomUUID()}`,
     email: "owner@example.com",
@@ -69,6 +72,7 @@ async function seedAccount(opts: {
   const account = await upsertOauthAccountWithEncryption(
     db,
     {
+      tenantId: tenant.id,
       userId: u.id,
       googleUserId: `g_${randomUUID()}`,
       email: "owner@example.com",

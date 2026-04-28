@@ -1,54 +1,10 @@
-import { sql } from "drizzle-orm";
-import {
-  check,
-  index,
-  pgTable,
-  text,
-  timestamp,
-  uniqueIndex,
-  uuid,
-  varchar,
-} from "drizzle-orm/pg-core";
-import { ulidPk } from "../helpers/ulid";
-import { availabilityLinks } from "./links";
-
-export const bookingStatusValues = ["confirmed", "canceled"] as const;
-export type BookingStatus = (typeof bookingStatusValues)[number];
-
-export const bookings = pgTable(
-  "bookings",
-  {
-    id: ulidPk(),
-    linkId: text("link_id")
-      .notNull()
-      .references(() => availabilityLinks.id, { onDelete: "restrict" }),
-    startAt: timestamp("start_at", { withTimezone: true }).notNull(),
-    endAt: timestamp("end_at", { withTimezone: true }).notNull(),
-    guestName: text("guest_name").notNull(),
-    guestEmail: text("guest_email").notNull(),
-    guestNote: text("guest_note"),
-    guestTimeZone: text("guest_time_zone"),
-    status: varchar("status", { length: 16 }).notNull().default("confirmed"),
-    googleEventId: text("google_event_id"),
-    meetUrl: text("meet_url"),
-    // Security token: keep UUIDv4 to avoid timestamp exposure (P-5 design doc)
-    cancellationToken: uuid("cancellation_token").defaultRandom().notNull().unique(),
-    reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    canceledAt: timestamp("canceled_at", { withTimezone: true }),
-  },
-  (t) => [
-    index("idx_bookings_link_start").on(t.linkId, t.startAt),
-    index("idx_bookings_status_start").on(t.status, t.startAt),
-    // Dual-booking guard: at most one confirmed booking per (link, slot start).
-    // Canceled rows do not block re-booking the same slot.
-    uniqueIndex("uniq_bookings_active_slot")
-      .on(t.linkId, t.startAt)
-      .where(sql`${t.status} = 'confirmed'`),
-    check("status_values", sql`${t.status} IN ('confirmed', 'canceled')`),
-    check("end_after_start", sql`${t.endAt} > ${t.startAt}`),
-  ],
-);
-
-export type Booking = typeof bookings.$inferSelect;
-export type NewBooking = typeof bookings.$inferInsert;
+// NOTE: bookings table has been moved to tenant.bookings (ISH-169 / D-2).
+// This file re-exports from tenant.ts for backward compatibility during migration.
+// Direct imports from "@/db/schema/bookings" still work, but prefer "@/db/schema/tenant".
+export {
+  type Booking,
+  type BookingStatus,
+  bookingStatusValues,
+  bookings,
+  type NewBooking,
+} from "./tenant";

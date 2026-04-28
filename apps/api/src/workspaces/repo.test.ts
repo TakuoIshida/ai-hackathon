@@ -31,7 +31,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(
-    `TRUNCATE TABLE invitations, common.tenant_members, common.tenants, common.users RESTART IDENTITY CASCADE;`,
+    `TRUNCATE TABLE tenant.invitations, common.tenant_members, common.tenants, common.users RESTART IDENTITY CASCADE;`,
   );
 });
 

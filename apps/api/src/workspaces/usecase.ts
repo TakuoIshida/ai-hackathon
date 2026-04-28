@@ -73,7 +73,7 @@ export async function issueInvitation(
   const now = deps.now?.() ?? Date.now();
   const expiresAt = new Date(now + INVITE_TTL_MS);
   const invitation = await createInvitation(database, {
-    workspaceId,
+    tenantId: workspaceId,
     email,
     invitedByUserId: inviterUserId,
     expiresAt,
@@ -325,13 +325,13 @@ export async function acceptInvitation(
     return { kind: "email_mismatch" };
   }
 
-  const workspace = await findWorkspaceById(database, invitation.workspaceId);
+  const workspace = await findWorkspaceById(database, invitation.tenantId);
   if (!workspace) return { kind: "not_found" };
 
   await acceptInvitationAtomic(database, {
     invitationId: invitation.id,
     userId: callerUserId,
-    workspaceId: invitation.workspaceId,
+    workspaceId: invitation.tenantId,
     now: new Date(now),
   });
 

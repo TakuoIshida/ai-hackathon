@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
-import { availabilityLinks, bookings, users } from "@/db/schema";
+import { availabilityLinks, bookings, tenants, users } from "@/db/schema";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import {
   attachGoogleEvent,
@@ -34,13 +34,16 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(`
-    TRUNCATE TABLE bookings, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, common.users
+    TRUNCATE TABLE tenant.bookings, tenant.availability_excludes, tenant.availability_rules,
+    tenant.availability_links, tenant.google_calendars, tenant.google_oauth_accounts,
+    common.tenants, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
 
-async function seedLink(): Promise<{ userId: string; linkId: string }> {
+async function seedLink(): Promise<{ userId: string; linkId: string; tenantId: string }> {
+  const [tenant] = await testDb.insert(tenants).values({ name: "Test Tenant" }).returning();
+  if (!tenant) throw new Error("seed tenant");
   const [user] = await testDb
     .insert(users)
     .values({ externalId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
@@ -49,6 +52,7 @@ async function seedLink(): Promise<{ userId: string; linkId: string }> {
   const [link] = await testDb
     .insert(availabilityLinks)
     .values({
+      tenantId: tenant.id,
       userId: user.id,
       slug: `slug-${randomUUID()}`,
       title: "30 min meeting",
@@ -58,15 +62,16 @@ async function seedLink(): Promise<{ userId: string; linkId: string }> {
     })
     .returning();
   if (!link) throw new Error("seed link");
-  return { userId: user.id, linkId: link.id };
+  return { userId: user.id, linkId: link.id, tenantId: tenant.id };
 }
 
 function bookingInput(
-  linkId: string,
+  seed: { linkId: string; tenantId: string },
   overrides: Partial<NewBookingRow> = {},
 ): Omit<NewBookingRow, "id" | "status" | "createdAt"> & { status?: never } {
   return {
-    linkId,
+    tenantId: seed.tenantId,
+    linkId: seed.linkId,
     startAt: SLOT_START,
     endAt: SLOT_END,
     guestName: "Guest A",
@@ -77,10 +82,10 @@ function bookingInput(
 
 describe("bookings/repo", () => {
   test("tryInsertConfirmedBooking inserts and returns the new row (happy path)", async () => {
-    const { linkId } = await seedLink();
-    const created = await tryInsertConfirmedBooking(db, bookingInput(linkId));
+    const seed = await seedLink();
+    const created = await tryInsertConfirmedBooking(db, bookingInput(seed));
     expect(created).not.toBeNull();
-    expect(created?.linkId).toBe(linkId);
+    expect(created?.linkId).toBe(seed.linkId);
     expect(created?.status).toBe("confirmed");
     expect(created?.startAt.toISOString()).toBe(SLOT_START.toISOString());
     expect(created?.endAt.toISOString()).toBe(SLOT_END.toISOString());
@@ -88,28 +93,28 @@ describe("bookings/repo", () => {
     // cancellationToken is auto-generated
     expect(created?.cancellationToken).toMatch(/^[0-9a-f-]{36}$/);
 
-    const persisted = await testDb.select().from(bookings).where(eq(bookings.linkId, linkId));
+    const persisted = await testDb.select().from(bookings).where(eq(bookings.linkId, seed.linkId));
     expect(persisted.length).toBe(1);
   });
 
   test("sequential insert into the same (link, slot) returns null on second attempt", async () => {
-    const { linkId } = await seedLink();
-    const first = await tryInsertConfirmedBooking(db, bookingInput(linkId));
+    const seed = await seedLink();
+    const first = await tryInsertConfirmedBooking(db, bookingInput(seed));
     expect(first).not.toBeNull();
     const second = await tryInsertConfirmedBooking(
       db,
-      bookingInput(linkId, { guestEmail: "different@example.com" }),
+      bookingInput(seed, { guestEmail: "different@example.com" }),
     );
     // Partial unique index `uniq_bookings_active_slot` rejects via ON CONFLICT DO NOTHING.
     expect(second).toBeNull();
 
-    const rows = await testDb.select().from(bookings).where(eq(bookings.linkId, linkId));
+    const rows = await testDb.select().from(bookings).where(eq(bookings.linkId, seed.linkId));
     expect(rows.length).toBe(1);
     expect(rows[0]?.guestEmail).toBe("guest-a@example.com");
   });
 
   test("Promise.all parallel inserts: exactly one wins, the other returns null (race guard)", async () => {
-    const { linkId } = await seedLink();
+    const seed = await seedLink();
 
     // Fire both inserts truly concurrently via Promise.all. The partial unique
     // index must serialize them at the storage layer so that exactly one of
@@ -118,8 +123,8 @@ describe("bookings/repo", () => {
     // path production sees: exactly one commit, the other is a no-op insert
     // returning zero rows.
     const results = await Promise.allSettled([
-      tryInsertConfirmedBooking(db, bookingInput(linkId, { guestEmail: "racer-1@example.com" })),
-      tryInsertConfirmedBooking(db, bookingInput(linkId, { guestEmail: "racer-2@example.com" })),
+      tryInsertConfirmedBooking(db, bookingInput(seed, { guestEmail: "racer-1@example.com" })),
+      tryInsertConfirmedBooking(db, bookingInput(seed, { guestEmail: "racer-2@example.com" })),
     ]);
 
     expect(results.length).toBe(2);
@@ -134,7 +139,7 @@ describe("bookings/repo", () => {
     expect(losers.length).toBe(1);
 
     // Only one row persisted.
-    const rows = await testDb.select().from(bookings).where(eq(bookings.linkId, linkId));
+    const rows = await testDb.select().from(bookings).where(eq(bookings.linkId, seed.linkId));
     expect(rows.length).toBe(1);
     const persisted = rows[0];
     if (!persisted) throw new Error("expected exactly one persisted row");
@@ -144,8 +149,8 @@ describe("bookings/repo", () => {
   });
 
   test("attachGoogleEvent sets googleEventId and meetUrl on the row", async () => {
-    const { linkId } = await seedLink();
-    const created = await tryInsertConfirmedBooking(db, bookingInput(linkId));
+    const seed = await seedLink();
+    const created = await tryInsertConfirmedBooking(db, bookingInput(seed));
     if (!created) throw new Error("precondition: insert should succeed");
 
     await attachGoogleEvent(
@@ -167,25 +172,25 @@ describe("bookings/repo", () => {
   });
 
   test("findActiveBookingsForLink returns rows scoped to the given linkId", async () => {
-    const linkA = await seedLink();
-    const linkB = await seedLink();
+    const seedA = await seedLink();
+    const seedB = await seedLink();
 
     const aBooking = await tryInsertConfirmedBooking(
       db,
-      bookingInput(linkA.linkId, { guestEmail: "a@example.com" }),
+      bookingInput(seedA, { guestEmail: "a@example.com" }),
     );
     const bBooking = await tryInsertConfirmedBooking(
       db,
-      bookingInput(linkB.linkId, { guestEmail: "b@example.com" }),
+      bookingInput(seedB, { guestEmail: "b@example.com" }),
     );
     expect(aBooking).not.toBeNull();
     expect(bBooking).not.toBeNull();
 
-    const aRows = await findActiveBookingsForLink(db, linkA.linkId);
+    const aRows = await findActiveBookingsForLink(db, seedA.linkId);
     expect(aRows.length).toBe(1);
     expect(aRows[0]?.guestEmail).toBe("a@example.com");
 
-    const bRows = await findActiveBookingsForLink(db, linkB.linkId);
+    const bRows = await findActiveBookingsForLink(db, seedB.linkId);
     expect(bRows.length).toBe(1);
     expect(bRows[0]?.guestEmail).toBe("b@example.com");
 
@@ -195,13 +200,13 @@ describe("bookings/repo", () => {
   });
 
   test("findBookingById returns the inserted row, or null when missing", async () => {
-    const { linkId } = await seedLink();
-    const created = await tryInsertConfirmedBooking(db, bookingInput(linkId));
+    const seed = await seedLink();
+    const created = await tryInsertConfirmedBooking(db, bookingInput(seed));
     if (!created) throw new Error("precondition: insert should succeed");
 
     const found = await findBookingById(db, created.id);
     expect(found?.id).toBe(created.id);
-    expect(found?.linkId).toBe(linkId);
+    expect(found?.linkId).toBe(seed.linkId);
     expect(found?.guestEmail).toBe("guest-a@example.com");
 
     const missing = await findBookingById(db, randomUUID());
@@ -209,8 +214,8 @@ describe("bookings/repo", () => {
   });
 
   test("markBookingCanceled frees the slot so re-insert into the same (link, slot) succeeds", async () => {
-    const { linkId } = await seedLink();
-    const first = await tryInsertConfirmedBooking(db, bookingInput(linkId));
+    const seed = await seedLink();
+    const first = await tryInsertConfirmedBooking(db, bookingInput(seed));
     if (!first) throw new Error("precondition: first insert should succeed");
 
     const canceled = await markBookingCanceled(db, first.id);
@@ -226,13 +231,13 @@ describe("bookings/repo", () => {
     // partial unique index only covers status='confirmed' rows.
     const rebook = await tryInsertConfirmedBooking(
       db,
-      bookingInput(linkId, { guestEmail: "second-attempt@example.com" }),
+      bookingInput(seed, { guestEmail: "second-attempt@example.com" }),
     );
     expect(rebook).not.toBeNull();
     expect(rebook?.status).toBe("confirmed");
     expect(rebook?.guestEmail).toBe("second-attempt@example.com");
 
-    const allRows = await testDb.select().from(bookings).where(eq(bookings.linkId, linkId));
+    const allRows = await testDb.select().from(bookings).where(eq(bookings.linkId, seed.linkId));
     expect(allRows.length).toBe(2);
     const statuses = allRows.map((r) => r.status).sort();
     expect(statuses).toEqual(["canceled", "confirmed"]);
@@ -249,11 +254,11 @@ describe("bookings/repo", () => {
     const WINDOW_MS = 8 * 60 * 1000;
 
     test("returns confirmed, unsent booking whose start_at is at the reminder mark", async () => {
-      const { linkId } = await seedLink();
+      const seed = await seedLink();
       const start = new Date(NOW.getTime() + LEAD_MS);
       const created = await tryInsertConfirmedBooking(
         db,
-        bookingInput(linkId, {
+        bookingInput(seed, {
           startAt: start,
           endAt: new Date(start.getTime() + 30 * 60 * 1000),
         }),
@@ -267,7 +272,7 @@ describe("bookings/repo", () => {
       });
       expect(due.length).toBe(1);
       expect(due[0]?.bookingId).toBe(created.id);
-      expect(due[0]?.linkId).toBe(linkId);
+      expect(due[0]?.linkId).toBe(seed.linkId);
       expect(due[0]?.guestEmail).toBe("guest-a@example.com");
       expect(due[0]?.cancellationToken).toBe(created.cancellationToken);
       // ISH-149: link/owner fields are projected via JOIN so the cron job
@@ -278,11 +283,11 @@ describe("bookings/repo", () => {
     });
 
     test("excludes canceled bookings even if otherwise in window", async () => {
-      const { linkId } = await seedLink();
+      const seed = await seedLink();
       const start = new Date(NOW.getTime() + LEAD_MS);
       const created = await tryInsertConfirmedBooking(
         db,
-        bookingInput(linkId, {
+        bookingInput(seed, {
           startAt: start,
           endAt: new Date(start.getTime() + 30 * 60 * 1000),
         }),
@@ -299,12 +304,12 @@ describe("bookings/repo", () => {
     });
 
     test("excludes bookings where start_at is too early (before window lower bound)", async () => {
-      const { linkId } = await seedLink();
+      const seed = await seedLink();
       // start_at = now + lead - window - 1min (i.e. 9 min too early)
       const start = new Date(NOW.getTime() + LEAD_MS - WINDOW_MS - 60_000);
       await tryInsertConfirmedBooking(
         db,
-        bookingInput(linkId, {
+        bookingInput(seed, {
           startAt: start,
           endAt: new Date(start.getTime() + 30 * 60 * 1000),
         }),
@@ -318,12 +323,12 @@ describe("bookings/repo", () => {
     });
 
     test("excludes bookings where start_at is too late (at/beyond window upper bound)", async () => {
-      const { linkId } = await seedLink();
+      const seed = await seedLink();
       // start_at = now + lead + window (exclusive upper bound)
       const start = new Date(NOW.getTime() + LEAD_MS + WINDOW_MS);
       await tryInsertConfirmedBooking(
         db,
-        bookingInput(linkId, {
+        bookingInput(seed, {
           startAt: start,
           endAt: new Date(start.getTime() + 30 * 60 * 1000),
         }),
@@ -337,11 +342,11 @@ describe("bookings/repo", () => {
     });
 
     test("excludes bookings whose reminder_sent_at is already populated", async () => {
-      const { linkId } = await seedLink();
+      const seed = await seedLink();
       const start = new Date(NOW.getTime() + LEAD_MS);
       const created = await tryInsertConfirmedBooking(
         db,
-        bookingInput(linkId, {
+        bookingInput(seed, {
           startAt: start,
           endAt: new Date(start.getTime() + 30 * 60 * 1000),
         }),
@@ -365,8 +370,8 @@ describe("bookings/repo", () => {
     const NOW = new Date("2026-01-10T00:00:00.000Z");
 
     test("returns true on first call and stamps reminder_sent_at; second call returns false and preserves the original timestamp", async () => {
-      const { linkId } = await seedLink();
-      const created = await tryInsertConfirmedBooking(db, bookingInput(linkId));
+      const seed = await seedLink();
+      const created = await tryInsertConfirmedBooking(db, bookingInput(seed));
       if (!created) throw new Error("precondition: insert");
 
       const first = await markReminderSent(db, created.id, NOW);

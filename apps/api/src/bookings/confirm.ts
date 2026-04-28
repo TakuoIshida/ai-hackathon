@@ -65,6 +65,7 @@ export async function confirmBooking(
   }
 
   const inserted = await tryInsertConfirmedBooking(database, {
+    tenantId: link.tenantId,
     linkId: link.id,
     startAt: new Date(startMs),
     endAt: new Date(endMs),

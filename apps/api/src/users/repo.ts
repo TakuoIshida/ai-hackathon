@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
+import { tenantMembers } from "@/db/schema/common";
 import { type NewUser, type User as UserRow, users } from "@/db/schema/users";
 import { type ClerkUserPayload, deriveUserAttributes, type User } from "./domain";
 
@@ -66,6 +67,25 @@ export async function deleteUserByExternalId(
   externalId: string,
 ): Promise<void> {
   await database.delete(users).where(eq(users.externalId, externalId));
+}
+
+/**
+ * Resolve the tenant_id for a given user via common.tenant_members.
+ * Returns null if the user has no tenant membership (should not happen in
+ * production — every user is a member of exactly one tenant).
+ *
+ * Used as a stopgap until D-4 middleware injects tenant_id from the JWT claim.
+ */
+export async function findTenantIdByUserId(
+  database: Database,
+  userId: string,
+): Promise<string | null> {
+  const [row] = await database
+    .select({ tenantId: tenantMembers.tenantId })
+    .from(tenantMembers)
+    .where(eq(tenantMembers.userId, userId))
+    .limit(1);
+  return row?.tenantId ?? null;
 }
 
 // ---------------------------------------------------------------------------

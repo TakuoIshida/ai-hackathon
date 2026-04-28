@@ -150,11 +150,14 @@ async function applyMigrationsIfNeeded(sql: postgres.Sql): Promise<void> {
     // Determine if this migration needs to be applied.
     // 0000_baseline: sentinel = public.bookings
     // 0001_common-schema: sentinel = common.users
+    // 0002_tenant-schema: sentinel = tenant.bookings
     let probe: postgres.PendingQuery<Array<{ present: boolean }>>;
     if (name.startsWith("0000_")) {
       probe = makeSentinel(sql, "public", "bookings");
     } else if (name.startsWith("0001_")) {
       probe = makeSentinel(sql, "common", "users");
+    } else if (name.startsWith("0002_")) {
+      probe = makeSentinel(sql, "tenant", "bookings");
     } else {
       // Unknown migration: always apply (safe because SQL uses IF NOT EXISTS /
       // IF EXISTS where appropriate, or will error loudly).

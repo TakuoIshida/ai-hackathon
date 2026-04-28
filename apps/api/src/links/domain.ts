@@ -11,6 +11,7 @@ import type { Weekday, WeeklyAvailability } from "@/scheduling";
  */
 export type Link = {
   id: string;
+  tenantId: string;
   userId: string;
   slug: string;
   title: string;
