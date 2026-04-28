@@ -20,10 +20,18 @@ import { ensureUserByClerkId } from "@/users/usecase";
  * `c.get("identityClaims")`.
  * Routes that mount `attachTenantContext` can read `c.get("tenantId")`.
  */
+/**
+ * tenant_members.role — kept in sync with the CHECK constraint in
+ * common.ts (`role IN ('owner', 'member')`).
+ */
+export type TenantRole = "owner" | "member";
+
 export type AuthVars = {
   dbUser: User;
   identityClaims: IdentityClaims;
   tenantId: string;
+  /** Caller's role within the tenant. Set by attachTenantContext alongside tenantId. */
+  tenantRole: TenantRole;
 };
 
 // ---------------------------------------------------------------------------
@@ -176,7 +184,7 @@ export const attachTenantContext: MiddlewareHandler<{ Variables: AuthVars }> = a
   // is not a security issue. If real-time membership revocation is ever
   // required, re-check inside the transaction before set_config.
   const [member] = await db
-    .select({ tenantId: tenantMembers.tenantId })
+    .select({ tenantId: tenantMembers.tenantId, role: tenantMembers.role })
     .from(tenantMembers)
     .where(eq(tenantMembers.userId, dbUser.id))
     .limit(1);
@@ -186,7 +194,12 @@ export const attachTenantContext: MiddlewareHandler<{ Variables: AuthVars }> = a
   }
 
   const tenantId = member.tenantId;
+  // CHECK constraint on tenant_members.role enforces this set in the DB; cast
+  // is safe per common.ts schema. `as TenantRole` keeps the typed accessor
+  // exact rather than `string`.
+  const tenantRole = member.role as TenantRole;
   c.set("tenantId", tenantId);
+  c.set("tenantRole", tenantRole);
 
   // Open a transaction for the entire request so SET LOCAL is scoped to it.
   // The requestScope AsyncLocalStorage makes `tx` available to the `db` proxy
@@ -211,4 +224,23 @@ export function getTenantId(c: Context<{ Variables: AuthVars }>): string {
     throw new HTTPException(500, { message: "tenantId missing — attachTenantContext not mounted" });
   }
   return tenantId;
+}
+
+// ---------------------------------------------------------------------------
+// getTenantRole — typed context accessor (ISH-193)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the caller's role within the current tenant. Mounted by
+ * `attachTenantContext` alongside `tenantId`. Routes that previously re-queried
+ * `tenant_members` to check `role === "owner"` should call this instead.
+ */
+export function getTenantRole(c: Context<{ Variables: AuthVars }>): TenantRole {
+  const role = c.get("tenantRole");
+  if (!role) {
+    throw new HTTPException(500, {
+      message: "tenantRole missing — attachTenantContext not mounted",
+    });
+  }
+  return role;
 }
