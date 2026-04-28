@@ -18,6 +18,7 @@ import {
   bookings,
   googleCalendars,
   googleOauthAccounts,
+  tenants,
   users,
 } from "@/db/schema";
 import { createBookingNotifier } from "@/notifications/booking-notifier";
@@ -38,6 +39,7 @@ type Seeded = {
   userId: string;
   linkId: string;
   slug: string;
+  tenantId: string;
 };
 
 async function seedPublishedLink(
@@ -49,6 +51,8 @@ async function seedPublishedLink(
     rangeDays?: number;
   } = {},
 ): Promise<Seeded> {
+  const [tenant] = await db.insert(tenants).values({ name: "Test Tenant" }).returning();
+  if (!tenant) throw new Error("seed: tenant insert failed");
   const [user] = await db
     .insert(users)
     .values({ externalId: `clerk_${randomUUID()}`, email: "owner@example.com" })
@@ -58,6 +62,7 @@ async function seedPublishedLink(
   const [link] = await db
     .insert(availabilityLinks)
     .values({
+      tenantId: tenant.id,
       userId: user.id,
       slug,
       title: "30 min meeting",
@@ -74,13 +79,14 @@ async function seedPublishedLink(
   // Mon-Fri 9-17 JST — single multi-row INSERT (1 RTT vs 5 in CI Neon HTTP).
   await db.insert(availabilityRules).values(
     [1, 2, 3, 4, 5].map((weekday) => ({
+      tenantId: tenant.id,
       linkId: link.id,
       weekday,
       startMinute: 9 * 60,
       endMinute: 17 * 60,
     })),
   );
-  return { userId: user.id, linkId: link.id, slug };
+  return { userId: user.id, linkId: link.id, slug, tenantId: tenant.id };
 }
 
 /**
@@ -88,11 +94,12 @@ async function seedPublishedLink(
  * Mirrors the "OAuth was completed but the user has no Calendar list yet"
  * edge case that ISH-136 #7 covers.
  */
-async function seedGoogleAccountWithoutCalendars(db: TestDb, userId: string): Promise<string> {
+async function seedGoogleAccountWithoutCalendars(db: TestDb, seed: Seeded): Promise<string> {
   const [account] = await db
     .insert(googleOauthAccounts)
     .values({
-      userId,
+      tenantId: seed.tenantId,
+      userId: seed.userId,
       googleUserId: `g_${randomUUID()}`,
       email: "owner@example.com",
       encryptedRefreshToken: "ct",
@@ -107,11 +114,12 @@ async function seedGoogleAccountWithoutCalendars(db: TestDb, userId: string): Pr
   return account.id;
 }
 
-async function seedGoogleCalendar(db: TestDb, userId: string): Promise<string> {
+async function seedGoogleCalendar(db: TestDb, seed: Seeded): Promise<string> {
   const [account] = await db
     .insert(googleOauthAccounts)
     .values({
-      userId,
+      tenantId: seed.tenantId,
+      userId: seed.userId,
       googleUserId: `g_${randomUUID()}`,
       email: "owner@example.com",
       encryptedRefreshToken: "ct",
@@ -124,6 +132,7 @@ async function seedGoogleCalendar(db: TestDb, userId: string): Promise<string> {
     .returning();
   if (!account) throw new Error("seed: oauth insert failed");
   await db.insert(googleCalendars).values({
+    tenantId: seed.tenantId,
     oauthAccountId: account.id,
     googleCalendarId: "primary@example.com",
     summary: "Owner",
@@ -195,8 +204,9 @@ afterAll(async () => {
 beforeEach(async () => {
   sentEmails = [];
   await testDb.$client.exec(`
-    TRUNCATE TABLE bookings, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, common.users
+    TRUNCATE TABLE tenant.bookings, tenant.availability_excludes, tenant.availability_rules,
+    tenant.availability_links, tenant.google_calendars, tenant.google_oauth_accounts,
+    common.tenants, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
@@ -336,7 +346,7 @@ describe("POST /public/links/:slug/bookings", () => {
 
   test("with Google connected: creates the event and persists meetUrl", async () => {
     const seed = await seedPublishedLink(testDb);
-    await seedGoogleCalendar(testDb, seed.userId);
+    await seedGoogleCalendar(testDb, seed);
 
     let createEventCalled = 0;
     let receivedTitle: string | undefined;
@@ -564,7 +574,7 @@ describe("POST /public/links/:slug/bookings — ISH-136 edge cases", () => {
     // back. If we ever switch to rollback-on-failure this assertion will flip
     // and ISH-136's contract should be revisited.
     const seed = await seedPublishedLink(testDb);
-    await seedGoogleCalendar(testDb, seed.userId);
+    await seedGoogleCalendar(testDb, seed);
 
     let createEventCalled = 0;
     const google = buildTestGooglePort(db, {
@@ -599,7 +609,7 @@ describe("POST /public/links/:slug/bookings — ISH-136 edge cases", () => {
 
   test("Google account connected but zero calendars: createEvent is skipped, booking still confirms", async () => {
     const seed = await seedPublishedLink(testDb);
-    await seedGoogleAccountWithoutCalendars(testDb, seed.userId);
+    await seedGoogleAccountWithoutCalendars(testDb, seed);
 
     let createEventCalled = 0;
     let getAccessTokenCalled = 0;

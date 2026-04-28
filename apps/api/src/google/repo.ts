@@ -55,6 +55,7 @@ function toCalendarDomain(row: CalendarTableRow): Calendar {
  * how to persist the already-encrypted bytes.
  */
 export type StoreOauthAccountRawInput = {
+  tenantId: string;
   userId: string;
   googleUserId: string;
   email: string;
@@ -73,6 +74,7 @@ export async function upsertOauthAccountRaw(
   const [row] = await database
     .insert(googleOauthAccounts)
     .values({
+      tenantId: input.tenantId,
       userId: input.userId,
       googleUserId: input.googleUserId,
       email: input.email,
@@ -131,6 +133,7 @@ export async function deleteOauthAccount(
 export async function syncCalendars(
   database: Database,
   oauthAccountId: string,
+  tenantId: string,
   list: ReadonlyArray<CalendarListItem>,
 ): Promise<void> {
   if (list.length === 0) return;
@@ -138,6 +141,7 @@ export async function syncCalendars(
     .insert(googleCalendars)
     .values(
       list.map((c) => ({
+        tenantId,
         oauthAccountId,
         googleCalendarId: c.id,
         summary: c.summary,

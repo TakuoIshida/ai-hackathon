@@ -223,7 +223,7 @@ export async function findOpenInvitationForEmail(
     .from(invitations)
     .where(
       and(
-        eq(invitations.workspaceId, workspaceId),
+        eq(invitations.tenantId, workspaceId),
         eq(invitations.email, email),
         isNull(invitations.acceptedAt),
       ),
@@ -245,7 +245,7 @@ export async function findInvitationByToken(
 }
 
 export type CreateInvitationInput = {
-  workspaceId: string;
+  tenantId: string;
   email: string;
   invitedByUserId: string;
   expiresAt: Date;

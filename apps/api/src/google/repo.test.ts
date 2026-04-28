@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
-import { googleCalendars } from "@/db/schema/google";
+import { googleCalendars, tenants } from "@/db/schema";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
 import {
@@ -27,18 +27,27 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(`
-    TRUNCATE TABLE google_calendars, google_oauth_accounts, common.users
+    TRUNCATE TABLE tenant.google_calendars, tenant.google_oauth_accounts,
+    common.tenants, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
 
-async function seedAccount(): Promise<{ userId: string; accountId: string }> {
+async function seedTenant(): Promise<string> {
+  const [tenant] = await testDb.insert(tenants).values({ name: "Test Tenant" }).returning();
+  if (!tenant) throw new Error("seed: tenant insert failed");
+  return tenant.id;
+}
+
+async function seedAccount(): Promise<{ userId: string; accountId: string; tenantId: string }> {
+  const tenantId = await seedTenant();
   const u = await insertUser(db, {
     externalId: `c_${randomUUID()}`,
     email: "owner@example.com",
     name: null,
   });
   const account = await upsertOauthAccountRaw(db, {
+    tenantId,
     userId: u.id,
     googleUserId: `g_${randomUUID()}`,
     email: "owner@example.com",
@@ -49,17 +58,19 @@ async function seedAccount(): Promise<{ userId: string; accountId: string }> {
     accessTokenExpiresAt: new Date(Date.now() + 3600_000),
     scope: "calendar.events",
   });
-  return { userId: u.id, accountId: account.id };
+  return { userId: u.id, accountId: account.id, tenantId };
 }
 
 async function seedCalendar(
   accountId: string,
+  tenantId: string,
   googleCalendarId: string,
   flags: { isPrimary?: boolean; usedForBusy?: boolean; usedForWrites?: boolean } = {},
 ) {
   const [row] = await testDb
     .insert(googleCalendars)
     .values({
+      tenantId,
       oauthAccountId: accountId,
       googleCalendarId,
       summary: googleCalendarId,
@@ -75,8 +86,8 @@ async function seedCalendar(
 
 describe("google/repo: updateCalendarFlagsRow", () => {
   test("updates usedForBusy without touching usedForWrites", async () => {
-    const { accountId } = await seedAccount();
-    const cal = await seedCalendar(accountId, "primary@a.com", {
+    const { accountId, tenantId } = await seedAccount();
+    const cal = await seedCalendar(accountId, tenantId, "primary@a.com", {
       isPrimary: true,
       usedForBusy: true,
       usedForWrites: true,
@@ -89,9 +100,9 @@ describe("google/repo: updateCalendarFlagsRow", () => {
   });
 
   test("updates usedForWrites without touching siblings (single-row only)", async () => {
-    const { accountId } = await seedAccount();
-    const a = await seedCalendar(accountId, "a@x.com", { usedForWrites: true });
-    const b = await seedCalendar(accountId, "b@x.com", { usedForWrites: false });
+    const { accountId, tenantId } = await seedAccount();
+    const a = await seedCalendar(accountId, tenantId, "a@x.com", { usedForWrites: true });
+    const b = await seedCalendar(accountId, tenantId, "b@x.com", { usedForWrites: false });
 
     await updateCalendarFlagsRow(db, b.id, { usedForWrites: true });
     const aReloaded = await findCalendarById(db, a.id);
@@ -102,8 +113,8 @@ describe("google/repo: updateCalendarFlagsRow", () => {
   });
 
   test("update bumps updatedAt", async () => {
-    const { accountId } = await seedAccount();
-    const cal = await seedCalendar(accountId, "x@a.com");
+    const { accountId, tenantId } = await seedAccount();
+    const cal = await seedCalendar(accountId, tenantId, "x@a.com");
     const before = cal.updatedAt;
     await new Promise((r) => setTimeout(r, 5));
     await updateCalendarFlagsRow(db, cal.id, { usedForBusy: false });
@@ -117,10 +128,10 @@ describe("google/repo: updateCalendarFlagsRow", () => {
 
 describe("google/repo: clearWritesFlagOnSiblings", () => {
   test("clears usedForWrites on every calendar in the same account except the target", async () => {
-    const { accountId } = await seedAccount();
-    const a = await seedCalendar(accountId, "a@x.com", { usedForWrites: true });
-    const b = await seedCalendar(accountId, "b@x.com", { usedForWrites: true });
-    const c = await seedCalendar(accountId, "c@x.com", { usedForWrites: true });
+    const { accountId, tenantId } = await seedAccount();
+    const a = await seedCalendar(accountId, tenantId, "a@x.com", { usedForWrites: true });
+    const b = await seedCalendar(accountId, tenantId, "b@x.com", { usedForWrites: true });
+    const c = await seedCalendar(accountId, tenantId, "c@x.com", { usedForWrites: true });
 
     await clearWritesFlagOnSiblings(db, accountId, b.id);
 
@@ -133,12 +144,16 @@ describe("google/repo: clearWritesFlagOnSiblings", () => {
   });
 
   test("does not affect calendars on a different oauth account", async () => {
-    const { accountId: accountA } = await seedAccount();
-    const { accountId: accountB } = await seedAccount();
-    const calA = await seedCalendar(accountA, "x@a.com", { usedForWrites: true });
-    const calB = await seedCalendar(accountB, "x@b.com", { usedForWrites: true });
+    const accountA = await seedAccount();
+    const accountB = await seedAccount();
+    const calA = await seedCalendar(accountA.accountId, accountA.tenantId, "x@a.com", {
+      usedForWrites: true,
+    });
+    const calB = await seedCalendar(accountB.accountId, accountB.tenantId, "x@b.com", {
+      usedForWrites: true,
+    });
 
-    await clearWritesFlagOnSiblings(db, accountA, calA.id);
+    await clearWritesFlagOnSiblings(db, accountA.accountId, calA.id);
     const reloadedB = await findCalendarById(db, calB.id);
     expect(reloadedB?.usedForWrites).toBe(true);
   });
@@ -150,9 +165,9 @@ describe("google/repo: queries", () => {
   });
 
   test("listUserCalendars returns rows for the given account only", async () => {
-    const { accountId } = await seedAccount();
-    await seedCalendar(accountId, "x@a.com");
-    await seedCalendar(accountId, "y@a.com");
+    const { accountId, tenantId } = await seedAccount();
+    await seedCalendar(accountId, tenantId, "x@a.com");
+    await seedCalendar(accountId, tenantId, "y@a.com");
     const list = await listUserCalendars(db, accountId);
     expect(list.length).toBe(2);
   });

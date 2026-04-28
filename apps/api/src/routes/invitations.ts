@@ -27,7 +27,7 @@ export function createInvitationsRoute() {
     const token = c.req.param("token");
     const invitation = await findInvitationByToken(db, token);
     if (!invitation) return c.json({ error: "not_found" }, 404);
-    const workspace = await findWorkspaceById(db, invitation.workspaceId);
+    const workspace = await findWorkspaceById(db, invitation.tenantId);
     if (!workspace) return c.json({ error: "not_found" }, 404);
     const expired = invitation.acceptedAt !== null || invitation.expiresAt.getTime() < Date.now();
     return c.json({

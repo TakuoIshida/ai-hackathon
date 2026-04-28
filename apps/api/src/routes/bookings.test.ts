@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { Hono, type MiddlewareHandler } from "hono";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
-import { availabilityLinks, bookings, users } from "@/db/schema";
+import { availabilityLinks, bookings, tenants, users } from "@/db/schema";
 import type { AuthVars } from "@/middleware/auth";
 import { createBookingNotifier } from "@/notifications/booking-notifier";
 import type { GooglePort, NotificationPort } from "@/ports";
@@ -82,7 +82,13 @@ function buildApp(extra: Partial<BookingsRouteDeps> = {}): Hono {
 }
 
 type SeededUser = { userId: string; externalId: string };
-type SeededLink = { linkId: string; slug: string; userId: string };
+type SeededLink = { linkId: string; slug: string; userId: string; tenantId: string };
+
+async function seedTenant(): Promise<string> {
+  const [tenant] = await testDb.insert(tenants).values({ name: "Test Tenant" }).returning();
+  if (!tenant) throw new Error("seed tenant failed");
+  return tenant.id;
+}
 
 async function seedUser(label: string): Promise<SeededUser> {
   const externalId = `clerk_${label}_${randomUUID()}`;
@@ -94,10 +100,16 @@ async function seedUser(label: string): Promise<SeededUser> {
   return { userId: row.id, externalId };
 }
 
-async function seedLink(userId: string, slug: string, title = "30 min meet"): Promise<SeededLink> {
+async function seedLink(
+  tenantId: string,
+  userId: string,
+  slug: string,
+  title = "30 min meet",
+): Promise<SeededLink> {
   const [link] = await testDb
     .insert(availabilityLinks)
     .values({
+      tenantId,
       userId,
       slug,
       title,
@@ -107,10 +119,11 @@ async function seedLink(userId: string, slug: string, title = "30 min meet"): Pr
     })
     .returning();
   if (!link) throw new Error("seed link failed");
-  return { linkId: link.id, slug: link.slug, userId };
+  return { linkId: link.id, slug: link.slug, userId, tenantId };
 }
 
 async function seedConfirmedBooking(
+  tenantId: string,
   linkId: string,
   overrides: { startAt?: Date; guestEmail?: string; googleEventId?: string | null } = {},
 ): Promise<string> {
@@ -119,6 +132,7 @@ async function seedConfirmedBooking(
   const [row] = await testDb
     .insert(bookings)
     .values({
+      tenantId,
       linkId,
       startAt,
       endAt,
@@ -145,8 +159,9 @@ afterAll(async () => {
 beforeEach(async () => {
   sentEmails = [];
   await testDb.$client.exec(`
-    TRUNCATE TABLE bookings, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, common.users
+    TRUNCATE TABLE tenant.bookings, tenant.availability_excludes, tenant.availability_rules,
+    tenant.availability_links, tenant.google_calendars, tenant.google_oauth_accounts,
+    common.tenants, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
@@ -159,12 +174,13 @@ describe("GET /bookings (owner list)", () => {
   });
 
   test("200 returns only the authed user's bookings", async () => {
+    const tenantId = await seedTenant();
     const owner = await seedUser("owner");
-    const link = await seedLink(owner.userId, "owner-link");
-    await seedConfirmedBooking(link.linkId, {
+    const link = await seedLink(tenantId, owner.userId, "owner-link");
+    await seedConfirmedBooking(tenantId, link.linkId, {
       startAt: new Date("2026-12-14T05:00:00.000Z"),
     });
-    await seedConfirmedBooking(link.linkId, {
+    await seedConfirmedBooking(tenantId, link.linkId, {
       startAt: new Date("2026-12-15T05:00:00.000Z"),
       guestEmail: "second@example.com",
     });
@@ -187,12 +203,13 @@ describe("GET /bookings (owner list)", () => {
   });
 
   test("tenant isolation: bookings under another user's link are not returned", async () => {
+    const tenantId = await seedTenant();
     const me = await seedUser("me");
     const other = await seedUser("other");
-    const myLink = await seedLink(me.userId, "my-link");
-    const otherLink = await seedLink(other.userId, "other-link");
-    await seedConfirmedBooking(myLink.linkId, { guestEmail: "mine@example.com" });
-    await seedConfirmedBooking(otherLink.linkId, { guestEmail: "theirs@example.com" });
+    const myLink = await seedLink(tenantId, me.userId, "my-link");
+    const otherLink = await seedLink(tenantId, other.userId, "other-link");
+    await seedConfirmedBooking(tenantId, myLink.linkId, { guestEmail: "mine@example.com" });
+    await seedConfirmedBooking(tenantId, otherLink.linkId, { guestEmail: "theirs@example.com" });
 
     const app = buildApp();
     const res = await app.request("/bookings", {
@@ -227,9 +244,10 @@ describe("DELETE /bookings/:id (owner cancel)", () => {
   });
 
   test("200 cancels the authed user's own booking and fires both emails", async () => {
+    const tenantId = await seedTenant();
     const owner = await seedUser("owner");
-    const link = await seedLink(owner.userId, "owner-link");
-    const bookingId = await seedConfirmedBooking(link.linkId);
+    const link = await seedLink(tenantId, owner.userId, "owner-link");
+    const bookingId = await seedConfirmedBooking(tenantId, link.linkId);
 
     const app = buildApp();
     const res = await app.request(`/bookings/${bookingId}`, {
@@ -254,10 +272,11 @@ describe("DELETE /bookings/:id (owner cancel)", () => {
     // but is owned by someone else. This is intentional: revealing 403 would
     // leak the existence of foreign booking IDs. Locking this down so any
     // future refactor that drops the ownership guard fails loudly.
+    const tenantId = await seedTenant();
     const me = await seedUser("me");
     const other = await seedUser("other");
-    const otherLink = await seedLink(other.userId, "other-link");
-    const otherBookingId = await seedConfirmedBooking(otherLink.linkId, {
+    const otherLink = await seedLink(tenantId, other.userId, "other-link");
+    const otherBookingId = await seedConfirmedBooking(tenantId, otherLink.linkId, {
       guestEmail: "victim@example.com",
     });
 
@@ -279,8 +298,9 @@ describe("DELETE /bookings/:id (owner cancel)", () => {
   });
 
   test("404 when the booking id does not exist", async () => {
+    const tenantId = await seedTenant();
     const owner = await seedUser("owner");
-    await seedLink(owner.userId, "owner-link");
+    await seedLink(tenantId, owner.userId, "owner-link");
 
     const app = buildApp();
     const res = await app.request(`/bookings/${randomUUID()}`, {
@@ -291,9 +311,10 @@ describe("DELETE /bookings/:id (owner cancel)", () => {
   });
 
   test("idempotent: cancelling the same booking twice returns alreadyCanceled and skips emails", async () => {
+    const tenantId = await seedTenant();
     const owner = await seedUser("owner");
-    const link = await seedLink(owner.userId, "owner-link");
-    const bookingId = await seedConfirmedBooking(link.linkId);
+    const link = await seedLink(tenantId, owner.userId, "owner-link");
+    const bookingId = await seedConfirmedBooking(tenantId, link.linkId);
 
     const app = buildApp();
     const first = await app.request(`/bookings/${bookingId}`, {
@@ -319,9 +340,10 @@ describe("DELETE /bookings/:id (owner cancel)", () => {
     // Seed an owner with a Google OAuth account + write-enabled calendar so
     // the cancel side-effect path actually attempts the delete and we can
     // observe the throw being swallowed.
+    const tenantId = await seedTenant();
     const owner = await seedUser("owner");
-    const link = await seedLink(owner.userId, "owner-link");
-    const bookingId = await seedConfirmedBooking(link.linkId, { googleEventId: "evt-1" });
+    const link = await seedLink(tenantId, owner.userId, "owner-link");
+    const bookingId = await seedConfirmedBooking(tenantId, link.linkId, { googleEventId: "evt-1" });
 
     // Insert a fake OAuth account + calendar so `cancelBookingByOwner` reaches
     // the deleteEvent code path (it short-circuits without calendars).
@@ -329,6 +351,7 @@ describe("DELETE /bookings/:id (owner cancel)", () => {
     const [acct] = await testDb
       .insert(googleOauthAccounts)
       .values({
+        tenantId,
         userId: owner.userId,
         googleUserId: `g_${randomUUID()}`,
         email: "owner@example.com",
@@ -342,6 +365,7 @@ describe("DELETE /bookings/:id (owner cancel)", () => {
       .returning();
     if (!acct) throw new Error("seed oauth failed");
     await testDb.insert(googleCalendars).values({
+      tenantId,
       oauthAccountId: acct.id,
       googleCalendarId: "primary@example.com",
       summary: "Owner",

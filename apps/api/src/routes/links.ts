@@ -21,6 +21,7 @@ import {
   updateLinkForUser,
 } from "@/links/usecase";
 import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
+import { findTenantIdByUserId } from "@/users/repo";
 
 export const linksRoute = new Hono<{ Variables: AuthVars }>();
 
@@ -43,9 +44,13 @@ linksRoute.get("/", async (c) => {
 });
 
 linksRoute.post("/", zValidator("json", linkInputSchema), async (c) => {
+  const dbUser = getDbUser(c);
+  const tenantId = await findTenantIdByUserId(db, dbUser.id);
+  if (!tenantId) return c.json({ error: "tenant_not_found" }, 403);
   const result = await createLinkForUser(
     db,
-    getDbUser(c).id,
+    dbUser.id,
+    tenantId,
     toCreateLinkCommand(c.req.valid("json")),
   );
   if (result.kind === "slug_taken") {

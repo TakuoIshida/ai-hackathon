@@ -6,3 +6,6 @@ export const ulidPk = () =>
   text("id")
     .primaryKey()
     .$defaultFn(() => ulid());
+
+/** tenant_id 用: text NOT NULL (アプリ側で値を渡す。INDEX は別途定義必須) */
+export const tenantId = () => text("tenant_id").notNull();
