@@ -6,10 +6,24 @@
 
 -- ---------------------------------------------------------------------------
 -- 1. Role creation (idempotent)
+--
+-- !!!! SECURITY WARNING (ISH-197) !!!!
+-- The PASSWORD literals below are **DEV-ONLY** placeholders. They land in
+-- the local docker-compose Postgres and CI service container so contributors
+-- can connect without extra setup, but they MUST be rotated before any
+-- shared / staging / production database receives this migration.
+--
+-- Production runbook (ISH-185 / R-2):
+--   1. Run migrations as superuser (drizzle-kit migrate).
+--   2. Immediately apply `docs/operations/rotate-rls-passwords.sql`
+--      with strong, env-sourced passwords (see file header).
+--   3. Update the Cloud SQL Auth Proxy / Render env so `DATABASE_URL` (app
+--      role) and the migrator URL (admin role) point at the new credentials.
 -- ---------------------------------------------------------------------------
 
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'admin') THEN
+    -- DEV-ONLY password — see ISH-197 warning above. Rotate in prod.
     CREATE ROLE admin WITH LOGIN PASSWORD 'admin' BYPASSRLS;
   END IF;
 END $$;
@@ -17,6 +31,7 @@ END $$;
 
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app') THEN
+    -- DEV-ONLY password — see ISH-197 warning above. Rotate in prod.
     CREATE ROLE app WITH LOGIN PASSWORD 'app';
   END IF;
 END $$;

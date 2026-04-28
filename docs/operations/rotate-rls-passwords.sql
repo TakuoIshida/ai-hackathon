@@ -1,0 +1,47 @@
+-- ISH-197: production password rotation for the admin / app roles created by
+-- migration 0003_rls.sql.
+--
+-- The migration ships dev-only placeholder passwords ('admin' / 'app') so
+-- local docker-compose and CI work out of the box. In any shared environment
+-- you MUST replace them immediately after applying the migration. This file
+-- documents the canonical rotation snippet — copy it into your psql session
+-- with real passwords substituted.
+--
+-- USAGE
+-- -----
+-- 1. Generate strong random passwords, e.g.
+--      openssl rand -base64 32 | tr -d '/+='
+--    Store them in your secrets manager (GCP Secret Manager / AWS SSM /
+--    Vault — never commit them to git).
+--
+-- 2. Connect to the target Postgres as a superuser (the migration user):
+--      psql "$ADMIN_MIGRATION_URL"   # e.g. cloud-sql-auth-proxy + postgres user
+--
+-- 3. Run the two ALTER ROLE statements below with your generated passwords.
+--    Both passwords MUST be quoted with double-dollar tags or single quotes
+--    that are correctly escaped — psql variables (:'admin_pw') are safer
+--    than copy-pasting because they avoid SQL-injection footguns.
+--
+--      \set admin_pw `cat /path/to/admin.pw`
+--      \set app_pw   `cat /path/to/app.pw`
+--      ALTER ROLE admin WITH PASSWORD :'admin_pw';
+--      ALTER ROLE app   WITH PASSWORD :'app_pw';
+--
+-- 4. Update the deployed env so the API's DATABASE_URL (= app role) and the
+--    migration runner's URL (= admin role) point at the new credentials.
+--    Render: dashboard env vars. GCP: Secret Manager → Cloud Run revision.
+--
+-- 5. Verify (optional but recommended):
+--      psql "postgresql://app:$NEW_APP_PW@host/db" -c "SELECT 1"
+--      psql "postgresql://admin:$NEW_ADMIN_PW@host/db" -c "SELECT 1"
+--
+-- ROTATION CADENCE
+-- ----------------
+-- Re-run this snippet whenever a leak is suspected, when an SRE who knew the
+-- previous password leaves, or on a regular rotation schedule (recommended:
+-- every 90 days). Coordinate with deploys so DATABASE_URL is updated in the
+-- same window the new password becomes active.
+
+\echo 'This file is documentation. Copy the ALTER ROLE statements into your'
+\echo 'session with real passwords — do NOT execute this file as-is.'
+\quit
