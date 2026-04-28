@@ -168,6 +168,13 @@ export const attachTenantContext: MiddlewareHandler<{ Variables: AuthVars }> = a
 
   // Resolve tenant membership using the baseline db (outside of scope — this
   // query hits common.tenant_members which has no RLS).
+  //
+  // TOCTOU note: there is a small window between this lookup and the
+  // SET LOCAL below in which the user could be removed from the tenant.
+  // RLS still scopes the request to the (now-stale) tenant they had at
+  // request entry — never to a tenant they were not a member of — so this
+  // is not a security issue. If real-time membership revocation is ever
+  // required, re-check inside the transaction before set_config.
   const [member] = await db
     .select({ tenantId: tenantMembers.tenantId })
     .from(tenantMembers)
