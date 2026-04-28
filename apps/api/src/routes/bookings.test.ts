@@ -55,13 +55,12 @@ function fakeAuthMiddlewares(): MiddlewareHandler[] {
     // so `ensureUserByClerkId` — typed against the production postgres-js
     // drizzle instance — sees the test database.
     const dbUser = await ensureUserByClerkId(db, clerkId, {
-      // Avoid hitting the real Clerk API: synthesize a payload from the header.
-      fetchUser: async (id) => ({
-        id,
-        email_addresses: [{ id: "e1", email_address: `${id}@example.com` }],
-        primary_email_address_id: "e1",
-        first_name: null,
-        last_name: null,
+      // Avoid hitting the real Clerk API: synthesize a profile from the header.
+      getUserByExternalId: async (id) => ({
+        externalId: id,
+        email: `${id}@example.com`,
+        firstName: null,
+        lastName: null,
       }),
     });
     c.set("dbUser", dbUser);

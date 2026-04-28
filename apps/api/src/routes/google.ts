@@ -16,7 +16,7 @@ import {
   type OauthSinks,
   updateCalendarFlagsForUser,
 } from "@/google/usecase";
-import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
+import { type AuthVars, attachDbUser, getDbUser, requireAuth } from "@/middleware/auth";
 import { findTenantIdByUserId } from "@/users/repo";
 
 /**
@@ -51,7 +51,6 @@ const oauthSinks: OauthSinks = {
 
 export const googleRoute = new Hono<{ Variables: AuthVars }>();
 
-googleRoute.use("*", clerkAuth());
 googleRoute.use("*", requireAuth);
 googleRoute.use("*", attachDbUser);
 

@@ -3,6 +3,7 @@ import { getValidAccessToken } from "@/google/access-token";
 import { createEvent, deleteEvent, queryFreeBusy } from "@/google/calendar";
 import type { GoogleConfig } from "@/google/config";
 import { getOauthAccountByUser, listUserCalendars } from "@/google/repo";
+import { buildClerkIdentityProvider } from "@/identity/clerk-identity-provider";
 import { findLinkById, listLinkCoOwnerUserIds } from "@/links/repo";
 import { computePublicSlots } from "@/links/usecase";
 import type {
@@ -85,18 +86,10 @@ export function buildUserLookupPort(database: Database): UserLookupPort {
 }
 
 /**
- * Build the production `IdentityProviderPort`.
- *
- * Skeleton only — the Clerk implementation is injected in D-5b (ISH-173).
- * See docs/design/auth-vendor-abstraction.md for the full interface design.
- *
- * Note on existing ClerkPort (apps/api/src/users/clerk-port.ts):
- *   `ClerkPort` is narrowly scoped to "fetch profile for DB user upsert".
- *   `IdentityProviderPort.getUserByExternalId` covers that use-case via the
- *   `IdentityProfile` abstraction type. D-5b will absorb `clerk-port.ts` into
- *   `identity/clerk-identity-provider.ts` and update `users/usecase.ts` to
- *   accept `IdentityProfile` instead of the `ClerkPort` shape.
+ * Build the production IdentityProviderPort backed by Clerk.
+ * Swap this function's return value to switch identity providers without
+ * touching any other app code.
  */
 export function buildIdentityProvider(): IdentityProviderPort {
-  throw new Error("IdentityProvider not yet wired — implemented in D-5b (ISH-173)");
+  return buildClerkIdentityProvider();
 }

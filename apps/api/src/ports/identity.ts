@@ -1,11 +1,21 @@
 import type { Context, MiddlewareHandler } from "hono";
 
+/**
+ * Vendor-agnostic identity claims extracted from a verified session.
+ * Intentionally minimal: only the 3 fields needed for identity resolution.
+ * Clerk-specific concepts (Organizations, Metadata, sessionId) are NOT exposed.
+ */
 export type IdentityClaims = {
-  externalId: string; // Clerk: userId (sub) / Auth0: sub
+  /** Clerk: userId (sub) / Auth0: sub */
+  externalId: string;
   email: string;
   emailVerified: boolean;
 };
 
+/**
+ * Vendor-agnostic user profile fetched from the identity provider.
+ * Used for lazy DB-user creation when the user first signs in.
+ */
 export type IdentityProfile = {
   externalId: string;
   email: string;
@@ -13,11 +23,33 @@ export type IdentityProfile = {
   lastName: string | null;
 };
 
+/**
+ * Port interface for identity providers (Clerk, Auth0, etc.).
+ * Replacing the vendor implementation only requires swapping the file that
+ * implements this interface — app code (routes, usecases, middleware) is
+ * unaffected.
+ */
 export type IdentityProviderPort = {
-  /** ベンダー固有の認証 middleware を hono app に attach する */
+  /** Returns the vendor-specific hono MiddlewareHandler to attach to the app. */
   middleware: () => MiddlewareHandler;
-  /** middleware 通過後の context から claims を取り出す。未認証は null */
+  /**
+   * Extracts identity claims from the hono context after the middleware has run.
+   * Returns null when the request is unauthenticated.
+   */
   getClaims: (c: Context) => IdentityClaims | null;
-  /** externalId からプロフィールを取得する。存在しない場合は null */
+  /**
+   * Fetches the full user profile from the identity provider by externalId.
+   * Returns null when the user does not exist in the provider.
+   */
   getUserByExternalId: (externalId: string) => Promise<IdentityProfile | null>;
 };
+
+// Augment Hono's ContextVariableMap so `c.set("identityClaims", ...)` and
+// `c.get("identityClaims")` are fully typed everywhere in the app.
+// This is the only place the augmentation should live — all identity-aware
+// middleware reads from this key.
+declare module "hono" {
+  interface ContextVariableMap {
+    identityClaims: IdentityClaims;
+  }
+}

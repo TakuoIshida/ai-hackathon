@@ -20,12 +20,11 @@ import {
   setCoOwnersForLink,
   updateLinkForUser,
 } from "@/links/usecase";
-import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
+import { type AuthVars, attachDbUser, getDbUser, requireAuth } from "@/middleware/auth";
 import { findTenantIdByUserId } from "@/users/repo";
 
 export const linksRoute = new Hono<{ Variables: AuthVars }>();
 
-linksRoute.use("*", clerkAuth());
 linksRoute.use("*", requireAuth);
 linksRoute.use("*", attachDbUser);
 

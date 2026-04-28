@@ -1,18 +1,18 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { db } from "@/db/client";
-import { clerkAuth, getClerkUserId, requireAuth } from "@/middleware/auth";
+import { getClerkUserId, requireAuth } from "@/middleware/auth";
 import { getCurrentUserByClerkId } from "@/users/usecase";
 
 export type MeRouteDeps = {
   // Test escape hatch: integration tests can supply a fake auth middleware stack
-  // to populate `clerkAuth` without going through real Clerk. Production keeps
-  // the real `clerkAuth() + requireAuth` stack.
+  // to populate `identityClaims` without going through real Clerk. Production
+  // relies on `attachAuth` (called in app.ts) + `requireAuth` per-route.
   authMiddlewares?: MiddlewareHandler[];
 };
 
 export function createMeRoute(deps: MeRouteDeps = {}): Hono {
   const route = new Hono();
-  const middlewares = deps.authMiddlewares ?? [clerkAuth(), requireAuth];
+  const middlewares = deps.authMiddlewares ?? [requireAuth];
   for (const mw of middlewares) {
     route.use("*", mw);
   }

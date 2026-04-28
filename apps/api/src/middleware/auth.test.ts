@@ -10,6 +10,7 @@ import {
   getDbUser,
   requireAuth,
 } from "@/middleware/auth";
+import type { IdentityClaims } from "@/ports/identity";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 
 // Set Clerk env so any module that lazy-reads it during import does not crash.
@@ -38,26 +39,26 @@ beforeEach(async () => {
 });
 
 /**
- * Mints a fake Clerk session by setting the `clerkAuth` context variable that
- * `getAuth` from `@hono/clerk-auth` reads. Mirrors what `clerkMiddleware` does
- * after a successful JWT verification.
- *
- * The real `ClerkAuth` type is a large union of session-claim shapes; only
- * `userId` is read by our code (`requireAuth` / `getClerkUserId`), so we cast
- * to `never` to satisfy Hono's strictly-typed `c.set`.
+ * Mints a fake identity session by setting the `identityClaims` context
+ * variable that `requireAuth` / `getClerkUserId` / `attachDbUser` read.
+ * Mirrors what `attachAuth` does after running the vendor middleware and
+ * resolving claims via `idp.getClaims(c)`.
  */
-function fakeClerkSession(userId: string | null): MiddlewareHandler {
+function fakeIdentitySession(userId: string | null, email = "test@example.com"): MiddlewareHandler {
   return async (c, next) => {
-    const value = userId ? { userId } : { userId: null };
-    c.set("clerkAuth", value as never);
+    if (userId) {
+      const claims: IdentityClaims = { externalId: userId, email, emailVerified: true };
+      c.set("identityClaims", claims as never);
+    }
+    // When userId is null we don't set identityClaims — mirrors an unauthenticated request.
     await next();
   };
 }
 
 describe("requireAuth", () => {
-  test("calls next() when Clerk session has a userId", async () => {
+  test("calls next() when identity claims are present", async () => {
     const app = new Hono();
-    app.use("*", fakeClerkSession("user_abc"));
+    app.use("*", fakeIdentitySession("user_abc"));
     app.use("*", requireAuth);
     let nextCalled = false;
     app.get("/probe", (c) => {
@@ -71,9 +72,9 @@ describe("requireAuth", () => {
     expect(nextCalled).toBe(true);
   });
 
-  test("returns 401 when Clerk session has no userId", async () => {
+  test("returns 401 when identity claims are absent (null userId)", async () => {
     const app = new Hono();
-    app.use("*", fakeClerkSession(null));
+    app.use("*", fakeIdentitySession(null));
     app.use("*", requireAuth);
     let nextCalled = false;
     app.get("/probe", (c) => {
@@ -86,7 +87,7 @@ describe("requireAuth", () => {
     expect(nextCalled).toBe(false);
   });
 
-  test("returns 401 when no Clerk middleware ran (no clerkAuth var set)", async () => {
+  test("returns 401 when no identity middleware ran (no identityClaims var set)", async () => {
     const app = new Hono();
     app.use("*", requireAuth);
     app.get("/probe", (c) => c.json({ ok: true }));
@@ -97,11 +98,9 @@ describe("requireAuth", () => {
 });
 
 describe("getClerkUserId", () => {
-  test("returns the userId when set", async () => {
+  test("returns the externalId when identity claims are set", async () => {
     const app = new Hono();
-    app.use("*", fakeClerkSession("user_xyz"));
-    // Wrap in object so TS doesn't narrow to `null` (handler mutation is opaque
-    // to control-flow analysis).
+    app.use("*", fakeIdentitySession("user_xyz"));
     const captured: { value: string | null } = { value: null };
     app.get("/probe", (c) => {
       captured.value = getClerkUserId(c);
@@ -113,9 +112,9 @@ describe("getClerkUserId", () => {
     expect(captured.value).toBe("user_xyz");
   });
 
-  test("throws 401 HTTPException when no userId", async () => {
+  test("throws 401 HTTPException when no claims are present", async () => {
     const app = new Hono();
-    // No fakeClerkSession — getClerkUserId should throw
+    // No fakeIdentitySession — getClerkUserId should throw
     app.get("/probe", (c) => {
       const id = getClerkUserId(c);
       return c.json({ id });
@@ -137,7 +136,7 @@ describe("attachDbUser", () => {
     if (!seeded) throw new Error("seed failed");
 
     const app = new Hono<{ Variables: AuthVars }>();
-    app.use("*", fakeClerkSession(externalId));
+    app.use("*", fakeIdentitySession(externalId, "existing@example.com"));
     app.use("*", requireAuth);
     app.use("*", attachDbUser);
     app.get("/probe", (c) => {
@@ -159,20 +158,19 @@ describe("attachDbUser", () => {
     expect(body.name).toBe("Existing");
   });
 
-  test("auto-creates the user via Clerk fetch when not in DB (current behavior pin)", async () => {
-    // attachDbUser → ensureUserByClerkId → if missing, calls fetchClerkUser.
-    // Here we have no fake Clerk fetch injected and no real Clerk available,
-    // so the lazy fetch will fail. We assert: (a) there was no row before,
-    // (b) the request errors out (NOT silently logs in as an empty user),
-    // (c) no row was created (ensureUserByClerkId only inserts after a
-    // successful Clerk payload).
+  test("auto-creates the user via identity provider fetch when not in DB (current behavior pin)", async () => {
+    // attachDbUser → ensureUserByClerkId → if missing, calls getUserByExternalId.
+    // Here we have no real Clerk available, so the lazy fetch will fail.
+    // We assert: (a) there was no row before, (b) the request errors out (NOT
+    // silently logs in as an empty user), (c) no row was created
+    // (ensureUserByClerkId only inserts after a successful identity payload).
     const externalId = `clerk_missing_${randomUUID()}`;
 
     const before = await testDb.select().from(users);
     expect(before.find((u) => u.externalId === externalId)).toBeUndefined();
 
     const app = new Hono<{ Variables: AuthVars }>();
-    app.use("*", fakeClerkSession(externalId));
+    app.use("*", fakeIdentitySession(externalId));
     app.use("*", requireAuth);
     app.use("*", attachDbUser);
     app.get("/probe", (c) => c.json({ id: getDbUser(c).id }));
@@ -184,26 +182,25 @@ describe("attachDbUser", () => {
     const res = await app.request("/probe");
     // We don't pin the exact status — only that it does NOT silently 200.
     // What we DO pin: no user row was created with this externalId, since
-    // ensureUserByClerkId only inserts after a successful Clerk payload.
+    // ensureUserByClerkId only inserts after a successful identity payload.
     expect(res.status).not.toBe(200);
 
     const after = await testDb.select().from(users);
     expect(after.find((u) => u.externalId === externalId)).toBeUndefined();
   });
 
-  test("auto-creates the user when fetchClerkUser is provided (happy lazy-create path)", async () => {
+  test("auto-creates the user when getUserByExternalId is provided (happy lazy-create path)", async () => {
     // Direct unit-call into ensureUserByClerkId to pin the behavior
-    // attachDbUser inherits: lazy-create from a Clerk payload.
+    // attachDbUser inherits: lazy-create from an identity profile.
     const { ensureUserByClerkId } = await import("@/users/usecase");
     const clerkId = `clerk_lazy_${randomUUID()}`;
 
     const created = await ensureUserByClerkId(testDb as never, clerkId, {
-      fetchUser: async (id) => ({
-        id,
-        email_addresses: [{ id: "e1", email_address: `${id}@example.com` }],
-        primary_email_address_id: "e1",
-        first_name: "Lazy",
-        last_name: "User",
+      getUserByExternalId: async (id) => ({
+        externalId: id,
+        email: `${id}@example.com`,
+        firstName: "Lazy",
+        lastName: "User",
       }),
     });
     expect(created.externalId).toBe(clerkId);
@@ -221,7 +218,7 @@ describe("getDbUser", () => {
     await testDb.insert(users).values({ externalId, email: "helper@example.com", name: "Helper" });
 
     const app = new Hono<{ Variables: AuthVars }>();
-    app.use("*", fakeClerkSession(externalId));
+    app.use("*", fakeIdentitySession(externalId, "helper@example.com"));
     app.use("*", requireAuth);
     app.use("*", attachDbUser);
     app.get("/probe", (c) => {
