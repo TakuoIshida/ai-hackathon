@@ -4,6 +4,7 @@ import { HTTPException } from "hono/http-exception";
 import { db } from "@/db/client";
 import { requestScope } from "@/db/request-scope";
 import { tenantMembers } from "@/db/schema";
+import type { TenantMemberRole } from "@/db/schema/common";
 import { buildClerkIdentityProvider } from "@/identity/clerk-identity-provider";
 import type { IdentityClaims, IdentityProviderPort } from "@/ports/identity";
 import type { User } from "@/users/domain";
@@ -21,10 +22,14 @@ import { ensureUserByClerkId } from "@/users/usecase";
  * Routes that mount `attachTenantContext` can read `c.get("tenantId")`.
  */
 /**
- * tenant_members.role — kept in sync with the CHECK constraint in
- * common.ts (`role IN ('owner', 'member')`).
+ * tenant_members.role.
+ *
+ * Single source of truth lives in `db/schema/common.ts::TENANT_MEMBER_ROLES`
+ * (ISH-199) — the SQL CHECK constraint and this union are derived from the
+ * same const there. Re-exported here under the shorter `TenantRole` alias
+ * because route / middleware code reads it via the auth module.
  */
-export type TenantRole = "owner" | "member";
+export type TenantRole = TenantMemberRole;
 
 export type AuthVars = {
   dbUser: User;

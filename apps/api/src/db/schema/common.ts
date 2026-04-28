@@ -48,6 +48,22 @@ export type NewTenant = typeof tenants.$inferInsert;
 // UNIQUE(user_id) enforces 1 user = 1 tenant at the DB level.
 // role is text + CHECK (Option B per design doc §3).
 // ---------------------------------------------------------------------------
+
+/**
+ * Allowed values for `tenant_members.role` (ISH-199).
+ *
+ * SINGLE source of truth — the SQL CHECK constraint and the TS union type
+ * below are both derived from this const, so adding a new role (e.g. 'admin')
+ * automatically propagates to both. `as const` is required so the union type
+ * is the literal strings, not `string`.
+ */
+export const TENANT_MEMBER_ROLES = ["owner", "member"] as const;
+export type TenantMemberRole = (typeof TENANT_MEMBER_ROLES)[number];
+
+// SQL fragment for the CHECK constraint: `'owner', 'member'` (raw because we
+// want literal SQL, not parameter placeholders).
+const TENANT_MEMBER_ROLES_SQL = sql.raw(TENANT_MEMBER_ROLES.map((r) => `'${r}'`).join(", "));
+
 export const tenantMembers = commonSchema.table(
   "tenant_members",
   {
@@ -67,11 +83,10 @@ export const tenantMembers = commonSchema.table(
   (t) => [
     // Search index for tenant_id lookups (not RLS, but needed for queries).
     index("idx_tenant_members_tenant").on(t.tenantId),
-    // CHECK constraint: role must be 'owner' or 'member' (Option B).
-    check("tenant_members_role_check", sql`${t.role} IN ('owner', 'member')`),
+    // CHECK constraint: role must be one of TENANT_MEMBER_ROLES.
+    check("tenant_members_role_check", sql`${t.role} IN (${TENANT_MEMBER_ROLES_SQL})`),
   ],
 );
 
 export type TenantMember = typeof tenantMembers.$inferSelect;
 export type NewTenantMember = typeof tenantMembers.$inferInsert;
-export type TenantMemberRole = "owner" | "member";
