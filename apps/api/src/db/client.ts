@@ -1,6 +1,7 @@
 import type { BatchItem } from "drizzle-orm/batch";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { getRequestScope } from "./request-scope";
 import * as schema from "./schema";
 
 /**
@@ -69,9 +70,28 @@ export function clearDbForTests(): void {
 
 // Bind methods to the underlying drizzle instance so any internal `this` access
 // (e.g. drizzle reaching its own session/dialect) works through the proxy.
+//
+// When `attachTenantContext` middleware is active, the proxy transparently
+// routes all DB operations through the request-scoped transaction so every
+// query inside a request automatically participates in the transaction that
+// has `app.tenant_id` set via SET LOCAL.  Outside of a request scope (during
+// migrations, seed scripts, or tests that bypass the middleware) the proxy
+// falls back to the baseline connection pool.
+//
+// IMPORTANT: nested transaction semantics.
+// Calling `db.transaction(...)` while already inside a request scope will be
+// handled by the *transaction-bound* client (not the baseline pool), which
+// drizzle-postgres-js implements as a SAVEPOINT — NOT a fresh top-level
+// transaction. This means rollback inside the inner block reverts only that
+// SAVEPOINT, and the outer request transaction continues. If you ever need a
+// genuinely independent top-level tx (e.g. for an outbox-style write that
+// must commit even if the request later rolls back), grab the baseline
+// connection directly via `getDb()` rather than going through this proxy.
 export const db = new Proxy({} as Db, {
   get(_target, prop) {
-    const target = getDb();
+    // Prefer the transaction-bound client when inside a request scope.
+    const scope = getRequestScope();
+    const target = scope ? (scope.tx as unknown as Db) : getDb();
     const value = Reflect.get(target, prop);
     return typeof value === "function" ? value.bind(target) : value;
   },

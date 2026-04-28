@@ -16,8 +16,14 @@ import {
   type OauthSinks,
   updateCalendarFlagsForUser,
 } from "@/google/usecase";
-import { type AuthVars, attachDbUser, getDbUser, requireAuth } from "@/middleware/auth";
-import { findTenantIdByUserId } from "@/users/repo";
+import {
+  type AuthVars,
+  attachDbUser,
+  attachTenantContext,
+  getDbUser,
+  getTenantId,
+  requireAuth,
+} from "@/middleware/auth";
 
 /**
  * Resolve Google OAuth config or fail fast with a 500.
@@ -53,6 +59,7 @@ export const googleRoute = new Hono<{ Variables: AuthVars }>();
 
 googleRoute.use("*", requireAuth);
 googleRoute.use("*", attachDbUser);
+googleRoute.use("*", attachTenantContext);
 
 googleRoute.get("/connect", (c) => {
   const cfg = requireGoogleConfig();
@@ -74,8 +81,7 @@ googleRoute.get("/callback", async (c) => {
 
   const cfg = requireGoogleConfig();
   const dbUser = getDbUser(c);
-  const tenantId = await findTenantIdByUserId(db, dbUser.id);
-  if (!tenantId) return c.json({ error: "tenant_not_found" }, 403);
+  const tenantId = getTenantId(c);
   const result = await completeOauthCallback(
     db,
     cfg,

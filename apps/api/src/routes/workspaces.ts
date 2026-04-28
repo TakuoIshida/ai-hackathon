@@ -4,7 +4,13 @@ import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { config } from "@/config";
 import { db } from "@/db/client";
-import { type AuthVars, attachDbUser, getDbUser, requireAuth } from "@/middleware/auth";
+import {
+  type AuthVars,
+  attachDbUser,
+  attachTenantContext,
+  getDbUser,
+  requireAuth,
+} from "@/middleware/auth";
 import { createResendSender } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
 import { createWorkspaceInputSchema } from "@/workspaces/schemas";
@@ -46,6 +52,7 @@ export function createWorkspacesRoute(deps: WorkspacesRouteDeps = productionDeps
 
   route.use("*", requireAuth);
   route.use("*", attachDbUser);
+  route.use("*", attachTenantContext);
 
   // ISH-107: list workspaces the caller is a member of.
   route.get("/", async (c) => {

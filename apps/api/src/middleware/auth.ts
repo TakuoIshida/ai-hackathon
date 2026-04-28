@@ -1,6 +1,9 @@
+import { eq, sql } from "drizzle-orm";
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { db } from "@/db/client";
+import { requestScope } from "@/db/request-scope";
+import { tenantMembers } from "@/db/schema";
 import { buildClerkIdentityProvider } from "@/identity/clerk-identity-provider";
 import type { IdentityClaims, IdentityProviderPort } from "@/ports/identity";
 import type { User } from "@/users/domain";
@@ -15,10 +18,12 @@ import { ensureUserByClerkId } from "@/users/usecase";
  * Routes that mount `attachDbUser` can read `c.get("dbUser")` with the
  * correct type. Routes that run after `attachAuth` / `requireAuth` can read
  * `c.get("identityClaims")`.
+ * Routes that mount `attachTenantContext` can read `c.get("tenantId")`.
  */
 export type AuthVars = {
   dbUser: User;
   identityClaims: IdentityClaims;
+  tenantId: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -135,4 +140,75 @@ export function getDbUser(c: Context<{ Variables: AuthVars }>): User {
     throw new HTTPException(500, { message: "dbUser missing — attachDbUser not mounted" });
   }
   return dbUser;
+}
+
+// ---------------------------------------------------------------------------
+// attachTenantContext — RLS tenant isolation
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves the authenticated user's tenant_id from common.tenant_members,
+ * opens a DB transaction, issues `SELECT set_config('app.tenant_id', ...)` so
+ * that RLS policies on the tenant schema take effect, then runs the rest of
+ * the middleware chain inside that transaction via AsyncLocalStorage.
+ *
+ * Must be mounted AFTER `attachDbUser`. The `db` proxy (client.ts) will
+ * automatically use the transaction-bound client for all queries inside the
+ * request scope, so repos and usecases do not need to be changed.
+ *
+ * Not mounted on:
+ *   - /onboarding/tenant   (user has no tenant yet — they're creating one)
+ *   - /webhooks            (Clerk webhook — no user session)
+ *   - /public              (unauthenticated booking/cancel flows)
+ *   - /health              (infra probe)
+ *   - /invitations/:token  (public GET — auth is per-endpoint on POST)
+ */
+export const attachTenantContext: MiddlewareHandler<{ Variables: AuthVars }> = async (c, next) => {
+  const dbUser = getDbUser(c);
+
+  // Resolve tenant membership using the baseline db (outside of scope — this
+  // query hits common.tenant_members which has no RLS).
+  //
+  // TOCTOU note: there is a small window between this lookup and the
+  // SET LOCAL below in which the user could be removed from the tenant.
+  // RLS still scopes the request to the (now-stale) tenant they had at
+  // request entry — never to a tenant they were not a member of — so this
+  // is not a security issue. If real-time membership revocation is ever
+  // required, re-check inside the transaction before set_config.
+  const [member] = await db
+    .select({ tenantId: tenantMembers.tenantId })
+    .from(tenantMembers)
+    .where(eq(tenantMembers.userId, dbUser.id))
+    .limit(1);
+
+  if (!member) {
+    throw new HTTPException(403, { message: "user not assigned to a tenant" });
+  }
+
+  const tenantId = member.tenantId;
+  c.set("tenantId", tenantId);
+
+  // Open a transaction for the entire request so SET LOCAL is scoped to it.
+  // The requestScope AsyncLocalStorage makes `tx` available to the `db` proxy
+  // so all downstream queries automatically use the transaction connection.
+  await db.transaction(async (tx) => {
+    // set_config with localval=true is equivalent to SET LOCAL — the value is
+    // reset when the transaction ends, so it cannot leak across pool connections.
+    await tx.execute(sql`SELECT set_config('app.tenant_id', ${tenantId}, true)`);
+    await requestScope.run({ tx, tenantId }, async () => {
+      await next();
+    });
+  });
+};
+
+// ---------------------------------------------------------------------------
+// getTenantId — typed context accessor
+// ---------------------------------------------------------------------------
+
+export function getTenantId(c: Context<{ Variables: AuthVars }>): string {
+  const tenantId = c.get("tenantId");
+  if (!tenantId) {
+    throw new HTTPException(500, { message: "tenantId missing — attachTenantContext not mounted" });
+  }
+  return tenantId;
 }

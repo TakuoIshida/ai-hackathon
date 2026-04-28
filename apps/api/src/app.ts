@@ -6,9 +6,10 @@ import { attachAuth } from "@/middleware/auth";
 import { bookingsRoute } from "@/routes/bookings";
 import { clerkWebhookRoute } from "@/routes/clerk-webhook";
 import { googleRoute } from "@/routes/google";
-import { invitationsRoute } from "@/routes/invitations";
+import { invitationsRoute, tenantInvitationsRoute } from "@/routes/invitations";
 import { linksRoute } from "@/routes/links";
 import { meRoute } from "@/routes/me";
+import { onboardingRoute } from "@/routes/onboarding";
 import { publicRoute } from "@/routes/public";
 import { workspacesRoute } from "@/routes/workspaces";
 import { buildIdentityProvider } from "@/wiring";
@@ -41,11 +42,13 @@ app.onError((err, c) => {
 app.get("/health", (c) => c.json({ ok: true, service: "api" }));
 
 app.route("/me", meRoute);
+app.route("/onboarding", onboardingRoute);
 app.route("/google", googleRoute);
 app.route("/links", linksRoute);
 app.route("/bookings", bookingsRoute);
 app.route("/workspaces", workspacesRoute);
 app.route("/invitations", invitationsRoute);
+app.route("/tenant/invitations", tenantInvitationsRoute);
 app.route("/public", publicRoute);
 app.route("/webhooks", clerkWebhookRoute);
 
