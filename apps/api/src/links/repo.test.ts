@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
+import { tenants } from "@/db/schema";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
 import type { CreateLinkCommand } from "./domain";
@@ -30,10 +31,17 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(`
-    TRUNCATE TABLE bookings, link_owners, availability_excludes, availability_rules,
-    availability_links, common.users RESTART IDENTITY CASCADE;
+    TRUNCATE TABLE tenant.bookings, tenant.link_owners, tenant.availability_excludes,
+    tenant.availability_rules, tenant.availability_links, common.tenants, common.users
+    RESTART IDENTITY CASCADE;
   `);
 });
+
+async function seedTenant(): Promise<string> {
+  const [tenant] = await testDb.insert(tenants).values({ name: "Test Tenant" }).returning();
+  if (!tenant) throw new Error("seed: tenant insert failed");
+  return tenant.id;
+}
 
 async function seedUser(): Promise<string> {
   const u = await insertUser(db, {
@@ -64,8 +72,9 @@ const baseInput = (overrides: Partial<CreateLinkCommand> = {}): CreateLinkComman
 
 describe("links/repo", () => {
   test("createLink persists link, rules, and excludes; getLinkForUser returns relations", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    const created = await createLink(db, userId, baseInput());
+    const created = await createLink(db, userId, tenantId, baseInput());
     expect(created.slug).toBe("intro-30");
     expect(created.rules.length).toBe(1);
     expect(created.excludes).toEqual(["2026-12-31"]);
@@ -75,14 +84,15 @@ describe("links/repo", () => {
   });
 
   test("listLinksForUser scopes by userId", async () => {
+    const tenantId = await seedTenant();
     const userA = await seedUser();
     const userB = await insertUser(db, {
       externalId: `c_${randomUUID()}`,
       email: "b@x.com",
       name: null,
     });
-    await createLink(db, userA, baseInput({ slug: "a-link" }));
-    await createLink(db, userB.id, baseInput({ slug: "b-link" }));
+    await createLink(db, userA, tenantId, baseInput({ slug: "a-link" }));
+    await createLink(db, userB.id, tenantId, baseInput({ slug: "b-link" }));
 
     const aLinks = await listLinksForUser(db, userA);
     expect(aLinks.length).toBe(1);
@@ -90,26 +100,29 @@ describe("links/repo", () => {
   });
 
   test("getLinkForUser returns null when ownership does not match", async () => {
+    const tenantId = await seedTenant();
     const userA = await seedUser();
     const userB = await insertUser(db, {
       externalId: `c_${randomUUID()}`,
       email: "b@x.com",
       name: null,
     });
-    const link = await createLink(db, userA, baseInput({ slug: "owned-by-a" }));
+    const link = await createLink(db, userA, tenantId, baseInput({ slug: "owned-by-a" }));
     expect(await getLinkForUser(db, userB.id, link.id)).toBeNull();
   });
 
   test("isSlugTaken returns true after createLink", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     expect(await isSlugTaken(db, "intro-30")).toBe(false);
-    await createLink(db, userId, baseInput());
+    await createLink(db, userId, tenantId, baseInput());
     expect(await isSlugTaken(db, "intro-30")).toBe(true);
   });
 
   test("updateLink replaces rules and excludes", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    const created = await createLink(db, userId, baseInput());
+    const created = await createLink(db, userId, tenantId, baseInput());
     const updated = await updateLink(db, userId, created.id, {
       title: "Renamed",
       rules: [{ weekday: 2, startMinute: 600, endMinute: 660 }],
@@ -126,16 +139,23 @@ describe("links/repo", () => {
   });
 
   test("deleteLink returns false when nothing matched, true otherwise", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     expect(await deleteLink(db, userId, randomUUID())).toBe(false);
-    const link = await createLink(db, userId, baseInput());
+    const link = await createLink(db, userId, tenantId, baseInput());
     expect(await deleteLink(db, userId, link.id)).toBe(true);
     expect(await getLinkForUser(db, userId, link.id)).toBeNull();
   });
 
   test("findPublishedLinkBySlug requires isPublished=true", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    const draft = await createLink(db, userId, baseInput({ slug: "draft", isPublished: false }));
+    const draft = await createLink(
+      db,
+      userId,
+      tenantId,
+      baseInput({ slug: "draft", isPublished: false }),
+    );
     expect(await findPublishedLinkBySlug(db, "draft")).toBeNull();
     await updateLink(db, userId, draft.id, { isPublished: true });
     const found = await findPublishedLinkBySlug(db, "draft");
@@ -145,14 +165,16 @@ describe("links/repo", () => {
 
 describe("links/repo: link co-owners (ISH-112)", () => {
   test("listLinkCoOwnerUserIds returns [] when no co-owners", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    const link = await createLink(db, userId, baseInput({ slug: "no-co" }));
+    const link = await createLink(db, userId, tenantId, baseInput({ slug: "no-co" }));
     expect(await listLinkCoOwnerUserIds(db, link.id)).toEqual([]);
   });
 
   test("setLinkCoOwners persists co-owners and dedupes", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    const link = await createLink(db, userId, baseInput({ slug: "co-1" }));
+    const link = await createLink(db, userId, tenantId, baseInput({ slug: "co-1" }));
     const u2 = await insertUser(db, {
       externalId: `c_${randomUUID()}`,
       email: "u2@x.com",
@@ -169,8 +191,9 @@ describe("links/repo: link co-owners (ISH-112)", () => {
   });
 
   test("setLinkCoOwners filters out the primary user silently", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    const link = await createLink(db, userId, baseInput({ slug: "co-2" }));
+    const link = await createLink(db, userId, tenantId, baseInput({ slug: "co-2" }));
     const u2 = await insertUser(db, {
       externalId: `c_${randomUUID()}`,
       email: "u2@x.com",
@@ -181,8 +204,9 @@ describe("links/repo: link co-owners (ISH-112)", () => {
   });
 
   test("setLinkCoOwners replaces existing set on each call", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    const link = await createLink(db, userId, baseInput({ slug: "co-3" }));
+    const link = await createLink(db, userId, tenantId, baseInput({ slug: "co-3" }));
     const u2 = await insertUser(db, {
       externalId: `c_${randomUUID()}`,
       email: "u2@x.com",
@@ -199,8 +223,9 @@ describe("links/repo: link co-owners (ISH-112)", () => {
   });
 
   test("setLinkCoOwners with empty array clears all co-owners", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    const link = await createLink(db, userId, baseInput({ slug: "co-4" }));
+    const link = await createLink(db, userId, tenantId, baseInput({ slug: "co-4" }));
     const u2 = await insertUser(db, {
       externalId: `c_${randomUUID()}`,
       email: "u2@x.com",
@@ -212,8 +237,9 @@ describe("links/repo: link co-owners (ISH-112)", () => {
   });
 
   test("deleting the link cascades link_owners rows", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    const link = await createLink(db, userId, baseInput({ slug: "co-5" }));
+    const link = await createLink(db, userId, tenantId, baseInput({ slug: "co-5" }));
     const u2 = await insertUser(db, {
       externalId: `c_${randomUUID()}`,
       email: "u2@x.com",

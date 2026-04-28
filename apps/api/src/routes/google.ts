@@ -17,6 +17,7 @@ import {
   updateCalendarFlagsForUser,
 } from "@/google/usecase";
 import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
+import { findTenantIdByUserId } from "@/users/repo";
 
 /**
  * Resolve Google OAuth config or fail fast with a 500.
@@ -74,6 +75,8 @@ googleRoute.get("/callback", async (c) => {
 
   const cfg = requireGoogleConfig();
   const dbUser = getDbUser(c);
+  const tenantId = await findTenantIdByUserId(db, dbUser.id);
+  if (!tenantId) return c.json({ error: "tenant_not_found" }, 403);
   const result = await completeOauthCallback(
     db,
     cfg,
@@ -82,6 +85,7 @@ googleRoute.get("/callback", async (c) => {
       queryState,
       code: c.req.query("code"),
       userId: dbUser.id,
+      tenantId,
     },
     oauthSinks,
   );

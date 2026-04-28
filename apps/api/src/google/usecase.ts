@@ -29,6 +29,7 @@ export type UpdateCalendarFlagsResult =
  * pre-encrypted bytes to the repo.
  */
 export type UpsertOauthAccountWithEncryptionInput = {
+  tenantId: string;
   userId: string;
   googleUserId: string;
   email: string;
@@ -52,6 +53,7 @@ export async function upsertOauthAccountWithEncryption(
 ): Promise<OauthAccount> {
   const enc = encryptSecret(input.refreshToken, encryptionKey);
   const rawInput: StoreOauthAccountRawInput = {
+    tenantId: input.tenantId,
     userId: input.userId,
     googleUserId: input.googleUserId,
     email: input.email,
@@ -155,6 +157,7 @@ export type ListCalendarsFn = (accessToken: string) => Promise<CalendarListItem[
 export type SyncCalendarsFn = (
   database: Database,
   oauthAccountId: string,
+  tenantId: string,
   list: ReadonlyArray<CalendarListItem>,
 ) => Promise<void>;
 export type RevokeTokenFn = (token: string) => Promise<void>;
@@ -189,6 +192,7 @@ export type CompleteOauthCallbackInput = {
   queryState: string | undefined;
   code: string | undefined;
   userId: string;
+  tenantId: string;
 };
 
 /**
@@ -208,7 +212,7 @@ export async function completeOauthCallback(
   input: CompleteOauthCallbackInput,
   ports: OauthSinks,
 ): Promise<CompleteOauthCallbackResult> {
-  const { cookieState, queryState, code, userId } = input;
+  const { cookieState, queryState, code, userId, tenantId } = input;
   if (!cookieState || !queryState || cookieState !== queryState) {
     return { kind: "invalid_state" };
   }
@@ -223,6 +227,7 @@ export async function completeOauthCallback(
   const account = await upsertOauthAccountWithEncryption(
     database,
     {
+      tenantId,
       userId,
       googleUserId: userInfo.sub,
       email: userInfo.email,
@@ -236,7 +241,7 @@ export async function completeOauthCallback(
 
   try {
     const calendarList = await ports.listCalendars(tokens.accessToken);
-    await ports.syncCalendars(database, account.id, calendarList);
+    await ports.syncCalendars(database, account.id, tenantId, calendarList);
   } catch (err) {
     console.warn("[google] initial calendar sync failed; account kept connected:", err);
   }
