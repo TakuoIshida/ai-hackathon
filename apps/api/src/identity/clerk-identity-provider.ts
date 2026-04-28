@@ -14,6 +14,23 @@ import type { IdentityClaims, IdentityProfile, IdentityProviderPort } from "@/po
  * (ClerkPort.fetchUser → getUserByExternalId) so ClerkPort can be removed.
  */
 export function buildClerkIdentityProvider(): IdentityProviderPort {
+  // E2E bypass: when the API runs under apps/e2e (Playwright), Clerk's secret
+  // is set to a placeholder ('sk_test_e2e_bypass'). createClerkClient and the
+  // real clerkMiddleware both reject the fake key — detecting the bypass token
+  // here lets us return a fully no-op port so the API boot doesn't crash and
+  // /public/* / /health stay accessible. The FE shim handles auth-gated UI
+  // separately. Does NOT affect production (real CLERK_SECRET_KEY → real path).
+  const isE2EBypass = process.env.CLERK_SECRET_KEY === "sk_test_e2e_bypass";
+  if (isE2EBypass) {
+    return {
+      middleware: (): MiddlewareHandler => async (_c, next) => {
+        await next();
+      },
+      getClaims: () => null,
+      getUserByExternalId: async () => null,
+    };
+  }
+
   // Lazy-init: the Clerk client is only constructed when buildClerkIdentityProvider()
   // is called (at app boot), not on every request. The secretKey read happens
   // once here — tests that set process.env before importing will pick it up.
