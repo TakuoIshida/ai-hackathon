@@ -4,7 +4,8 @@ import { describe, expect, test, vi } from "vitest";
 
 // Mock @clerk/clerk-react so we can control isSignedIn without a real Clerk
 // environment. vi.mock is hoisted, so this runs before any imports below.
-const mockUseAuth = vi.fn(() => ({
+type MockAuthState = { isSignedIn: boolean; getToken: () => Promise<string | null> };
+const mockUseAuth = vi.fn<() => MockAuthState>(() => ({
   isSignedIn: true,
   getToken: async () => "fake-token",
 }));
