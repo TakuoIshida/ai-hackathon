@@ -15,6 +15,20 @@
       "when": 1777307652221,
       "tag": "0001_common-schema",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777307652222,
+      "tag": "0002_tenant-schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1777398000000,
+      "tag": "0003_rls",
+      "breakpoints": true
     }
   ]
 }
