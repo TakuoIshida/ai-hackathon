@@ -46,14 +46,17 @@ export function buildClerkIdentityProvider(): IdentityProviderPort {
       const auth = getAuth(c);
       if (!auth?.userId) return null;
 
-      // Prefer email from session claims (populated when the Clerk JWT template
-      // includes `email` + `email_verified`). If not present we fall back to a
-      // getUserByExternalId() lookup — callers that need a guaranteed email
-      // should use getUserByExternalId instead of getClaims.
-      const email = auth.sessionClaims?.email as string | undefined;
-      const emailVerified = (auth.sessionClaims?.email_verified as boolean | undefined) ?? false;
-
-      if (!email) return null;
+      // ISH-192: degraded path when JWT template lacks `email` / `email_verified`.
+      // Previously we returned null in that case, which 401'd every request from
+      // existing users whose Clerk JWT template hadn't been updated yet. Now we
+      // return claims with an empty email — `attachDbUser` resolves the real
+      // user via the DB (existing user) or `getUserByExternalId` (lazy create
+      // hits Clerk's API directly, which always has a real email). Callers MUST
+      // NOT trust `claims.email` for business logic; use `getDbUser(c).email`
+      // for that. Long-term solution: ISH-174 (configure JWT template).
+      const rawEmail = auth.sessionClaims?.email;
+      const email = typeof rawEmail === "string" ? rawEmail : "";
+      const emailVerified = auth.sessionClaims?.email_verified === true;
 
       return {
         externalId: auth.userId,
