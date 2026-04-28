@@ -82,12 +82,18 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA tenant GRANT USAGE ON SEQUENCES TO app;
 --    (rls.md §2-1 through §2-4)
 --    Policy: USING + WITH CHECK both use current_setting('app.tenant_id', true)
 --    missing_ok=true → NULL when unset → 0 rows returned (no silent data leak)
+--    TO app: scoped to the runtime role only — admin (BYPASSRLS) is unaffected
+--      and any future role added without BYPASSRLS won't silently inherit this
+--      policy (would error on missing GRANT instead, surfacing the issue).
 -- ---------------------------------------------------------------------------
 
 -- tenant.invitations
 ALTER TABLE tenant.invitations ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 CREATE POLICY tenant_isolation ON tenant.invitations
+  AS PERMISSIVE
+  FOR ALL
+  TO app
   USING      (tenant_id = current_setting('app.tenant_id', true))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
 --> statement-breakpoint
@@ -96,6 +102,9 @@ CREATE POLICY tenant_isolation ON tenant.invitations
 ALTER TABLE tenant.availability_links ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 CREATE POLICY tenant_isolation ON tenant.availability_links
+  AS PERMISSIVE
+  FOR ALL
+  TO app
   USING      (tenant_id = current_setting('app.tenant_id', true))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
 --> statement-breakpoint
@@ -104,6 +113,9 @@ CREATE POLICY tenant_isolation ON tenant.availability_links
 ALTER TABLE tenant.availability_rules ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 CREATE POLICY tenant_isolation ON tenant.availability_rules
+  AS PERMISSIVE
+  FOR ALL
+  TO app
   USING      (tenant_id = current_setting('app.tenant_id', true))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
 --> statement-breakpoint
@@ -112,6 +124,9 @@ CREATE POLICY tenant_isolation ON tenant.availability_rules
 ALTER TABLE tenant.availability_excludes ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 CREATE POLICY tenant_isolation ON tenant.availability_excludes
+  AS PERMISSIVE
+  FOR ALL
+  TO app
   USING      (tenant_id = current_setting('app.tenant_id', true))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
 --> statement-breakpoint
@@ -120,6 +135,9 @@ CREATE POLICY tenant_isolation ON tenant.availability_excludes
 ALTER TABLE tenant.bookings ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 CREATE POLICY tenant_isolation ON tenant.bookings
+  AS PERMISSIVE
+  FOR ALL
+  TO app
   USING      (tenant_id = current_setting('app.tenant_id', true))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
 --> statement-breakpoint
@@ -128,6 +146,9 @@ CREATE POLICY tenant_isolation ON tenant.bookings
 ALTER TABLE tenant.link_owners ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 CREATE POLICY tenant_isolation ON tenant.link_owners
+  AS PERMISSIVE
+  FOR ALL
+  TO app
   USING      (tenant_id = current_setting('app.tenant_id', true))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
 --> statement-breakpoint
@@ -136,6 +157,9 @@ CREATE POLICY tenant_isolation ON tenant.link_owners
 ALTER TABLE tenant.google_oauth_accounts ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 CREATE POLICY tenant_isolation ON tenant.google_oauth_accounts
+  AS PERMISSIVE
+  FOR ALL
+  TO app
   USING      (tenant_id = current_setting('app.tenant_id', true))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
 --> statement-breakpoint
@@ -144,5 +168,8 @@ CREATE POLICY tenant_isolation ON tenant.google_oauth_accounts
 ALTER TABLE tenant.google_calendars ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 CREATE POLICY tenant_isolation ON tenant.google_calendars
+  AS PERMISSIVE
+  FOR ALL
+  TO app
   USING      (tenant_id = current_setting('app.tenant_id', true))
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
