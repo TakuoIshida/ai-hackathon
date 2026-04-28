@@ -44,12 +44,17 @@ export type IdentityProviderPort = {
   getUserByExternalId: (externalId: string) => Promise<IdentityProfile | null>;
 };
 
-// Augment Hono's ContextVariableMap so `c.set("identityClaims", ...)` and
-// `c.get("identityClaims")` are fully typed everywhere in the app.
-// This is the only place the augmentation should live — all identity-aware
-// middleware reads from this key.
+// Augment Hono's ContextVariableMap so identity-related context keys are fully
+// typed everywhere in the app. This is the only place the augmentation should
+// live — all identity-aware middleware reads from these keys.
 declare module "hono" {
   interface ContextVariableMap {
     identityClaims: IdentityClaims;
+    /**
+     * The active identity provider for this request (ISH-190). Stashed by
+     * `attachAuth` so `attachDbUser` can call `getUserByExternalId` without
+     * reaching for a module-level singleton.
+     */
+    idp: IdentityProviderPort;
   }
 }
