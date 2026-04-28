@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { randomBytes, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
-import { googleCalendars, googleOauthAccounts } from "@/db/schema/google";
+import { googleCalendars, googleOauthAccounts, tenants } from "@/db/schema";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
 import type { CalendarListItem } from "./calendar";
@@ -35,24 +35,34 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(`
-    TRUNCATE TABLE google_calendars, google_oauth_accounts, users
+    TRUNCATE TABLE tenant.google_calendars, tenant.google_oauth_accounts,
+    common.tenants, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
+
+async function seedTenant(): Promise<string> {
+  const [tenant] = await testDb.insert(tenants).values({ name: "Test Tenant" }).returning();
+  if (!tenant) throw new Error("seed: tenant insert failed");
+  return tenant.id;
+}
 
 async function seedAccountAndCalendar(opts?: { writes?: boolean }): Promise<{
   userId: string;
   accountId: string;
   calendarId: string;
+  tenantId: string;
 }> {
+  const tenantId = await seedTenant();
   const u = await insertUser(db, {
-    clerkId: `c_${randomUUID()}`,
+    externalId: `c_${randomUUID()}`,
     email: "owner@example.com",
     name: null,
   });
   const account = await upsertOauthAccountWithEncryption(
     db,
     {
+      tenantId,
       userId: u.id,
       googleUserId: `g_${randomUUID()}`,
       email: "owner@example.com",
@@ -66,6 +76,7 @@ async function seedAccountAndCalendar(opts?: { writes?: boolean }): Promise<{
   const [cal] = await testDb
     .insert(googleCalendars)
     .values({
+      tenantId,
       oauthAccountId: account.id,
       googleCalendarId: "primary@example.com",
       summary: "Primary",
@@ -76,21 +87,23 @@ async function seedAccountAndCalendar(opts?: { writes?: boolean }): Promise<{
     })
     .returning();
   if (!cal) throw new Error("seed: calendar insert failed");
-  return { userId: u.id, accountId: account.id, calendarId: cal.id };
+  return { userId: u.id, accountId: account.id, calendarId: cal.id, tenantId };
 }
 
 describe("google/usecase: upsertOauthAccountWithEncryption", () => {
   test("encrypts the refresh token and stores ciphertext (round-trip via decryptOauthRefreshToken)", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "x@example.com",
       name: null,
     });
     const refresh = `secret-${randomUUID()}`;
     const key = randomBytes(32);
+    const tenantId = await seedTenant();
     const account = await upsertOauthAccountWithEncryption(
       db,
       {
+        tenantId,
         userId: u.id,
         googleUserId: `g_${randomUUID()}`,
         email: "x@example.com",
@@ -114,15 +127,17 @@ describe("google/usecase: upsertOauthAccountWithEncryption", () => {
 
   test("upsert overwrites the encrypted fields on conflict", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "y@example.com",
       name: null,
     });
     const googleUserId = `g_${randomUUID()}`;
     const key = randomBytes(32);
+    const tenantId = await seedTenant();
     await upsertOauthAccountWithEncryption(
       db,
       {
+        tenantId,
         userId: u.id,
         googleUserId,
         email: "y@example.com",
@@ -136,6 +151,7 @@ describe("google/usecase: upsertOauthAccountWithEncryption", () => {
     const account2 = await upsertOauthAccountWithEncryption(
       db,
       {
+        tenantId,
         userId: u.id,
         googleUserId,
         email: "y@example.com",
@@ -161,11 +177,12 @@ describe("google/usecase: upsertOauthAccountWithEncryption", () => {
 
 describe("google/usecase: setCalendarFlags", () => {
   test("setting usedForWrites=true clears it on other calendars in same account", async () => {
-    const { accountId } = await seedAccountAndCalendar({ writes: true });
+    const { accountId, tenantId } = await seedAccountAndCalendar({ writes: true });
     // Add two more calendars under the same account.
     const [b] = await testDb
       .insert(googleCalendars)
       .values({
+        tenantId,
         oauthAccountId: accountId,
         googleCalendarId: "b@x.com",
         summary: "b",
@@ -178,6 +195,7 @@ describe("google/usecase: setCalendarFlags", () => {
     const [c] = await testDb
       .insert(googleCalendars)
       .values({
+        tenantId,
         oauthAccountId: accountId,
         googleCalendarId: "c@x.com",
         summary: "c",
@@ -198,10 +216,11 @@ describe("google/usecase: setCalendarFlags", () => {
   });
 
   test("setting usedForWrites=false leaves siblings untouched", async () => {
-    const { accountId } = await seedAccountAndCalendar({ writes: true });
+    const { accountId, tenantId } = await seedAccountAndCalendar({ writes: true });
     const [b] = await testDb
       .insert(googleCalendars)
       .values({
+        tenantId,
         oauthAccountId: accountId,
         googleCalendarId: "b@x.com",
         summary: "b",
@@ -235,10 +254,11 @@ describe("google/usecase: setCalendarFlags", () => {
   });
 
   test("usedForBusy update does not trigger sibling clear", async () => {
-    const { accountId } = await seedAccountAndCalendar({ writes: true });
+    const { accountId, tenantId } = await seedAccountAndCalendar({ writes: true });
     const [b] = await testDb
       .insert(googleCalendars)
       .values({
+        tenantId,
         oauthAccountId: accountId,
         googleCalendarId: "b@x.com",
         summary: "b",
@@ -290,7 +310,7 @@ describe("google/usecase: updateCalendarFlagsForUser", () => {
 
   test("forbidden when user has no oauth account", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "x@x.com",
       name: null,
     });
@@ -310,10 +330,13 @@ describe("google/usecase: updateCalendarFlagsForUser", () => {
   });
 
   test("setting usedForWrites=true is exclusive within the same account", async () => {
-    const { userId, accountId, calendarId } = await seedAccountAndCalendar({ writes: true });
+    const { userId, accountId, calendarId, tenantId } = await seedAccountAndCalendar({
+      writes: true,
+    });
     const [other] = await testDb
       .insert(googleCalendars)
       .values({
+        tenantId,
         oauthAccountId: accountId,
         googleCalendarId: "other@example.com",
         summary: "Other",
@@ -439,7 +462,7 @@ describe("google/usecase: buildOauthAuthUrl", () => {
 describe("google/usecase: completeOauthCallback", () => {
   test("invalid_state when cookie/query mismatch", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -447,7 +470,7 @@ describe("google/usecase: completeOauthCallback", () => {
     const result = await completeOauthCallback(
       db,
       TEST_CFG,
-      { cookieState: "a", queryState: "b", code: "code-1", userId: u.id },
+      { cookieState: "a", queryState: "b", code: "code-1", userId: u.id, tenantId: "t1" },
       sinks,
     );
     expect(result.kind).toBe("invalid_state");
@@ -458,7 +481,7 @@ describe("google/usecase: completeOauthCallback", () => {
 
   test("invalid_state when cookie is missing", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -466,7 +489,7 @@ describe("google/usecase: completeOauthCallback", () => {
     const result = await completeOauthCallback(
       db,
       TEST_CFG,
-      { cookieState: undefined, queryState: "b", code: "code-1", userId: u.id },
+      { cookieState: undefined, queryState: "b", code: "code-1", userId: u.id, tenantId: "t1" },
       sinks,
     );
     expect(result.kind).toBe("invalid_state");
@@ -474,7 +497,7 @@ describe("google/usecase: completeOauthCallback", () => {
 
   test("missing_code when state matches but code is absent", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -482,7 +505,7 @@ describe("google/usecase: completeOauthCallback", () => {
     const result = await completeOauthCallback(
       db,
       TEST_CFG,
-      { cookieState: "s", queryState: "s", code: undefined, userId: u.id },
+      { cookieState: "s", queryState: "s", code: undefined, userId: u.id, tenantId: "t1" },
       sinks,
     );
     expect(result.kind).toBe("missing_code");
@@ -490,7 +513,7 @@ describe("google/usecase: completeOauthCallback", () => {
 
   test("missing_refresh_token when Google omits refresh_token", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -500,7 +523,7 @@ describe("google/usecase: completeOauthCallback", () => {
     const result = await completeOauthCallback(
       db,
       TEST_CFG,
-      { cookieState: "s", queryState: "s", code: "code-1", userId: u.id },
+      { cookieState: "s", queryState: "s", code: "code-1", userId: u.id, tenantId: "t1" },
       sinks,
     );
     expect(result.kind).toBe("missing_refresh_token");
@@ -508,7 +531,7 @@ describe("google/usecase: completeOauthCallback", () => {
 
   test("missing_scopes when granted scope set is incomplete", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -518,15 +541,16 @@ describe("google/usecase: completeOauthCallback", () => {
     const result = await completeOauthCallback(
       db,
       TEST_CFG,
-      { cookieState: "s", queryState: "s", code: "code-1", userId: u.id },
+      { cookieState: "s", queryState: "s", code: "code-1", userId: u.id, tenantId: "t1" },
       sinks,
     );
     expect(result.kind).toBe("missing_scopes");
   });
 
   test("ok: persists oauth account, runs initial calendar sync, returns redirect URL", async () => {
+    const tenantId = await seedTenant();
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -534,7 +558,7 @@ describe("google/usecase: completeOauthCallback", () => {
     const result = await completeOauthCallback(
       db,
       TEST_CFG,
-      { cookieState: "s", queryState: "s", code: "code-1", userId: u.id },
+      { cookieState: "s", queryState: "s", code: "code-1", userId: u.id, tenantId },
       sinks,
     );
     expect(result.kind).toBe("ok");
@@ -556,8 +580,9 @@ describe("google/usecase: completeOauthCallback", () => {
   });
 
   test("ok even when initial calendar sync throws (best-effort)", async () => {
+    const tenantId = await seedTenant();
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -569,7 +594,7 @@ describe("google/usecase: completeOauthCallback", () => {
     const result = await completeOauthCallback(
       db,
       TEST_CFG,
-      { cookieState: "s", queryState: "s", code: "code-1", userId: u.id },
+      { cookieState: "s", queryState: "s", code: "code-1", userId: u.id, tenantId },
       sinks,
     );
     expect(result.kind).toBe("ok");
@@ -579,8 +604,9 @@ describe("google/usecase: completeOauthCallback", () => {
   });
 
   test("upsert: re-running callback for the same google user updates the row", async () => {
+    const tenantId = await seedTenant();
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -588,7 +614,7 @@ describe("google/usecase: completeOauthCallback", () => {
     const r1 = await completeOauthCallback(
       db,
       TEST_CFG,
-      { cookieState: "s", queryState: "s", code: "code-1", userId: u.id },
+      { cookieState: "s", queryState: "s", code: "code-1", userId: u.id, tenantId },
       s1,
     );
     expect(r1.kind).toBe("ok");
@@ -603,7 +629,7 @@ describe("google/usecase: completeOauthCallback", () => {
     const r2 = await completeOauthCallback(
       db,
       TEST_CFG,
-      { cookieState: "s2", queryState: "s2", code: "code-2", userId: u.id },
+      { cookieState: "s2", queryState: "s2", code: "code-2", userId: u.id, tenantId },
       s2,
     );
     expect(r2.kind).toBe("ok");
@@ -619,7 +645,7 @@ describe("google/usecase: completeOauthCallback", () => {
 describe("google/usecase: disconnectGoogleAccount", () => {
   test("already_disconnected when no oauth row exists", async () => {
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -630,14 +656,16 @@ describe("google/usecase: disconnectGoogleAccount", () => {
   });
 
   test("ok: revokes refresh token and deletes the row", async () => {
+    const tenantId = await seedTenant();
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
     await upsertOauthAccountWithEncryption(
       db,
       {
+        tenantId,
         userId: u.id,
         googleUserId: `g_${randomUUID()}`,
         email: "u@example.com",
@@ -660,14 +688,16 @@ describe("google/usecase: disconnectGoogleAccount", () => {
   });
 
   test("ok: still deletes row when revoke throws (best-effort)", async () => {
+    const tenantId = await seedTenant();
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
     await upsertOauthAccountWithEncryption(
       db,
       {
+        tenantId,
         userId: u.id,
         googleUserId: `g_${randomUUID()}`,
         email: "u@example.com",
@@ -698,8 +728,9 @@ describe("google/usecase: disconnectGoogleAccount", () => {
 // ---------------------------------------------------------------------------
 describe("google/usecase: completeOauthCallback (real adapters + fake fetch)", () => {
   test("token exchange + userinfo + calendarList all wired correctly", async () => {
+    const tenantId = await seedTenant();
     const u = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u@example.com",
       name: null,
     });
@@ -756,7 +787,7 @@ describe("google/usecase: completeOauthCallback (real adapters + fake fetch)", (
     const result = await completeOauthCallback(
       db,
       TEST_CFG,
-      { cookieState: "s", queryState: "s", code: "code-real", userId: u.id },
+      { cookieState: "s", queryState: "s", code: "code-real", userId: u.id, tenantId },
       sinks,
     );
     expect(result.kind).toBe("ok");

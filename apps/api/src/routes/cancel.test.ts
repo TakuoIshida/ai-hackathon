@@ -8,6 +8,7 @@ import {
   bookings,
   googleCalendars,
   googleOauthAccounts,
+  tenants,
   users,
 } from "@/db/schema";
 import { createBookingNotifier } from "@/notifications/booking-notifier";
@@ -60,21 +61,27 @@ afterAll(async () => {
 beforeEach(async () => {
   sentEmails = [];
   await testDb.$client.exec(`
-    TRUNCATE TABLE bookings, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, users
+    TRUNCATE TABLE tenant.bookings, tenant.availability_excludes, tenant.availability_rules,
+    tenant.availability_links, tenant.google_calendars, tenant.google_oauth_accounts,
+    common.tenants, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
 
-async function seedConfirmedBooking(token: string): Promise<{ bookingId: string }> {
+async function seedConfirmedBooking(
+  token: string,
+): Promise<{ bookingId: string; tenantId: string; linkId: string }> {
+  const [tenant] = await testDb.insert(tenants).values({ name: "Test Tenant" }).returning();
+  if (!tenant) throw new Error("seed tenant");
   const [user] = await testDb
     .insert(users)
-    .values({ clerkId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
+    .values({ externalId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
     .returning();
   if (!user) throw new Error("seed user");
   const [link] = await testDb
     .insert(availabilityLinks)
     .values({
+      tenantId: tenant.id,
       userId: user.id,
       slug: "intro-30min",
       title: "30 min meet",
@@ -87,6 +94,7 @@ async function seedConfirmedBooking(token: string): Promise<{ bookingId: string 
   const [booking] = await testDb
     .insert(bookings)
     .values({
+      tenantId: tenant.id,
       linkId: link.id,
       startAt: new Date("2026-12-14T05:00:00Z"),
       endAt: new Date("2026-12-14T05:30:00Z"),
@@ -97,7 +105,7 @@ async function seedConfirmedBooking(token: string): Promise<{ bookingId: string 
     })
     .returning();
   if (!booking) throw new Error("seed booking");
-  return { bookingId: booking.id };
+  return { bookingId: booking.id, tenantId: tenant.id, linkId: link.id };
 }
 
 /**
@@ -111,15 +119,19 @@ async function seedConfirmedBookingWithGoogle(token: string): Promise<{
   bookingId: string;
   linkId: string;
   userId: string;
+  tenantId: string;
 }> {
+  const [tenant] = await testDb.insert(tenants).values({ name: "Test Tenant" }).returning();
+  if (!tenant) throw new Error("seed tenant");
   const [user] = await testDb
     .insert(users)
-    .values({ clerkId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
+    .values({ externalId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
     .returning();
   if (!user) throw new Error("seed user");
   const [link] = await testDb
     .insert(availabilityLinks)
     .values({
+      tenantId: tenant.id,
       userId: user.id,
       slug: "intro-30min",
       title: "30 min meet",
@@ -132,6 +144,7 @@ async function seedConfirmedBookingWithGoogle(token: string): Promise<{
   const [account] = await testDb
     .insert(googleOauthAccounts)
     .values({
+      tenantId: tenant.id,
       userId: user.id,
       googleUserId: `g_${randomUUID()}`,
       email: "owner@example.com",
@@ -145,6 +158,7 @@ async function seedConfirmedBookingWithGoogle(token: string): Promise<{
     .returning();
   if (!account) throw new Error("seed oauth account");
   await testDb.insert(googleCalendars).values({
+    tenantId: tenant.id,
     oauthAccountId: account.id,
     googleCalendarId: "primary@example.com",
     summary: "Owner",
@@ -156,6 +170,7 @@ async function seedConfirmedBookingWithGoogle(token: string): Promise<{
   const [booking] = await testDb
     .insert(bookings)
     .values({
+      tenantId: tenant.id,
       linkId: link.id,
       startAt: new Date("2026-12-14T05:00:00Z"),
       endAt: new Date("2026-12-14T05:30:00Z"),
@@ -167,7 +182,7 @@ async function seedConfirmedBookingWithGoogle(token: string): Promise<{
     })
     .returning();
   if (!booking) throw new Error("seed booking");
-  return { bookingId: booking.id, linkId: link.id, userId: user.id };
+  return { bookingId: booking.id, linkId: link.id, userId: user.id, tenantId: tenant.id };
 }
 
 describe("POST /public/cancel/:token", () => {
@@ -218,7 +233,7 @@ describe("POST /public/cancel/:token", () => {
 
   test("after cancel, the same slot can be re-booked (partial unique index frees it)", async () => {
     const token = randomUUID();
-    await seedConfirmedBooking(token);
+    const { tenantId } = await seedConfirmedBooking(token);
     const app = buildApp();
     await app.request(`/public/cancel/${token}`, { method: "POST" });
 
@@ -230,6 +245,7 @@ describe("POST /public/cancel/:token", () => {
     const [reBook] = await testDb
       .insert(bookings)
       .values({
+        tenantId,
         linkId: linkId as string,
         startAt: new Date("2026-12-14T05:00:00Z"),
         endAt: new Date("2026-12-14T05:30:00Z"),
@@ -321,7 +337,7 @@ describe("POST /public/cancel/:token", () => {
     // the real confirm path; then cancel it, re-confirm via the same slot, and
     // cancel the new booking using *its* cancellation token.
     const seedToken = randomUUID();
-    const { linkId } = await seedConfirmedBookingWithGoogle(seedToken);
+    const { linkId, tenantId } = await seedConfirmedBookingWithGoogle(seedToken);
     const app = buildApp();
 
     // First cancel.
@@ -338,6 +354,7 @@ describe("POST /public/cancel/:token", () => {
     const [reBook] = await testDb
       .insert(bookings)
       .values({
+        tenantId,
         linkId,
         startAt: new Date("2026-12-14T05:00:00Z"),
         endAt: new Date("2026-12-14T05:30:00Z"),

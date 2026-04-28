@@ -1,5 +1,5 @@
 import type { db as DbClient } from "@/db/client";
-import type { MembershipRole } from "@/db/schema/workspaces";
+import type { TenantMemberRole as MembershipRole } from "@/db/schema/common";
 import { workspaceInviteEmail } from "@/notifications/templates";
 import type { SendEmailFn } from "@/notifications/types";
 import {
@@ -73,7 +73,7 @@ export async function issueInvitation(
   const now = deps.now?.() ?? Date.now();
   const expiresAt = new Date(now + INVITE_TTL_MS);
   const invitation = await createInvitation(database, {
-    workspaceId,
+    tenantId: workspaceId,
     email,
     invitedByUserId: inviterUserId,
     expiresAt,
@@ -100,10 +100,8 @@ export async function issueInvitation(
 
 /**
  * Create a workspace and add the caller as the `owner` membership atomically.
- * Slug uniqueness is enforced by a DB UNIQUE index on workspaces.slug; the
- * repo layer translates the constraint violation into `slug_taken` so the
- * route can map that to a 409. This avoids a TOCTOU window where two
- * concurrent requests both see the slug "available" and try to insert.
+ * Throws if the owner is already a member of another tenant (DB UNIQUE(user_id)
+ * on tenant_members enforces 1 user = 1 tenant).
  */
 export async function createWorkspaceForUser(
   database: Database,
@@ -112,7 +110,6 @@ export async function createWorkspaceForUser(
 ): Promise<CreateWorkspaceResult> {
   return createWorkspaceWithOwnerMembership(database, {
     name: input.name,
-    slug: input.slug,
     ownerUserId,
   });
 }
@@ -169,7 +166,7 @@ export type WorkspaceMember = {
 };
 
 export type ListMembersResult =
-  | { kind: "ok"; members: WorkspaceMember[]; callerRole: "owner" | "member" }
+  | { kind: "ok"; members: WorkspaceMember[]; callerRole: "owner" | "member"; callerUserId: string }
   | { kind: "not_found" };
 
 /**
@@ -185,7 +182,12 @@ export async function listWorkspaceMembers(
   const callerMembership = await findMembership(database, workspaceId, callerUserId);
   if (!callerMembership) return { kind: "not_found" };
   const members = await listMembersWithUserInfo(database, workspaceId);
-  return { kind: "ok", members, callerRole: callerMembership.role };
+  return {
+    kind: "ok",
+    members,
+    callerRole: callerMembership.role as "owner" | "member",
+    callerUserId,
+  };
 }
 
 export type RemoveMemberResult =
@@ -323,13 +325,13 @@ export async function acceptInvitation(
     return { kind: "email_mismatch" };
   }
 
-  const workspace = await findWorkspaceById(database, invitation.workspaceId);
+  const workspace = await findWorkspaceById(database, invitation.tenantId);
   if (!workspace) return { kind: "not_found" };
 
   await acceptInvitationAtomic(database, {
     invitationId: invitation.id,
     userId: callerUserId,
-    workspaceId: invitation.workspaceId,
+    workspaceId: invitation.tenantId,
     now: new Date(now),
   });
 

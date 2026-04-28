@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import * as bookingsRepo from "@/bookings/repo";
 import { tryInsertConfirmedBooking } from "@/bookings/repo";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
-import { availabilityLinks, bookings, users } from "@/db/schema";
+import { availabilityLinks, bookings, tenants, users } from "@/db/schema";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { sendDueReminders } from "./reminder-job";
 import type { EmailMessage, SendEmailFn } from "./types";
@@ -29,8 +29,9 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(`
-    TRUNCATE TABLE bookings, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, users
+    TRUNCATE TABLE tenant.bookings, tenant.availability_excludes, tenant.availability_rules,
+    tenant.availability_links, tenant.google_calendars, tenant.google_oauth_accounts,
+    common.tenants, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
@@ -38,19 +39,23 @@ beforeEach(async () => {
 type SeedFixture = {
   userId: string;
   linkId: string;
+  tenantId: string;
   ownerEmail: string;
 };
 
 async function seedOwnerAndLink(): Promise<SeedFixture> {
+  const [tenant] = await testDb.insert(tenants).values({ name: "Test Tenant" }).returning();
+  if (!tenant) throw new Error("seed tenant");
   const ownerEmail = `owner-${randomUUID()}@example.com`;
   const [user] = await testDb
     .insert(users)
-    .values({ clerkId: `clerk_${randomUUID()}`, email: ownerEmail, name: "Owner" })
+    .values({ externalId: `clerk_${randomUUID()}`, email: ownerEmail, name: "Owner" })
     .returning();
   if (!user) throw new Error("seed user");
   const [link] = await testDb
     .insert(availabilityLinks)
     .values({
+      tenantId: tenant.id,
       userId: user.id,
       slug: `slug-${randomUUID()}`,
       title: "30 min meeting",
@@ -60,7 +65,7 @@ async function seedOwnerAndLink(): Promise<SeedFixture> {
     })
     .returning();
   if (!link) throw new Error("seed link");
-  return { userId: user.id, linkId: link.id, ownerEmail };
+  return { userId: user.id, linkId: link.id, tenantId: tenant.id, ownerEmail };
 }
 
 type CapturedEmail = EmailMessage;
@@ -74,21 +79,22 @@ function captureSender(): { sendEmail: SendEmailFn; captured: CapturedEmail[] } 
 }
 
 async function insertDueBooking(
-  linkId: string,
+  fixture: SeedFixture,
   guestEmail: string,
 ): Promise<{ id: string; cancellationToken: string }> {
-  return insertDueBookingAt(linkId, guestEmail, 0);
+  return insertDueBookingAt(fixture, guestEmail, 0);
 }
 
 async function insertDueBookingAt(
-  linkId: string,
+  fixture: SeedFixture,
   guestEmail: string,
   offsetMs: number,
 ): Promise<{ id: string; cancellationToken: string }> {
   const start = new Date(NOW.getTime() + LEAD_MS + offsetMs);
   const end = new Date(start.getTime() + 30 * 60 * 1000);
   const created = await tryInsertConfirmedBooking(db, {
-    linkId,
+    tenantId: fixture.tenantId,
+    linkId: fixture.linkId,
     startAt: start,
     endAt: end,
     guestName: "Guest",
@@ -102,7 +108,7 @@ async function insertDueBookingAt(
 describe("sendDueReminders (ISH-98)", () => {
   test("happy path: due booking → owner + guest emails sent, reminder_sent_at populated", async () => {
     const fixture = await seedOwnerAndLink();
-    const due = await insertDueBooking(fixture.linkId, "guest@example.com");
+    const due = await insertDueBooking(fixture, "guest@example.com");
 
     const { sendEmail, captured } = captureSender();
     const result = await sendDueReminders(db, {
@@ -127,7 +133,7 @@ describe("sendDueReminders (ISH-98)", () => {
 
   test("already sent: pre-set reminder_sent_at → skipped, sendEmail not invoked", async () => {
     const fixture = await seedOwnerAndLink();
-    const due = await insertDueBooking(fixture.linkId, "guest@example.com");
+    const due = await insertDueBooking(fixture, "guest@example.com");
     // Manually mark as already reminded so the row never appears in
     // findBookingsDueForReminder. (This is the "race lost" or
     // "previous-tick-handled" case as observed by a later cron run.)
@@ -162,7 +168,7 @@ describe("sendDueReminders (ISH-98)", () => {
     // sees "already sent" via the partial-WHERE filter on findDue, which is
     // the production-equivalent observation.
     const fixture = await seedOwnerAndLink();
-    await insertDueBooking(fixture.linkId, "guest@example.com");
+    await insertDueBooking(fixture, "guest@example.com");
 
     const first = captureSender();
     const r1 = await sendDueReminders(db, {
@@ -185,7 +191,7 @@ describe("sendDueReminders (ISH-98)", () => {
 
   test("email failure: sendEmail throws → result.failed === 1, reminder_sent_at stays SET (no rollback)", async () => {
     const fixture = await seedOwnerAndLink();
-    const due = await insertDueBooking(fixture.linkId, "guest@example.com");
+    const due = await insertDueBooking(fixture, "guest@example.com");
 
     const failingSender: SendEmailFn = async () => {
       throw new Error("smtp boom");
@@ -224,6 +230,7 @@ describe("sendDueReminders (ISH-98)", () => {
     const start = new Date(NOW.getTime() + 2 * 60 * 60 * 1000);
     const end = new Date(start.getTime() + 30 * 60 * 1000);
     const created = await tryInsertConfirmedBooking(db, {
+      tenantId: fixture.tenantId,
       linkId: fixture.linkId,
       startAt: start,
       endAt: end,
@@ -260,9 +267,9 @@ describe("sendDueReminders (ISH-98)", () => {
     // start_at values (the bookings table has a partial unique index on
     // (link_id, start_at) WHERE status='confirmed', so same-slot inserts
     // collide). The default windowMinutes=8 covers the whole ±5-min spread.
-    const a = await insertDueBookingAt(fixture.linkId, "a@example.com", -5 * 60_000);
-    const b = await insertDueBookingAt(fixture.linkId, "b@example.com", 0);
-    const c = await insertDueBookingAt(fixture.linkId, "c@example.com", 5 * 60_000);
+    const a = await insertDueBookingAt(fixture, "a@example.com", -5 * 60_000);
+    const b = await insertDueBookingAt(fixture, "b@example.com", 0);
+    const c = await insertDueBookingAt(fixture, "c@example.com", 5 * 60_000);
 
     const { sendEmail, captured } = captureSender();
     const result = await sendDueReminders(db, {
@@ -289,13 +296,13 @@ describe("sendDueReminders (ISH-98)", () => {
   test("mixed batch: 1 success + 1 already-sent + 1 send-fail → counters add up", async () => {
     const fixture = await seedOwnerAndLink();
     // (1) due, will succeed
-    const ok = await insertDueBookingAt(fixture.linkId, "ok@example.com", -5 * 60_000);
+    const ok = await insertDueBookingAt(fixture, "ok@example.com", -5 * 60_000);
     // (2) due, will lose the markReminderSent claim (simulates a race where
     //     another worker stamped the row between findDue and markReminderSent).
     //     Forced via a markReminderSent spy that returns false for this id.
-    const willSkip = await insertDueBookingAt(fixture.linkId, "skip@example.com", 0);
+    const willSkip = await insertDueBookingAt(fixture, "skip@example.com", 0);
     // (3) due, will fail at send time
-    const willFail = await insertDueBookingAt(fixture.linkId, "fail@example.com", 5 * 60_000);
+    const willFail = await insertDueBookingAt(fixture, "fail@example.com", 5 * 60_000);
 
     // Spy: markReminderSent returns false for `willSkip`, true for the others.
     // This simulates a race where another worker stamped the row between
@@ -342,7 +349,7 @@ describe("sendDueReminders (ISH-98)", () => {
 
   test("markReminderSent throws (DB error during claim) → failed++, dispatch not called, mark stays null (ISH-147)", async () => {
     const fixture = await seedOwnerAndLink();
-    const due = await insertDueBooking(fixture.linkId, "guest@example.com");
+    const due = await insertDueBooking(fixture, "guest@example.com");
 
     // Simulate a DB-level failure during the claim UPDATE. tryClaim's catch
     // path should:
@@ -382,7 +389,7 @@ describe("sendDueReminders (ISH-98)", () => {
 
   test("partial Promise.all failure (only guest send fails): result.failed=1, mark retained", async () => {
     const fixture = await seedOwnerAndLink();
-    const due = await insertDueBooking(fixture.linkId, "guest@example.com");
+    const due = await insertDueBooking(fixture, "guest@example.com");
 
     // Owner email succeeds, guest email throws. Promise.all rejects → dispatch
     // catches → counted as failed; reminder_sent_at stays SET.

@@ -27,6 +27,7 @@ type Database = typeof DbClient;
 function toLinkDomain(row: AvailabilityLink): Link {
   return {
     id: row.id,
+    tenantId: row.tenantId,
     userId: row.userId,
     slug: row.slug,
     title: row.title,
@@ -87,12 +88,14 @@ type BatchQuery = Parameters<Database["batch"]>[0][number];
 export async function createLink(
   database: Database,
   userId: string,
+  tenantId: string,
   input: CreateLinkCommand,
 ): Promise<LinkWithRelations> {
   const linkId = randomUUID();
   const queries: BatchQuery[] = [
     database.insert(availabilityLinks).values({
       id: linkId,
+      tenantId,
       userId,
       slug: input.slug,
       title: input.title,
@@ -110,14 +113,16 @@ export async function createLink(
   ];
   if (input.rules.length > 0) {
     queries.push(
-      database.insert(availabilityRules).values(input.rules.map((r) => ({ ...r, linkId }))),
+      database
+        .insert(availabilityRules)
+        .values(input.rules.map((r) => ({ tenantId, ...r, linkId }))),
     );
   }
   if (input.excludes.length > 0) {
     queries.push(
       database
         .insert(availabilityExcludes)
-        .values(input.excludes.map((d) => ({ linkId, localDate: d }))),
+        .values(input.excludes.map((d) => ({ tenantId, linkId, localDate: d }))),
     );
   }
   await database.batch(queries as [BatchQuery, ...BatchQuery[]]);
@@ -172,11 +177,14 @@ export async function updateLink(
         .where(and(eq(availabilityLinks.id, linkId), eq(availabilityLinks.userId, userId))),
     );
   }
+  const tenantId = existing.tenantId;
   if (patch.rules !== undefined) {
     queries.push(database.delete(availabilityRules).where(eq(availabilityRules.linkId, linkId)));
     if (patch.rules.length > 0) {
       queries.push(
-        database.insert(availabilityRules).values(patch.rules.map((r) => ({ ...r, linkId }))),
+        database
+          .insert(availabilityRules)
+          .values(patch.rules.map((r) => ({ tenantId, ...r, linkId }))),
       );
     }
   }
@@ -188,7 +196,7 @@ export async function updateLink(
       queries.push(
         database
           .insert(availabilityExcludes)
-          .values(patch.excludes.map((d) => ({ linkId, localDate: d }))),
+          .values(patch.excludes.map((d) => ({ tenantId, linkId, localDate: d }))),
       );
     }
   }
@@ -275,14 +283,16 @@ export async function listLinkCoOwnerUserIds(
  */
 export async function setLinkCoOwners(
   database: Database,
-  link: Pick<Link, "id" | "userId">,
+  link: Pick<Link, "id" | "tenantId" | "userId">,
   userIds: ReadonlyArray<string>,
 ): Promise<void> {
   const filtered = Array.from(new Set(userIds)).filter((u) => u !== link.userId);
   const queries: BatchQuery[] = [database.delete(linkOwners).where(eq(linkOwners.linkId, link.id))];
   if (filtered.length > 0) {
     queries.push(
-      database.insert(linkOwners).values(filtered.map((userId) => ({ linkId: link.id, userId }))),
+      database
+        .insert(linkOwners)
+        .values(filtered.map((userId) => ({ tenantId: link.tenantId, linkId: link.id, userId }))),
     );
   }
   await database.batch(queries as [BatchQuery, ...BatchQuery[]]);

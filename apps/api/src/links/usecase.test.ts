@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
+import { tenants } from "@/db/schema";
 import type { GooglePort } from "@/ports";
 import { buildTestGooglePort } from "@/test/booking-ports";
 import { createTestDb, type TestDb } from "@/test/integration-db";
@@ -32,15 +33,22 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(`
-    TRUNCATE TABLE bookings, link_owners, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, users
+    TRUNCATE TABLE tenant.bookings, tenant.link_owners, tenant.availability_excludes,
+    tenant.availability_rules, tenant.availability_links, tenant.google_calendars,
+    tenant.google_oauth_accounts, common.tenants, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
 
+async function seedTenant(): Promise<string> {
+  const [tenant] = await testDb.insert(tenants).values({ name: "Test Tenant" }).returning();
+  if (!tenant) throw new Error("seed: tenant insert failed");
+  return tenant.id;
+}
+
 async function seedUser(): Promise<string> {
   const u = await insertUser(db, {
-    clerkId: `c_${randomUUID()}`,
+    externalId: `c_${randomUUID()}`,
     email: "owner@example.com",
     name: null,
   });
@@ -67,15 +75,17 @@ const baseInput = (overrides: Partial<CreateLinkCommand> = {}): CreateLinkComman
 
 describe("links/usecase: CRUD", () => {
   test("checkSlugAvailability reflects DB state", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     expect(await checkSlugAvailability(db, "free")).toEqual({ slug: "free", available: true });
-    await createLinkForUser(db, userId, baseInput({ slug: "taken" }));
+    await createLinkForUser(db, userId, tenantId, baseInput({ slug: "taken" }));
     expect(await checkSlugAvailability(db, "taken")).toEqual({ slug: "taken", available: false });
   });
 
   test("createLinkForUser succeeds and returns ok with link", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    const result = await createLinkForUser(db, userId, baseInput());
+    const result = await createLinkForUser(db, userId, tenantId, baseInput());
     expect(result.kind).toBe("ok");
     if (result.kind === "ok") {
       expect(result.link.slug).toBe("intro-30");
@@ -83,35 +93,39 @@ describe("links/usecase: CRUD", () => {
   });
 
   test("createLinkForUser returns slug_taken on duplicate", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    await createLinkForUser(db, userId, baseInput({ slug: "dup" }));
-    const second = await createLinkForUser(db, userId, baseInput({ slug: "dup" }));
+    await createLinkForUser(db, userId, tenantId, baseInput({ slug: "dup" }));
+    const second = await createLinkForUser(db, userId, tenantId, baseInput({ slug: "dup" }));
     expect(second.kind).toBe("slug_taken");
   });
 
   test("listLinks returns links scoped to user", async () => {
+    const tenantId = await seedTenant();
     const userA = await seedUser();
-    await createLinkForUser(db, userA, baseInput({ slug: "a" }));
+    await createLinkForUser(db, userA, tenantId, baseInput({ slug: "a" }));
     const links = await listLinks(db, userA);
     expect(links.map((l) => l.slug)).toContain("a");
   });
 
   test("getLink returns null when not owned", async () => {
+    const tenantId = await seedTenant();
     const userA = await seedUser();
     const userB = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "b@x.com",
       name: null,
     });
-    const created = await createLinkForUser(db, userA, baseInput({ slug: "scoped" }));
+    const created = await createLinkForUser(db, userA, tenantId, baseInput({ slug: "scoped" }));
     if (created.kind !== "ok") throw new Error("seed failed");
     expect(await getLink(db, userB.id, created.link.id)).toBeNull();
   });
 
   test("updateLinkForUser blocks slug collision against another link", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    await createLinkForUser(db, userId, baseInput({ slug: "first" }));
-    const second = await createLinkForUser(db, userId, baseInput({ slug: "second" }));
+    await createLinkForUser(db, userId, tenantId, baseInput({ slug: "first" }));
+    const second = await createLinkForUser(db, userId, tenantId, baseInput({ slug: "second" }));
     if (second.kind !== "ok") throw new Error("seed failed");
 
     const result = await updateLinkForUser(db, userId, second.link.id, { slug: "first" });
@@ -119,8 +133,9 @@ describe("links/usecase: CRUD", () => {
   });
 
   test("updateLinkForUser allows keeping the same slug", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    const created = await createLinkForUser(db, userId, baseInput({ slug: "stable" }));
+    const created = await createLinkForUser(db, userId, tenantId, baseInput({ slug: "stable" }));
     if (created.kind !== "ok") throw new Error("seed failed");
     const result = await updateLinkForUser(db, userId, created.link.id, {
       slug: "stable",
@@ -137,8 +152,9 @@ describe("links/usecase: CRUD", () => {
   });
 
   test("deleteLinkForUser returns true on delete, false otherwise", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    const created = await createLinkForUser(db, userId, baseInput({ slug: "to-delete" }));
+    const created = await createLinkForUser(db, userId, tenantId, baseInput({ slug: "to-delete" }));
     if (created.kind !== "ok") throw new Error("seed failed");
     expect(await deleteLinkForUser(db, userId, created.link.id)).toBe(true);
     expect(await deleteLinkForUser(db, userId, created.link.id)).toBe(false);
@@ -147,10 +163,12 @@ describe("links/usecase: CRUD", () => {
 
 describe("links/usecase: computePublicSlots", () => {
   test("returns empty when range is fully clamped by leadTime/horizon", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     const created = await createLinkForUser(
       db,
       userId,
+      tenantId,
       baseInput({ slug: "lead", leadTimeHours: 1000, isPublished: true }),
     );
     if (created.kind !== "ok") throw new Error("seed failed");
@@ -165,11 +183,13 @@ describe("links/usecase: computePublicSlots", () => {
   });
 
   test("computes slots within Mon 09:00–17:00 JST window", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     // Mon-Fri 9-17 JST
     const created = await createLinkForUser(
       db,
       userId,
+      tenantId,
       baseInput({
         slug: "weekday",
         isPublished: true,
@@ -196,10 +216,12 @@ describe("links/usecase: computePublicSlots", () => {
   test("GooglePort is skipped when the owner has no OAuth account row", async () => {
     // The owner is not connected to Google → port is never invoked even though
     // it's passed in. This is the "OAuth-not-connected" production path.
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     const created = await createLinkForUser(
       db,
       userId,
+      tenantId,
       baseInput({
         slug: "no-oauth",
         isPublished: true,
@@ -238,10 +260,12 @@ describe("links/usecase: computePublicSlots", () => {
     // The recheck path's per-owner try/catch must keep the slot grid usable
     // even if one owner's Google connection is broken. We seed an OAuth row
     // for the owner so the port gets called, then make the port throw.
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     const created = await createLinkForUser(
       db,
       userId,
+      tenantId,
       baseInput({
         slug: "broken-oauth",
         isPublished: true,
@@ -253,6 +277,7 @@ describe("links/usecase: computePublicSlots", () => {
     // Seed an OAuth row so `computePublicSlots` actually calls the port.
     const { googleOauthAccounts } = await import("@/db/schema");
     await testDb.insert(googleOauthAccounts).values({
+      tenantId,
       userId,
       googleUserId: `g_${randomUUID()}`,
       email: "owner@example.com",
@@ -302,10 +327,12 @@ describe("computePublicSlots — confirmed-booking merge (ISH-138)", () => {
   // change rather than a silent regression. If/when bookings are merged,
   // update these tests in the same PR.
   test("confirmed bookings are NOT auto-merged into busy by computePublicSlots", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     const created = await createLinkForUser(
       db,
       userId,
+      tenantId,
       baseInput({
         slug: "merge-confirmed",
         isPublished: true,
@@ -319,6 +346,7 @@ describe("computePublicSlots — confirmed-booking merge (ISH-138)", () => {
     const slotEnd = slotStart + 30 * 60_000;
     const { bookings } = await import("@/db/schema");
     await testDb.insert(bookings).values({
+      tenantId,
       linkId: created.link.id,
       startAt: new Date(slotStart),
       endAt: new Date(slotEnd),
@@ -345,10 +373,12 @@ describe("computePublicSlots — confirmed-booking merge (ISH-138)", () => {
     // The complementary check: the implementation does not differentiate
     // status here because it doesn't read `bookings` at all. Pinning both
     // halves makes the absence of merging unambiguous.
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     const created = await createLinkForUser(
       db,
       userId,
+      tenantId,
       baseInput({
         slug: "merge-canceled",
         isPublished: true,
@@ -361,6 +391,7 @@ describe("computePublicSlots — confirmed-booking merge (ISH-138)", () => {
     const slotEnd = slotStart + 30 * 60_000;
     const { bookings } = await import("@/db/schema");
     await testDb.insert(bookings).values({
+      tenantId,
       linkId: created.link.id,
       startAt: new Date(slotStart),
       endAt: new Date(slotEnd),
@@ -390,10 +421,12 @@ describe("computePublicSlots — non-published links (ISH-138)", () => {
   // that contract so a refactor that moves the gate into the usecase is
   // deliberate.
   test("isPublished=false still returns slots when called directly (gate is at route layer)", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     const created = await createLinkForUser(
       db,
       userId,
+      tenantId,
       baseInput({
         slug: "draft",
         isPublished: false,
@@ -416,11 +449,13 @@ describe("computePublicSlots — non-published links (ISH-138)", () => {
 
 describe("computePublicSlots — excludes × weekly rule interaction (ISH-138)", () => {
   test("an exclude on a weekday-rule day removes all of that day's slots", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     // Mon + Tue 9-17 JST, but exclude the Tuesday.
     const created = await createLinkForUser(
       db,
       userId,
+      tenantId,
       baseInput({
         slug: "exclude-mid",
         isPublished: true,
@@ -450,10 +485,12 @@ describe("computePublicSlots — excludes × weekly rule interaction (ISH-138)",
   });
 
   test("exclude on the rangeStart day suppresses that day's slots", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     const created = await createLinkForUser(
       db,
       userId,
+      tenantId,
       baseInput({
         slug: "exclude-start",
         isPublished: true,
@@ -482,10 +519,12 @@ describe("computePublicSlots — excludes × weekly rule interaction (ISH-138)",
   test("exclude on the day at rangeEnd is moot when range is exclusive of that day", async () => {
     // Range: Mon 00:00 JST → Tue 00:00 JST (exclusive). Tuesday is not part
     // of the range anyway, so excluding it must not affect Mon's slot count.
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     const created = await createLinkForUser(
       db,
       userId,
+      tenantId,
       baseInput({
         slug: "exclude-end-boundary",
         isPublished: true,
@@ -511,12 +550,14 @@ describe("computePublicSlots — excludes × weekly rule interaction (ISH-138)",
 
 describe("computePublicSlots — rangeDays horizon (ISH-138)", () => {
   test("the final horizon day's slots are still returned", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     // rangeDays=7 → horizon = nowMs + 7 days. Open every weekday so we can
     // land slots on the last day deterministically.
     const created = await createLinkForUser(
       db,
       userId,
+      tenantId,
       baseInput({
         slug: "horizon-last",
         isPublished: true,
@@ -552,10 +593,12 @@ describe("computePublicSlots — rangeDays horizon (ISH-138)", () => {
   });
 
   test("requesting one day past horizon returns zero slots", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     const created = await createLinkForUser(
       db,
       userId,
+      tenantId,
       baseInput({
         slug: "horizon-past",
         isPublished: true,
@@ -585,11 +628,13 @@ describe("computePublicSlots — rangeDays horizon (ISH-138)", () => {
 
 describe("computePublicSlots — leadTimeHours boundary (ISH-138)", () => {
   test("a slot whose start is before now+leadTime is excluded", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     // leadTimeHours=2 → only slots starting >= now+2h are eligible.
     const created = await createLinkForUser(
       db,
       userId,
+      tenantId,
       baseInput({
         slug: "lead-2h",
         isPublished: true,
@@ -619,11 +664,13 @@ describe("computePublicSlots — leadTimeHours boundary (ISH-138)", () => {
   });
 
   test("a slot whose start equals now+leadTime exactly IS included (inclusive boundary)", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
     // leadTimeHours=1 → leadEnd is exactly on a slot grid boundary.
     const created = await createLinkForUser(
       db,
       userId,
+      tenantId,
       baseInput({
         slug: "lead-1h-edge",
         isPublished: true,
@@ -649,8 +696,9 @@ describe("computePublicSlots — leadTimeHours boundary (ISH-138)", () => {
 
 describe("links/usecase: co-owner management (ISH-112)", () => {
   test("getCoOwnersForLink returns ok with empty list initially", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    const created = await createLinkForUser(db, userId, baseInput({ slug: "co-empty" }));
+    const created = await createLinkForUser(db, userId, tenantId, baseInput({ slug: "co-empty" }));
     if (created.kind !== "ok") throw new Error("seed");
     const result = await getCoOwnersForLink(db, userId, created.link.id);
     expect(result.kind).toBe("ok");
@@ -658,29 +706,36 @@ describe("links/usecase: co-owner management (ISH-112)", () => {
   });
 
   test("getCoOwnersForLink returns not_found when user does not own the link", async () => {
+    const tenantId = await seedTenant();
     const owner = await seedUser();
     const stranger = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "stranger@x.com",
       name: null,
     });
-    const created = await createLinkForUser(db, owner, baseInput({ slug: "co-scoped" }));
+    const created = await createLinkForUser(db, owner, tenantId, baseInput({ slug: "co-scoped" }));
     if (created.kind !== "ok") throw new Error("seed");
     const result = await getCoOwnersForLink(db, stranger.id, created.link.id);
     expect(result.kind).toBe("not_found");
   });
 
   test("setCoOwnersForLink replaces and returns the new set", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    const created = await createLinkForUser(db, userId, baseInput({ slug: "co-replace" }));
+    const created = await createLinkForUser(
+      db,
+      userId,
+      tenantId,
+      baseInput({ slug: "co-replace" }),
+    );
     if (created.kind !== "ok") throw new Error("seed");
     const u2 = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u2@x.com",
       name: null,
     });
     const u3 = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "u3@x.com",
       name: null,
     });
@@ -690,21 +745,23 @@ describe("links/usecase: co-owner management (ISH-112)", () => {
   });
 
   test("setCoOwnersForLink returns not_found when caller is not the primary owner", async () => {
+    const tenantId = await seedTenant();
     const owner = await seedUser();
     const stranger = await insertUser(db, {
-      clerkId: `c_${randomUUID()}`,
+      externalId: `c_${randomUUID()}`,
       email: "stranger@x.com",
       name: null,
     });
-    const created = await createLinkForUser(db, owner, baseInput({ slug: "co-403" }));
+    const created = await createLinkForUser(db, owner, tenantId, baseInput({ slug: "co-403" }));
     if (created.kind !== "ok") throw new Error("seed");
     const result = await setCoOwnersForLink(db, stranger.id, created.link.id, []);
     expect(result.kind).toBe("not_found");
   });
 
   test("setCoOwnersForLink rejects empty-string user IDs", async () => {
+    const tenantId = await seedTenant();
     const userId = await seedUser();
-    const created = await createLinkForUser(db, userId, baseInput({ slug: "co-bad" }));
+    const created = await createLinkForUser(db, userId, tenantId, baseInput({ slug: "co-bad" }));
     if (created.kind !== "ok") throw new Error("seed");
     const result = await setCoOwnersForLink(db, userId, created.link.id, [""]);
     expect(result.kind).toBe("invalid");

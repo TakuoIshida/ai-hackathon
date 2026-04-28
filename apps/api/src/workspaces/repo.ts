@@ -1,90 +1,66 @@
-import { randomUUID } from "node:crypto";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
-import { users } from "@/db/schema/users";
 import {
-  type Invitation,
-  invitations,
-  type Membership,
-  type MembershipRole,
-  memberships,
-  type Workspace,
-  workspaces,
-} from "@/db/schema/workspaces";
+  type Tenant,
+  type TenantMember,
+  type TenantMemberRole,
+  tenantMembers,
+  tenants,
+} from "@/db/schema/common";
+import { users } from "@/db/schema/users";
+import { type Invitation, invitations } from "@/db/schema/workspaces";
 
 type Database = typeof DbClient;
 type BatchQuery = Parameters<Database["batch"]>[0][number];
 
-export type WorkspaceRow = Workspace;
-export type MembershipRow = Membership;
+export type WorkspaceRow = Tenant;
+export type MembershipRow = TenantMember;
 export type InvitationRow = Invitation;
-
-// Postgres unique-violation SQLSTATE. postgres-js surfaces this as `code` on
-// the thrown error.
-const PG_UNIQUE_VIOLATION = "23505";
-
-function isUniqueViolation(err: unknown): boolean {
-  if (typeof err !== "object" || err === null) return false;
-  const code = (err as { code?: unknown }).code;
-  return typeof code === "string" && code === PG_UNIQUE_VIOLATION;
-}
+export type MembershipRole = TenantMemberRole;
 
 export type CreateWorkspaceInput = {
   name: string;
-  slug: string;
   ownerUserId: string;
 };
 
-export type CreateWorkspaceResult =
-  | { kind: "ok"; workspace: WorkspaceRow }
-  | { kind: "slug_taken" };
+export type CreateWorkspaceResult = { kind: "ok"; workspace: WorkspaceRow };
 
-// We use db.batch (a thin wrapper over a postgres-js callback transaction;
-// see `src/db/client.ts`) to insert the workspace + the owner membership row
-// atomically. Slug uniqueness is enforced by a DB UNIQUE constraint on
-// workspaces.slug — we translate that into a structured `slug_taken` result.
-// (`BatchQuery` is declared once at the top of this module.)
-
+/**
+ * Inserts a new tenant and its initial owner membership atomically using a
+ * transaction. Throws if the owner already belongs to another tenant (the DB
+ * UNIQUE(user_id) constraint on tenant_members enforces 1 user = 1 tenant).
+ */
 export async function createWorkspaceWithOwnerMembership(
   database: Database,
   input: CreateWorkspaceInput,
 ): Promise<CreateWorkspaceResult> {
-  const workspaceId = randomUUID();
-  const queries: [BatchQuery, ...BatchQuery[]] = [
-    database.insert(workspaces).values({
-      id: workspaceId,
-      name: input.name,
-      slug: input.slug,
-      ownerUserId: input.ownerUserId,
-    }),
-    database.insert(memberships).values({
-      workspaceId,
+  // We can't use batch for two dependent inserts (need tenant id from first).
+  // Use a transaction instead.
+  const workspace = await database.transaction(async (tx) => {
+    const [tenant] = await tx.insert(tenants).values({ name: input.name }).returning();
+    if (!tenant) throw new Error("tenant insert returned no row");
+    await tx.insert(tenantMembers).values({
       userId: input.ownerUserId,
+      tenantId: tenant.id,
       role: "owner",
-    }),
-  ];
-  try {
-    await database.batch(queries);
-  } catch (err) {
-    if (isUniqueViolation(err)) return { kind: "slug_taken" };
-    throw err;
-  }
-  const workspace = await findWorkspaceById(database, workspaceId);
-  if (!workspace) throw new Error("workspace disappeared after insert");
+    });
+    return tenant;
+  });
   return { kind: "ok", workspace };
 }
 
 export type WorkspaceWithRole = {
   id: string;
   name: string;
+  /** @deprecated slug removed from common.tenants (ISH-168). Always empty string. */
   slug: string;
   role: MembershipRole;
   createdAt: Date;
 };
 
 /**
- * Workspaces the user is a member of, with their role for each. Ordered by
- * membership createdAt ascending so the user's earliest workspace is first.
+ * Workspaces the user is a member of, with their role. Since 1 user = 1 tenant,
+ * this returns at most one entry. Ordered by membership createdAt ascending.
  */
 export async function listMembershipsForUser(
   database: Database,
@@ -92,19 +68,21 @@ export async function listMembershipsForUser(
 ): Promise<WorkspaceWithRole[]> {
   const rows = await database
     .select({
-      id: workspaces.id,
-      name: workspaces.name,
-      slug: workspaces.slug,
-      role: memberships.role,
-      createdAt: workspaces.createdAt,
-      membershipCreatedAt: memberships.createdAt,
+      id: tenants.id,
+      name: tenants.name,
+      role: tenantMembers.role,
+      createdAt: tenants.createdAt,
+      membershipCreatedAt: tenantMembers.createdAt,
     })
-    .from(memberships)
-    .innerJoin(workspaces, eq(memberships.workspaceId, workspaces.id))
-    .where(eq(memberships.userId, userId));
-  // Sort in JS to keep the query simple; member counts are tiny per user.
+    .from(tenantMembers)
+    .innerJoin(tenants, eq(tenantMembers.tenantId, tenants.id))
+    .where(eq(tenantMembers.userId, userId));
   rows.sort((a, b) => a.membershipCreatedAt.getTime() - b.membershipCreatedAt.getTime());
-  return rows.map(({ membershipCreatedAt: _ignored, ...row }) => row);
+  return rows.map(({ membershipCreatedAt: _ignored, ...row }) => ({
+    ...row,
+    slug: "", // slug removed from common.tenants (ISH-168)
+    role: row.role as MembershipRole,
+  }));
 }
 
 export async function getWorkspaceForMember(
@@ -114,28 +92,28 @@ export async function getWorkspaceForMember(
 ): Promise<WorkspaceWithRole | null> {
   const [row] = await database
     .select({
-      id: workspaces.id,
-      name: workspaces.name,
-      slug: workspaces.slug,
-      role: memberships.role,
-      createdAt: workspaces.createdAt,
+      id: tenants.id,
+      name: tenants.name,
+      role: tenantMembers.role,
+      createdAt: tenants.createdAt,
     })
-    .from(memberships)
-    .innerJoin(workspaces, eq(memberships.workspaceId, workspaces.id))
-    .where(and(eq(memberships.userId, userId), eq(memberships.workspaceId, workspaceId)))
+    .from(tenantMembers)
+    .innerJoin(tenants, eq(tenantMembers.tenantId, tenants.id))
+    .where(and(eq(tenantMembers.userId, userId), eq(tenantMembers.tenantId, workspaceId)))
     .limit(1);
-  return row ?? null;
+  if (!row) return null;
+  return {
+    ...row,
+    slug: "", // slug removed from common.tenants (ISH-168)
+    role: row.role as MembershipRole,
+  };
 }
 
 export async function findWorkspaceById(
   database: Database,
   workspaceId: string,
 ): Promise<WorkspaceRow | null> {
-  const [row] = await database
-    .select()
-    .from(workspaces)
-    .where(eq(workspaces.id, workspaceId))
-    .limit(1);
+  const [row] = await database.select().from(tenants).where(eq(tenants.id, workspaceId)).limit(1);
   return row ?? null;
 }
 
@@ -146,8 +124,8 @@ export async function findMembership(
 ): Promise<MembershipRow | null> {
   const [row] = await database
     .select()
-    .from(memberships)
-    .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
+    .from(tenantMembers)
+    .where(and(eq(tenantMembers.tenantId, workspaceId), eq(tenantMembers.userId, userId)))
     .limit(1);
   return row ?? null;
 }
@@ -164,10 +142,10 @@ export async function updateMembershipRole(
   role: MembershipRole,
 ): Promise<boolean> {
   const result = await database
-    .update(memberships)
+    .update(tenantMembers)
     .set({ role })
-    .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
-    .returning({ id: memberships.id });
+    .where(and(eq(tenantMembers.tenantId, workspaceId), eq(tenantMembers.userId, userId)))
+    .returning({ id: tenantMembers.id });
   return result.length > 0;
 }
 
@@ -181,7 +159,7 @@ export type WorkspaceMemberRow = {
 
 /**
  * ISH-110: list members of a workspace, joined with their user info. Ordered
- * by `memberships.createdAt` ASC so the original owner appears first and
+ * by `tenant_members.createdAt` ASC so the original owner appears first and
  * subsequent joiners follow in the order they accepted.
  */
 export async function listMembersWithUserInfo(
@@ -190,21 +168,21 @@ export async function listMembersWithUserInfo(
 ): Promise<WorkspaceMemberRow[]> {
   const rows = await database
     .select({
-      userId: memberships.userId,
+      userId: tenantMembers.userId,
       email: users.email,
       name: users.name,
-      role: memberships.role,
-      createdAt: memberships.createdAt,
+      role: tenantMembers.role,
+      createdAt: tenantMembers.createdAt,
     })
-    .from(memberships)
-    .innerJoin(users, eq(memberships.userId, users.id))
-    .where(eq(memberships.workspaceId, workspaceId))
-    .orderBy(asc(memberships.createdAt));
-  return rows;
+    .from(tenantMembers)
+    .innerJoin(users, eq(tenantMembers.userId, users.id))
+    .where(eq(tenantMembers.tenantId, workspaceId))
+    .orderBy(asc(tenantMembers.createdAt));
+  return rows.map((r) => ({ ...r, role: r.role as MembershipRole }));
 }
 
 /**
- * ISH-110: delete a single (workspace, user) membership row.
+ * ISH-110: delete a single (workspace, user) tenant_members row.
  * Returns true when a row was actually deleted, false otherwise — the
  * usecase layer maps the latter to `not_found`.
  */
@@ -214,9 +192,9 @@ export async function removeMembership(
   userId: string,
 ): Promise<boolean> {
   const deleted = await database
-    .delete(memberships)
-    .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
-    .returning({ id: memberships.id });
+    .delete(tenantMembers)
+    .where(and(eq(tenantMembers.tenantId, workspaceId), eq(tenantMembers.userId, userId)))
+    .returning({ id: tenantMembers.id });
   return deleted.length > 0;
 }
 
@@ -230,8 +208,8 @@ export async function countOwnersForWorkspace(
 ): Promise<number> {
   const [row] = await database
     .select({ count: sql<number>`count(*)::int` })
-    .from(memberships)
-    .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.role, "owner")));
+    .from(tenantMembers)
+    .where(and(eq(tenantMembers.tenantId, workspaceId), eq(tenantMembers.role, "owner")));
   return row?.count ?? 0;
 }
 
@@ -245,7 +223,7 @@ export async function findOpenInvitationForEmail(
     .from(invitations)
     .where(
       and(
-        eq(invitations.workspaceId, workspaceId),
+        eq(invitations.tenantId, workspaceId),
         eq(invitations.email, email),
         isNull(invitations.acceptedAt),
       ),
@@ -267,7 +245,7 @@ export async function findInvitationByToken(
 }
 
 export type CreateInvitationInput = {
-  workspaceId: string;
+  tenantId: string;
   email: string;
   invitedByUserId: string;
   expiresAt: Date;
@@ -287,9 +265,9 @@ export async function deleteInvitation(database: Database, id: string): Promise<
 }
 
 /**
- * ISH-109: accept an invitation atomically. Inserts the membership row
+ * ISH-109: accept an invitation atomically. Inserts the tenant_members row
  * (skipping the unique-key conflict if the user is already a member of the
- * workspace) AND marks the invitation as accepted in a single batch so partial
+ * tenant) AND marks the invitation as accepted in a single batch so partial
  * failures cannot leave the system half-redeemed.
  *
  * The UPDATE has a `accepted_at IS NULL` guard so a concurrent second accept
@@ -308,13 +286,13 @@ export async function acceptInvitationAtomic(
 ): Promise<void> {
   const queries: BatchQuery[] = [
     database
-      .insert(memberships)
+      .insert(tenantMembers)
       .values({
-        workspaceId: params.workspaceId,
         userId: params.userId,
+        tenantId: params.workspaceId,
         role: "member",
       })
-      .onConflictDoNothing({ target: [memberships.workspaceId, memberships.userId] }),
+      .onConflictDoNothing({ target: [tenantMembers.userId] }),
     database
       .update(invitations)
       .set({ acceptedAt: params.now })

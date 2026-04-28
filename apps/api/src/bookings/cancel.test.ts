@@ -7,6 +7,7 @@ import {
   bookings,
   googleCalendars,
   googleOauthAccounts,
+  tenants,
   users,
 } from "@/db/schema";
 import {
@@ -40,8 +41,9 @@ afterAll(async () => {
 beforeEach(async () => {
   sinks = buildBookingTestSinks(db);
   await testDb.$client.exec(`
-    TRUNCATE TABLE bookings, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, users
+    TRUNCATE TABLE tenant.bookings, tenant.availability_excludes, tenant.availability_rules,
+    tenant.availability_links, tenant.google_calendars, tenant.google_oauth_accounts,
+    common.tenants, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
@@ -56,14 +58,17 @@ type SeedResult = {
 async function seedConfirmedBooking(
   options: { withGoogleEvent?: boolean; withGoogleAccount?: boolean } = {},
 ): Promise<SeedResult> {
+  const [tenant] = await testDb.insert(tenants).values({ name: "Test Tenant" }).returning();
+  if (!tenant) throw new Error("seed tenant");
   const [user] = await testDb
     .insert(users)
-    .values({ clerkId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
+    .values({ externalId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
     .returning();
   if (!user) throw new Error("seed user");
   const [link] = await testDb
     .insert(availabilityLinks)
     .values({
+      tenantId: tenant.id,
       userId: user.id,
       slug: "intro-30min",
       title: "30 min meet",
@@ -78,6 +83,7 @@ async function seedConfirmedBooking(
     const [account] = await testDb
       .insert(googleOauthAccounts)
       .values({
+        tenantId: tenant.id,
         userId: user.id,
         googleUserId: `g_${randomUUID()}`,
         email: "owner@example.com",
@@ -91,6 +97,7 @@ async function seedConfirmedBooking(
       .returning();
     if (!account) throw new Error("seed oauth");
     await testDb.insert(googleCalendars).values({
+      tenantId: tenant.id,
       oauthAccountId: account.id,
       googleCalendarId: "primary@example.com",
       summary: "Owner",
@@ -105,6 +112,7 @@ async function seedConfirmedBooking(
   const [booking] = await testDb
     .insert(bookings)
     .values({
+      tenantId: tenant.id,
       linkId: link.id,
       startAt: new Date("2026-12-14T05:00:00Z"),
       endAt: new Date("2026-12-14T05:30:00Z"),
@@ -231,7 +239,7 @@ describe("cancelBookingByOwner", () => {
     // Different user — must not be able to cancel someone else's booking.
     const [intruder] = await testDb
       .insert(users)
-      .values({ clerkId: `clerk_${randomUUID()}`, email: "intruder@example.com" })
+      .values({ externalId: `clerk_${randomUUID()}`, email: "intruder@example.com" })
       .returning();
     if (!intruder) throw new Error("seed intruder");
 

@@ -8,6 +8,7 @@ import {
   bookings,
   googleCalendars,
   googleOauthAccounts,
+  tenants,
   users,
 } from "@/db/schema";
 import type { LinkWithRelations } from "@/links/domain";
@@ -32,23 +33,32 @@ let testDb: TestDb;
 let sinks: BookingTestSinks;
 
 type SeededLink = {
+  tenantId: string;
   userId: string;
   link: LinkWithRelations;
 };
+
+async function seedTenant(db: TestDb): Promise<string> {
+  const [tenant] = await db.insert(tenants).values({ name: "Test Tenant" }).returning();
+  if (!tenant) throw new Error("seed: tenant insert failed");
+  return tenant.id;
+}
 
 async function seedPublishedLink(
   db: TestDb,
   overrides: { slug?: string } = {},
 ): Promise<SeededLink> {
+  const tenantId = await seedTenant(db);
   const [user] = await db
     .insert(users)
-    .values({ clerkId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
+    .values({ externalId: `clerk_${randomUUID()}`, email: "owner@example.com", name: "Owner" })
     .returning();
   if (!user) throw new Error("seed: user insert failed");
   const slug = overrides.slug ?? "intro-30min";
   const [linkRow] = await db
     .insert(availabilityLinks)
     .values({
+      tenantId,
       userId: user.id,
       slug,
       title: "30 min meeting",
@@ -65,6 +75,7 @@ async function seedPublishedLink(
   // Mon-Fri 9-17 JST — single multi-row INSERT (1 RTT vs 5 in CI Neon HTTP).
   await db.insert(availabilityRules).values(
     [1, 2, 3, 4, 5].map((weekday) => ({
+      tenantId,
       linkId: linkRow.id,
       weekday,
       startMinute: 9 * 60,
@@ -76,13 +87,14 @@ async function seedPublishedLink(
   const { db: clientDb } = await import("@/db/client");
   const link = await findPublishedLinkBySlug(clientDb, slug);
   if (!link) throw new Error("seed: published link not found after insert");
-  return { userId: user.id, link };
+  return { tenantId, userId: user.id, link };
 }
 
-async function seedGoogleCalendar(db: TestDb, userId: string): Promise<string> {
+async function seedGoogleCalendar(db: TestDb, userId: string, tenantId: string): Promise<string> {
   const [account] = await db
     .insert(googleOauthAccounts)
     .values({
+      tenantId,
       userId,
       googleUserId: `g_${randomUUID()}`,
       email: "owner@example.com",
@@ -96,6 +108,7 @@ async function seedGoogleCalendar(db: TestDb, userId: string): Promise<string> {
     .returning();
   if (!account) throw new Error("seed: oauth insert failed");
   await db.insert(googleCalendars).values({
+    tenantId,
     oauthAccountId: account.id,
     googleCalendarId: "primary@example.com",
     summary: "Owner",
@@ -128,8 +141,9 @@ afterAll(async () => {
 beforeEach(async () => {
   sinks = buildBookingTestSinks(db);
   await testDb.$client.exec(`
-    TRUNCATE TABLE bookings, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, users
+    TRUNCATE TABLE tenant.bookings, tenant.availability_excludes, tenant.availability_rules,
+    tenant.availability_links, tenant.google_calendars, tenant.google_oauth_accounts,
+    common.tenants, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
@@ -183,7 +197,7 @@ describe("confirmBooking — happy path without Google", () => {
 describe("confirmBooking — Google integration", () => {
   test("publishes the event, persists googleEventId + meetUrl, and emails go out", async () => {
     const seed = await seedPublishedLink(testDb);
-    await seedGoogleCalendar(testDb, seed.userId);
+    await seedGoogleCalendar(testDb, seed.userId, seed.tenantId);
 
     let createEventCalled = 0;
     let lastTitle: string | undefined;
@@ -246,7 +260,7 @@ describe("confirmBooking — Google integration", () => {
     // booking with no googleEventId / meetUrl. If this should change in the
     // future (e.g. retry queue) it belongs in a separate PR.
     const seed = await seedPublishedLink(testDb);
-    await seedGoogleCalendar(testDb, seed.userId);
+    await seedGoogleCalendar(testDb, seed.userId, seed.tenantId);
 
     let createEventCalls = 0;
     const google = buildTestGooglePort(db, {
@@ -279,7 +293,7 @@ describe("confirmBooking — Google integration", () => {
 
   test("getValidAccessToken throws — booking still stands (no rollback)", async () => {
     const seed = await seedPublishedLink(testDb);
-    await seedGoogleCalendar(testDb, seed.userId);
+    await seedGoogleCalendar(testDb, seed.userId, seed.tenantId);
 
     let createEventCalls = 0;
     const google = buildTestGooglePort(db, {

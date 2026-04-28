@@ -58,12 +58,13 @@ export async function checkSlugAvailability(
 export async function createLinkForUser(
   database: Database,
   userId: string,
+  tenantId: string,
   input: CreateLinkCommand,
 ): Promise<CreateLinkResult> {
   if (await isSlugTaken(database, input.slug)) {
     return { kind: "slug_taken" };
   }
-  const link = await createLink(database, userId, input);
+  const link = await createLink(database, userId, tenantId, input);
   return { kind: "ok", link };
 }
 

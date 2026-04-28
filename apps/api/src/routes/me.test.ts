@@ -26,8 +26,9 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(`
-    TRUNCATE TABLE bookings, availability_excludes, availability_rules,
-    availability_links, google_calendars, google_oauth_accounts, users
+    TRUNCATE TABLE tenant.bookings, tenant.availability_excludes, tenant.availability_rules,
+    tenant.availability_links, tenant.google_calendars, tenant.google_oauth_accounts,
+    common.tenants, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
@@ -59,11 +60,11 @@ describe("/me auth gate (router integration)", () => {
 
 describe("GET /me signed-in success path", () => {
   test("returns the synced dbUser for the current Clerk session", async () => {
-    const clerkId = `clerk_${randomUUID()}`;
+    const externalId = `clerk_${randomUUID()}`;
     const [seeded] = await testDb
       .insert(users)
       .values({
-        clerkId,
+        externalId,
         email: "owner@example.com",
         name: "Owner Name",
         timeZone: "Asia/Tokyo",
@@ -72,13 +73,13 @@ describe("GET /me signed-in success path", () => {
     if (!seeded) throw new Error("seed failed");
 
     const meApp = new Hono();
-    meApp.route("/me", createMeRoute({ authMiddlewares: [fakeClerkSession(clerkId)] }));
+    meApp.route("/me", createMeRoute({ authMiddlewares: [fakeClerkSession(externalId)] }));
 
     const res = await meApp.request("/me");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       id: seeded.id,
-      clerkId,
+      externalId,
       email: "owner@example.com",
       name: "Owner Name",
       timeZone: "Asia/Tokyo",
@@ -86,10 +87,10 @@ describe("GET /me signed-in success path", () => {
   });
 
   test("returns 404 when the Clerk user has no synced row yet", async () => {
-    const clerkId = `clerk_unsynced_${randomUUID()}`;
+    const externalId = `clerk_unsynced_${randomUUID()}`;
     // Note: NOT seeded in DB.
     const meApp = new Hono();
-    meApp.route("/me", createMeRoute({ authMiddlewares: [fakeClerkSession(clerkId)] }));
+    meApp.route("/me", createMeRoute({ authMiddlewares: [fakeClerkSession(externalId)] }));
 
     const res = await meApp.request("/me");
     expect(res.status).toBe(404);

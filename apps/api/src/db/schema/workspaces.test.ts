@@ -2,13 +2,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
-import { memberships, workspaces } from "@/db/schema/workspaces";
+import { tenantMembers, tenants } from "@/db/schema/common";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
 
-// Schema-level integration tests for ISH-105 (workspaces) + ISH-106 (memberships).
-// Verifies the migration applies and the table constraints behave as designed —
-// repo / router come with ISH-107.
+// Schema-level integration tests for common.tenants (ISH-168 D-1).
+// Verifies that the migration applies and table constraints behave as designed.
+// Note: workspaces / memberships have been replaced by common.tenants / common.tenant_members.
 
 let testDb: TestDb;
 
@@ -24,96 +24,72 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(
-    `TRUNCATE TABLE memberships, workspaces, users RESTART IDENTITY CASCADE;`,
+    `TRUNCATE TABLE common.tenant_members, common.tenants, common.users RESTART IDENTITY CASCADE;`,
   );
 });
 
 async function seedUser() {
   return insertUser(db, {
-    clerkId: `c_${randomUUID()}`,
+    externalId: `c_${randomUUID()}`,
     email: `u-${randomUUID()}@x.com`,
     name: null,
   });
 }
 
-async function seedWorkspace(ownerUserId: string, slug = "a", name = "A") {
-  const [row] = await testDb.insert(workspaces).values({ name, slug, ownerUserId }).returning();
-  if (!row) throw new Error("seed: workspace insert failed");
+async function seedTenant(name = "Acme") {
+  const [row] = await testDb.insert(tenants).values({ name }).returning();
+  if (!row) throw new Error("seed: tenant insert failed");
   return row;
 }
 
-describe("workspaces table (ISH-105)", () => {
+describe("common.tenants table (ISH-168)", () => {
   test("inserts a row with required fields and returns defaults", async () => {
-    const owner = await seedUser();
-    const row = await seedWorkspace(owner.id, "acme", "Acme");
-    expect(row.id).toMatch(/^[0-9a-f-]{36}$/i);
+    const row = await seedTenant("Acme Corp");
+    expect(row.id).toMatch(/^[0-9A-Z]{26}$/);
+    expect(row.name).toBe("Acme Corp");
     expect(row.createdAt).toBeInstanceOf(Date);
     expect(row.updatedAt).toBeInstanceOf(Date);
   });
-
-  test("slug is unique", async () => {
-    const owner = await seedUser();
-    await seedWorkspace(owner.id, "dup");
-    await expect(
-      testDb.$client.exec(
-        `INSERT INTO workspaces (name, slug, owner_user_id) VALUES ('B', 'dup', '${owner.id}')`,
-      ),
-    ).rejects.toThrow();
-  });
-
-  test("owner_user_id is restricted: cannot delete a user that owns a workspace", async () => {
-    const owner = await seedUser();
-    await seedWorkspace(owner.id);
-    await expect(
-      testDb.$client.exec(`DELETE FROM users WHERE id = '${owner.id}'`),
-    ).rejects.toThrow();
-  });
 });
 
-describe("memberships table (ISH-106)", () => {
+describe("common.tenant_members table (ISH-168)", () => {
   test("default role is 'member'", async () => {
     const owner = await seedUser();
-    const member = await seedUser();
-    const ws = await seedWorkspace(owner.id);
+    const tenant = await seedTenant();
     const [m] = await testDb
-      .insert(memberships)
-      .values({ workspaceId: ws.id, userId: member.id })
+      .insert(tenantMembers)
+      .values({ userId: owner.id, tenantId: tenant.id })
       .returning();
     expect(m?.role).toBe("member");
   });
 
-  test("(workspace_id, user_id) is unique", async () => {
-    const owner = await seedUser();
-    const u = await seedUser();
-    const ws = await seedWorkspace(owner.id);
-    await testDb.insert(memberships).values({ workspaceId: ws.id, userId: u.id, role: "member" });
+  test("UNIQUE(user_id) enforces 1 user = 1 tenant", async () => {
+    const user = await seedUser();
+    const tenant1 = await seedTenant("Tenant 1");
+    const tenant2 = await seedTenant("Tenant 2");
+    await testDb.insert(tenantMembers).values({ userId: user.id, tenantId: tenant1.id });
+    await expect(
+      testDb.insert(tenantMembers).values({ userId: user.id, tenantId: tenant2.id }).execute(),
+    ).rejects.toThrow();
+  });
+
+  test("role CHECK constraint rejects invalid roles", async () => {
+    const user = await seedUser();
+    const tenant = await seedTenant();
     await expect(
       testDb.$client.exec(
-        `INSERT INTO memberships (workspace_id, user_id, role) VALUES ('${ws.id}', '${u.id}', 'owner')`,
+        `INSERT INTO common.tenant_members (id, user_id, tenant_id, role)
+         VALUES ('${randomUUID()}${randomUUID()}', '${user.id}', '${tenant.id}', 'admin')`,
       ),
     ).rejects.toThrow();
   });
 
-  test("a user can belong to multiple workspaces", async () => {
-    const owner = await seedUser();
-    const u = await seedUser();
-    const wsA = await seedWorkspace(owner.id, "a", "A");
-    const wsB = await seedWorkspace(owner.id, "b", "B");
-    await testDb.insert(memberships).values([
-      { workspaceId: wsA.id, userId: u.id },
-      { workspaceId: wsB.id, userId: u.id },
-    ]);
-    const rows = await testDb.select().from(memberships).where(eq(memberships.userId, u.id));
-    expect(rows.length).toBe(2);
-  });
-
-  test("deleting a workspace cascades memberships", async () => {
-    const owner = await seedUser();
-    const u = await seedUser();
-    const ws = await seedWorkspace(owner.id);
-    await testDb.insert(memberships).values({ workspaceId: ws.id, userId: u.id });
-    await testDb.delete(workspaces).where(eq(workspaces.id, ws.id));
-    const rows = await testDb.select().from(memberships);
+  test("deleting a tenant cascades tenant_members", async () => {
+    const user = await seedUser();
+    const tenant = await seedTenant();
+    await testDb.insert(tenantMembers).values({ userId: user.id, tenantId: tenant.id });
+    await testDb.delete(tenants).where(eq(tenants.id, tenant.id));
+    const rows = await testDb.select().from(tenantMembers);
     expect(rows.length).toBe(0);
   });
 });
