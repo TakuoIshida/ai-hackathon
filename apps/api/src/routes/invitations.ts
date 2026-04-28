@@ -120,8 +120,13 @@ export function createInvitationsRoute(deps: InvitationsRouteDeps = {}): Hono<an
 
   // Public preview — no auth. The unauth landing page reads it before the
   // user has signed in to decide what UI to show. Returns only what's needed
-  // to render the page; we deliberately don't echo whether the email matches
-  // any signed-in caller.
+  // to render the page; intentionally MINIMAL.
+  //
+  // ISH-208: do NOT include the invited email in the response. An attacker
+  // who guesses or steals a token URL would otherwise be able to enumerate
+  // which email a tenant invited. The FE renders only the workspace name +
+  // expired flag — the email match is implicitly checked at POST /accept
+  // time (collapsed to 404 by ISH-194).
   route.get("/:token", async (c) => {
     const token = c.req.param("token");
     const invitation = await findInvitationByToken(db, token);
@@ -131,7 +136,6 @@ export function createInvitationsRoute(deps: InvitationsRouteDeps = {}): Hono<an
     const expired = invitation.acceptedAt !== null || invitation.expiresAt.getTime() < Date.now();
     return c.json({
       workspace: { name: workspace.name },
-      email: invitation.email,
       expired,
     });
   });

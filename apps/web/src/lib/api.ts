@@ -161,13 +161,14 @@ export const api = {
       getToken,
     }),
 
-  // ISH-109 / ISH-179: invitation preview (GET, no auth).
+  // ISH-109 / ISH-179 / ISH-208: invitation preview (GET, no auth).
   // The unauth landing page reads it before the user has signed in.
-  // New shape (ISH-176): workspace no longer includes `slug`.
+  // ISH-208: response intentionally omits `email` to prevent invitee
+  // enumeration via guessed/stolen tokens. The email match is enforced
+  // at POST /accept time (collapsed to 404 per ISH-194).
   getInvitation: (token: string) =>
     request<{
       workspace: { name: string };
-      email: string;
       expired: boolean;
     }>(`/invitations/${encodeURIComponent(token)}`),
 

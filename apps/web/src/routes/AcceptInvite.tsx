@@ -30,13 +30,11 @@ import { colors, space } from "@/styles/tokens.stylex";
 const styles = stylex.create({
   page: { display: "flex", flexDirection: "column", gap: space.lg },
   row: { display: "flex", gap: space.sm, flexWrap: "wrap" },
-  meta: { color: colors.muted, fontSize: "0.875rem" },
   error: { color: colors.destructive, fontSize: "0.875rem" },
 });
 
 type PreviewData = {
   workspaceName: string;
-  email: string;
   expired: boolean;
 };
 
@@ -80,7 +78,6 @@ export default function AcceptInvite() {
           kind: "loaded",
           preview: {
             workspaceName: data.workspace.name,
-            email: data.email,
             expired: data.expired,
           },
         });
@@ -181,9 +178,7 @@ export default function AcceptInvite() {
       <Card>
         <CardHeader>
           <CardTitle>{preview.workspaceName} に招待されています</CardTitle>
-          <CardDescription>
-            <span {...stylex.props(styles.meta)}>{preview.email}</span> 宛の招待です。
-          </CardDescription>
+          <CardDescription>サインインして「テナントに参加」を押してください。</CardDescription>
         </CardHeader>
         <CardBody>
           {accept.kind === "error" && (
