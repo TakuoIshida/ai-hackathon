@@ -1,22 +1,121 @@
-import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
+import { eq } from "drizzle-orm";
+import { Hono, type MiddlewareHandler } from "hono";
 import { db } from "@/db/client";
-import { type AuthVars, attachDbUser, getDbUser, requireAuth } from "@/middleware/auth";
+import { tenantMembers } from "@/db/schema/common";
+import { acceptInvitationParamsSchema, createInvitationBodySchema } from "@/invitations/schemas";
+import { acceptInvitation, createInvitation } from "@/invitations/usecase";
+import {
+  type AuthVars,
+  attachDbUser,
+  attachTenantContext,
+  getDbUser,
+  getTenantId,
+  requireAuth,
+} from "@/middleware/auth";
 import { findInvitationByToken, findWorkspaceById } from "@/workspaces/repo";
-import { acceptInvitation } from "@/workspaces/usecase";
 
 /**
- * ISH-109: invitation acceptance.
+ * ISH-176: tenant-scoped invitation flow.
  *
- * Mounted on its own (NOT under `/workspaces/:id/...`) because:
- *   - GET /invitations/:token must be public — the unauth landing page reads
- *     it before the user has signed in / chosen a workspace.
- *   - The accept flow is keyed by `token`, not by workspace id, so it would
- *     read awkwardly under the workspace router.
+ * Two separate routers:
+ *   - `tenantInvitationsRoute` → mounted at `/tenant/invitations` (owner-only,
+ *     behind attachTenantContext)
+ *   - `invitationsRoute` → mounted at `/invitations` (accept endpoint — no
+ *     attachTenantContext because invitee has no tenant membership yet)
  *
- * Auth is applied per-route rather than as a router-level middleware so the
- * GET stays public.
+ * The existing GET /invitations/:token (public preview) is preserved for
+ * backwards-compatibility with the FE AcceptInvite page.
  */
-export function createInvitationsRoute() {
+
+// ---------------------------------------------------------------------------
+// POST /tenant/invitations — issue a new invitation (owner only)
+// ---------------------------------------------------------------------------
+
+export type TenantInvitationsRouteDeps = {
+  /** Test escape hatch: inject fake auth middleware stack. */
+  authMiddlewares?: MiddlewareHandler[];
+};
+
+// biome-ignore lint/suspicious/noExplicitAny: route factory returns a generic Hono instance
+export function createTenantInvitationsRoute(deps: TenantInvitationsRouteDeps = {}): Hono<any> {
+  const route = new Hono<{ Variables: AuthVars }>();
+
+  if (deps.authMiddlewares) {
+    for (const mw of deps.authMiddlewares) {
+      route.use("*", mw);
+    }
+  } else {
+    route.use("*", requireAuth);
+    route.use("*", attachDbUser);
+    route.use("*", attachTenantContext);
+  }
+
+  /**
+   * POST /tenant/invitations
+   *
+   * Issue a new invitation to join the caller's tenant. Only owners may issue
+   * invitations.
+   *
+   * Body: { email: string, role?: "owner" | "member" }
+   * Responses:
+   *   201 { invitationId, token, expiresAt }
+   *   400 zod validation error
+   *   401 unauthenticated
+   *   403 caller is not an owner
+   *   409 { error: "already_member" | "already_invited" }
+   */
+  route.post("/", zValidator("json", createInvitationBodySchema), async (c) => {
+    const dbUser = getDbUser(c);
+    const tenantId = getTenantId(c);
+    const { email, role } = c.req.valid("json");
+
+    // Verify the caller is an owner of this tenant.
+    const [membership] = await db
+      .select({ role: tenantMembers.role })
+      .from(tenantMembers)
+      .where(eq(tenantMembers.userId, dbUser.id))
+      .limit(1);
+
+    if (!membership || membership.role !== "owner") {
+      return c.json({ error: "forbidden" }, 403);
+    }
+
+    const result = await createInvitation(db, tenantId, dbUser.id, { email, role });
+
+    if (result.kind === "already_member") {
+      return c.json({ error: "already_member" }, 409);
+    }
+    if (result.kind === "already_invited") {
+      return c.json({ error: "already_invited" }, 409);
+    }
+
+    return c.json(
+      {
+        invitationId: result.invitationId,
+        token: result.token,
+        expiresAt: result.expiresAt.toISOString(),
+      },
+      201,
+    );
+  });
+
+  return route;
+}
+
+export const tenantInvitationsRoute = createTenantInvitationsRoute();
+
+// ---------------------------------------------------------------------------
+// /invitations — accept flow + public preview
+// ---------------------------------------------------------------------------
+
+export type InvitationsRouteDeps = {
+  /** Test escape hatch: inject fake auth middleware instead of real requireAuth + attachDbUser. */
+  authMiddlewares?: MiddlewareHandler[];
+};
+
+// biome-ignore lint/suspicious/noExplicitAny: route factory returns a generic Hono instance
+export function createInvitationsRoute(deps: InvitationsRouteDeps = {}): Hono<any> {
   const route = new Hono<{ Variables: AuthVars }>();
 
   // Public preview — no auth. The unauth landing page reads it before the
@@ -37,21 +136,47 @@ export function createInvitationsRoute() {
     });
   });
 
-  // Auth-gated accept. Per-route middleware so GET above stays public.
-  route.post("/:token/accept", requireAuth, attachDbUser, async (c) => {
-    const token = c.req.param("token");
+  /**
+   * POST /invitations/:token/accept
+   *
+   * Accept a tenant invitation. The caller must be authenticated but does NOT
+   * need an existing tenant membership (they're joining via this invite).
+   * attachTenantContext is intentionally NOT mounted here — same pattern as
+   * /onboarding/tenant.
+   *
+   * Params: token (UUID v4)
+   * Responses:
+   *   201 { tenantId, role }
+   *   401 unauthenticated
+   *   403 email_mismatch (invitee email ≠ caller email)
+   *   404 not_found (invalid token)
+   *   409 already_accepted | user_already_in_tenant
+   *   410 expired
+   */
+  if (deps.authMiddlewares) {
+    for (const mw of deps.authMiddlewares) {
+      route.use("/:token/accept", mw);
+    }
+  } else {
+    route.use("/:token/accept", requireAuth);
+    route.use("/:token/accept", attachDbUser);
+  }
+
+  route.post("/:token/accept", zValidator("param", acceptInvitationParamsSchema), async (c) => {
+    const { token } = c.req.valid("param");
     const dbUser = getDbUser(c);
+
     const result = await acceptInvitation(db, dbUser.id, dbUser.email, token);
+
     if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
     if (result.kind === "expired") return c.json({ error: "expired" }, 410);
-    if (result.kind === "already_accepted") return c.json({ error: "already_accepted" }, 410);
-    if (result.kind === "email_mismatch") return c.json({ error: "email_mismatch" }, 409);
-    return c.json({
-      workspace: {
-        id: result.workspace.id,
-        name: result.workspace.name,
-      },
-    });
+    if (result.kind === "already_accepted") return c.json({ error: "already_accepted" }, 409);
+    if (result.kind === "email_mismatch") return c.json({ error: "email_mismatch" }, 403);
+    if (result.kind === "user_already_in_tenant") {
+      return c.json({ error: "user_already_in_tenant" }, 409);
+    }
+
+    return c.json({ tenantId: result.tenantId, role: result.role }, 201);
   });
 
   return route;
