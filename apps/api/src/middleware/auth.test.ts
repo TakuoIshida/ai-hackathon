@@ -2,10 +2,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { randomUUID } from "node:crypto";
 import { Hono, type MiddlewareHandler } from "hono";
 import { clearDbForTests, setDbForTests } from "@/db/client";
-import { users } from "@/db/schema";
+import { tenantMembers, tenants, users } from "@/db/schema";
 import {
   type AuthVars,
   attachDbUser,
+  attachTenantContext,
   getClerkUserId,
   getDbUser,
   requireAuth,
@@ -33,7 +34,7 @@ beforeEach(async () => {
   await testDb.$client.exec(`
     TRUNCATE TABLE tenant.bookings, tenant.availability_excludes, tenant.availability_rules,
     tenant.availability_links, tenant.google_calendars, tenant.google_oauth_accounts,
-    common.tenants, common.users
+    common.tenant_members, common.tenants, common.users
     RESTART IDENTITY CASCADE;
   `);
 });
@@ -241,5 +242,96 @@ describe("getDbUser", () => {
 
     const res = await app.request("/probe");
     expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// attachTenantContext tests (ISH-171)
+// ---------------------------------------------------------------------------
+
+describe("attachTenantContext", () => {
+  /**
+   * Helper: inserts a user + tenant + tenant_members row (using the test DB
+   * superuser connection which bypasses RLS) and returns a fake-auth middleware
+   * that sets both identityClaims and dbUser on the context.
+   */
+  async function seedUserWithTenant(): Promise<{
+    externalId: string;
+    tenantId: string;
+    fakeAuth: MiddlewareHandler;
+  }> {
+    const externalId = `clerk_tenant_${randomUUID()}`;
+    const email = `tenant-${randomUUID()}@example.com`;
+
+    const [user] = await testDb
+      .insert(users)
+      .values({ externalId, email, name: "Tenant User" })
+      .returning();
+    if (!user) throw new Error("seed user failed");
+
+    const [tenant] = await testDb.insert(tenants).values({ name: "Test Org" }).returning();
+    if (!tenant) throw new Error("seed tenant failed");
+
+    await testDb
+      .insert(tenantMembers)
+      .values({ userId: user.id, tenantId: tenant.id, role: "owner" });
+
+    const fakeAuth: MiddlewareHandler<{ Variables: AuthVars }> = async (c, next) => {
+      const claims: IdentityClaims = { externalId, email, emailVerified: true };
+      c.set("identityClaims", claims as never);
+      c.set("dbUser", user as never);
+      await next();
+    };
+
+    return { externalId, tenantId: tenant.id, fakeAuth };
+  }
+
+  test("sets tenantId on context and calls next() when user has a tenant", async () => {
+    const { tenantId, fakeAuth } = await seedUserWithTenant();
+
+    const app = new Hono<{ Variables: AuthVars }>();
+    app.use("*", fakeAuth);
+    app.use("*", attachTenantContext);
+    app.get("/probe", (c) => {
+      return c.json({ tenantId: c.get("tenantId") });
+    });
+    app.onError((err, c) => c.json({ error: String(err) }, 500));
+
+    const res = await app.request("/probe");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { tenantId: string };
+    expect(body.tenantId).toBe(tenantId);
+  });
+
+  test("returns 403 when user has no tenant_members row", async () => {
+    const externalId = `clerk_notenant_${randomUUID()}`;
+    const [user] = await testDb
+      .insert(users)
+      .values({ externalId, email: `nt-${randomUUID()}@example.com`, name: "No Tenant" })
+      .returning();
+    if (!user) throw new Error("seed user failed");
+
+    const fakeAuth: MiddlewareHandler<{ Variables: AuthVars }> = async (c, next) => {
+      const claims: IdentityClaims = {
+        externalId,
+        email: user.email,
+        emailVerified: true,
+      };
+      c.set("identityClaims", claims as never);
+      c.set("dbUser", user as never);
+      await next();
+    };
+
+    const app = new Hono<{ Variables: AuthVars }>();
+    app.use("*", fakeAuth);
+    app.use("*", attachTenantContext);
+    app.get("/probe", (c) => c.json({ ok: true }));
+    app.onError((err, c) => {
+      const status = "status" in err ? (err as { status: number }).status : 500;
+      return c.json({ error: "err" }, status as 403);
+    });
+
+    const res = await app.request("/probe");
+    expect(res.status).toBe(403);
   });
 });

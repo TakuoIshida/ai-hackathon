@@ -1,6 +1,7 @@
 import type { BatchItem } from "drizzle-orm/batch";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { getRequestScope } from "./request-scope";
 import * as schema from "./schema";
 
 /**
@@ -69,9 +70,18 @@ export function clearDbForTests(): void {
 
 // Bind methods to the underlying drizzle instance so any internal `this` access
 // (e.g. drizzle reaching its own session/dialect) works through the proxy.
+//
+// When `attachTenantContext` middleware is active, the proxy transparently
+// routes all DB operations through the request-scoped transaction so every
+// query inside a request automatically participates in the transaction that
+// has `app.tenant_id` set via SET LOCAL.  Outside of a request scope (during
+// migrations, seed scripts, or tests that bypass the middleware) the proxy
+// falls back to the baseline connection pool.
 export const db = new Proxy({} as Db, {
   get(_target, prop) {
-    const target = getDb();
+    // Prefer the transaction-bound client when inside a request scope.
+    const scope = getRequestScope();
+    const target = scope ? (scope.tx as unknown as Db) : getDb();
     const value = Reflect.get(target, prop);
     return typeof value === "function" ? value.bind(target) : value;
   },
