@@ -1,6 +1,12 @@
 import type React from "react";
 
 export type UseAuthResult = {
+  /**
+   * SDK のロード完了フラグ。`false` の間は `isSignedIn` の値を信用しないこと
+   * (loading のまま render すると一瞬 sign-out 扱いになり、AuthGuard が
+   * /sign-in に flash redirect する原因になる)。
+   */
+  isLoaded: boolean;
   isSignedIn: boolean;
   /** ベンダー独立の身元 ID (Clerk: clerk_id / Auth0: sub)。アプリ DB の users.id (ULID) とは別物 */
   externalId: string | null;

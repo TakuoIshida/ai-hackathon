@@ -58,10 +58,19 @@ async function request<T>(
       `${res.status} ${res.statusText}`,
     );
     // 401: session expired or token invalid → redirect to sign-in.
+    // Skip the redirect when we're already on an unauthenticated path:
+    //   - /sign-in / /sign-up: would cause a redirect loop
+    //   - /invite/:token: AcceptInvite calls api.getInvitation (unauth GET).
+    //     If the backend returns 401 for any reason (regression / misconfig),
+    //     we don't want to rip the user away from the invitation landing page.
     // window check guards against SSR / test environments that don't set
     // window.location.replace.
-    if (res.status === 401 && typeof window !== "undefined" && window.location.replace) {
-      window.location.replace("/sign-in");
+    if (res.status === 401 && typeof window !== "undefined" && window.location?.replace) {
+      const pathname = window.location.pathname ?? "";
+      const onUnauthPath = pathname.startsWith("/sign-") || pathname.startsWith("/invite/");
+      if (!onUnauthPath) {
+        window.location.replace("/sign-in");
+      }
     }
     throw err;
   }
