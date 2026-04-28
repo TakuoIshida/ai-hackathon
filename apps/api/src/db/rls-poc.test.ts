@@ -67,7 +67,8 @@ beforeEach(async () => {
 
 // ---------------------------------------------------------------------------
 // Helper: seed a tenant + user + availability_link row using the superuser
-// connection (bypasses RLS). Returns ids.
+// connection (bypasses RLS). Returns ids. Uses parameterized tagged-template
+// queries — never string-concat user-controlled values into SQL.
 // ---------------------------------------------------------------------------
 async function seedTenantWithLink(opts: {
   tenantName: string;
@@ -76,15 +77,17 @@ async function seedTenantWithLink(opts: {
   const tenantId = ulid();
   const userId = ulid();
   const linkId = ulid();
+  const externalId = `clerk_${randomUUID()}`;
+  const slug = `slug-${randomUUID().slice(0, 8)}`;
 
-  await testDb.$client.exec(`
-    INSERT INTO common.tenants (id, name) VALUES ('${tenantId}', '${opts.tenantName}');
-    INSERT INTO common.users (id, external_id, email) VALUES ('${userId}', 'clerk_${randomUUID()}', '${opts.email}');
+  await rawSql`INSERT INTO common.tenants (id, name) VALUES (${tenantId}, ${opts.tenantName})`;
+  await rawSql`INSERT INTO common.users (id, external_id, email) VALUES (${userId}, ${externalId}, ${opts.email})`;
+  await rawSql`
     INSERT INTO tenant.availability_links
       (id, tenant_id, user_id, slug, title, duration_minutes, time_zone)
     VALUES
-      ('${linkId}', '${tenantId}', '${userId}', 'slug-${randomUUID().slice(0, 8)}', 'Test', 30, 'Asia/Tokyo');
-  `);
+      (${linkId}, ${tenantId}, ${userId}, ${slug}, ${"Test"}, ${30}, ${"Asia/Tokyo"})
+  `;
 
   return { tenantId, userId, linkId };
 }
@@ -159,22 +162,40 @@ describe("0003_rls migration", () => {
 // ---------------------------------------------------------------------------
 // Helper: run a query as the app role with a specific tenant_id set via
 // SET LOCAL inside a transaction. Returns the SELECT result rows.
+//
+// `set_config(..., true)` is the parameterizable form of `SET LOCAL` — never
+// string-concat tenantId into the SQL. Pass `null` to leave app.tenant_id
+// unset (RLS should return 0 rows). Pass `""` to set it to the empty string
+// (RLS should also return 0 rows — fail-closed).
 // ---------------------------------------------------------------------------
 async function queryAsApp(
   query: string,
   tenantId: string | null,
 ): Promise<Array<Record<string, unknown>>> {
-  // postgres-js `unsafe` only handles a single statement at a time reliably
-  // for result-set access. Use a transaction callback instead.
   const result = await rawSql.begin(async (tx) => {
-    // Switch to app role for this transaction
     await tx.unsafe("SET LOCAL ROLE app");
     if (tenantId !== null) {
-      await tx.unsafe(`SET LOCAL app.tenant_id = '${tenantId}'`);
+      await tx`SELECT set_config('app.tenant_id', ${tenantId}, true)`;
     }
     return tx.unsafe(query);
   });
   return result as Array<Record<string, unknown>>;
+}
+
+/**
+ * Same as queryAsApp but for write-path testing. Returns the row count
+ * affected by the statement (insert/update/delete). Throws if the statement
+ * raises (e.g. WITH CHECK violation).
+ */
+async function execAsApp(query: string, tenantId: string | null): Promise<number> {
+  const result = await rawSql.begin(async (tx) => {
+    await tx.unsafe("SET LOCAL ROLE app");
+    if (tenantId !== null) {
+      await tx`SELECT set_config('app.tenant_id', ${tenantId}, true)`;
+    }
+    return tx.unsafe(query);
+  });
+  return result.count;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,5 +233,84 @@ describe("RLS cross-tenant isolation", () => {
     const tenantIds = rows.map((r) => r.id as string);
     expect(tenantIds).toContain(tenantA.tenantId);
     expect(tenantIds).toContain(tenantB.tenantId);
+  });
+
+  test("app role with EMPTY app.tenant_id returns 0 rows (fail-closed)", async () => {
+    // A buggy middleware could set app.tenant_id to '' instead of leaving it
+    // unset. The policy comparison `tenant_id = ''` is always false, so RLS
+    // still hides every row. Pin this behavior so it can't regress silently.
+    await seedTenantWithLink({ tenantName: "Tenant F", email: "f@example.com" });
+
+    const rows = await queryAsApp("SELECT id FROM tenant.availability_links", "");
+
+    expect(rows).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 3: Write-path RLS — INSERT (WITH CHECK) / UPDATE / DELETE cross-tenant
+// ---------------------------------------------------------------------------
+describe("RLS write-path isolation", () => {
+  test("INSERT with cross-tenant tenant_id is rejected by WITH CHECK", async () => {
+    const tenantA = await seedTenantWithLink({ tenantName: "Tenant W1", email: "w1@example.com" });
+    const tenantB = await seedTenantWithLink({ tenantName: "Tenant W2", email: "w2@example.com" });
+
+    // app.tenant_id is set to A, but the row tries to write to B → WITH CHECK
+    // raises a row-violation error. We assert the rejection is loud, not silent.
+    const stolenLinkId = ulid();
+    const stolenSlug = `evil-${randomUUID().slice(0, 8)}`;
+    await expect(
+      rawSql.begin(async (tx) => {
+        await tx.unsafe("SET LOCAL ROLE app");
+        await tx`SELECT set_config('app.tenant_id', ${tenantA.tenantId}, true)`;
+        await tx`
+          INSERT INTO tenant.availability_links
+            (id, tenant_id, user_id, slug, title, duration_minutes, time_zone)
+          VALUES
+            (${stolenLinkId}, ${tenantB.tenantId}, ${tenantB.userId}, ${stolenSlug}, ${"Steal"}, ${30}, ${"Asia/Tokyo"})
+        `;
+      }),
+    ).rejects.toThrow(/row-level security|new row violates row-level security/i);
+
+    // Confirm the row never landed (admin-bypass count).
+    const rows = await rawSql<Array<{ id: string }>>`
+      SELECT id FROM tenant.availability_links WHERE id = ${stolenLinkId}
+    `;
+    expect(rows).toHaveLength(0);
+  });
+
+  test("UPDATE on cross-tenant row affects 0 rows (USING filters them out)", async () => {
+    const tenantA = await seedTenantWithLink({ tenantName: "Tenant W3", email: "w3@example.com" });
+    const tenantB = await seedTenantWithLink({ tenantName: "Tenant W4", email: "w4@example.com" });
+
+    // app.tenant_id = A → tenant B's link is invisible → UPDATE matches 0 rows.
+    const affected = await execAsApp(
+      `UPDATE tenant.availability_links SET title = 'pwned' WHERE id = '${tenantB.linkId}'`,
+      tenantA.tenantId,
+    );
+    expect(affected).toBe(0);
+
+    // Confirm tenant B's link is still untouched (admin-bypass read).
+    const rows = await rawSql<Array<{ title: string }>>`
+      SELECT title FROM tenant.availability_links WHERE id = ${tenantB.linkId}
+    `;
+    expect(rows[0]?.title).toBe("Test");
+  });
+
+  test("DELETE on cross-tenant row affects 0 rows", async () => {
+    const tenantA = await seedTenantWithLink({ tenantName: "Tenant W5", email: "w5@example.com" });
+    const tenantB = await seedTenantWithLink({ tenantName: "Tenant W6", email: "w6@example.com" });
+
+    const affected = await execAsApp(
+      `DELETE FROM tenant.availability_links WHERE id = '${tenantB.linkId}'`,
+      tenantA.tenantId,
+    );
+    expect(affected).toBe(0);
+
+    // Confirm tenant B's link is still there.
+    const rows = await rawSql<Array<{ id: string }>>`
+      SELECT id FROM tenant.availability_links WHERE id = ${tenantB.linkId}
+    `;
+    expect(rows).toHaveLength(1);
   });
 });
