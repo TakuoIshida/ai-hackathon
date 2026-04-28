@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
 import { tenantMembers, tenants } from "@/db/schema/common";
 import { invitations } from "@/db/schema/tenant";
@@ -178,11 +178,40 @@ describe("invitations/usecase: acceptInvitation (ISH-176)", () => {
     expect(result.kind).toBe("already_accepted");
   });
 
-  test("email_mismatch: returns email_mismatch (403) when caller email differs from invitation email", async () => {
+  test("email_mismatch is collapsed to not_found (ISH-194: don't leak token liveness)", async () => {
+    // The wrong-email caller must not learn anything more than someone who
+    // submitted a totally bogus token. Both → 404 not_found.
     const { invitation } = await seedInvitation({ email: "correct@example.com" });
     const wrongUser = await seedUser("wrong@example.com");
     const result = await acceptInvitation(db, wrongUser.id, wrongUser.email, invitation.token);
-    expect(result.kind).toBe("email_mismatch");
+    expect(result.kind).toBe("not_found");
+  });
+
+  test("error precedence: expired > email-mismatch (an expired invite for the wrong user surfaces expired, not not_found)", async () => {
+    // Pin the order so a future refactor doesn't put email check first
+    // (regression to the leak path).
+    const { invitation } = await seedInvitation({ email: "correct@example.com" });
+    // Force expiry into the past via a direct UPDATE.
+    await testDb.execute(
+      sql`UPDATE tenant.invitations SET expires_at = NOW() - INTERVAL '1 day' WHERE id = ${invitation.id}`,
+    );
+    const wrongUser = await seedUser("wrong@example.com");
+    const result = await acceptInvitation(db, wrongUser.id, wrongUser.email, invitation.token);
+    expect(result.kind).toBe("expired");
+  });
+
+  test("error precedence: already_accepted > email-mismatch", async () => {
+    const inviteeEmail = "invitee@example.com";
+    const { invitation } = await seedInvitation({ email: inviteeEmail });
+    const invitee = await seedUser(inviteeEmail);
+    // First accept (legit) — sets accepted_at.
+    const first = await acceptInvitation(db, invitee.id, invitee.email, invitation.token);
+    expect(first.kind).toBe("ok");
+    // Second attempt with the wrong email must surface already_accepted, not
+    // not_found — pin the precedence so the email check stays last.
+    const wrongUser = await seedUser("wrong@example.com");
+    const result = await acceptInvitation(db, wrongUser.id, wrongUser.email, invitation.token);
+    expect(result.kind).toBe("already_accepted");
   });
 
   test("user_already_in_tenant: returns user_already_in_tenant (409) when caller is already a tenant member", async () => {
