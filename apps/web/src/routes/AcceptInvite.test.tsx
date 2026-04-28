@@ -1,3 +1,10 @@
+/**
+ * AcceptInvite tests — new ISH-176 D-7 API shape:
+ *   GET /invitations/:token         → { workspace: { name }, email, expired }
+ *   POST /invitations/:token/accept → { tenantId, role }
+ *                                    409 → navigate to /dashboard (already member)
+ *                                    410 / 403 / 404 → show error
+ */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, test, vi } from "vitest";
@@ -39,7 +46,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     api: {
       getInvitation: vi.fn(),
-      acceptInvitation: vi.fn(),
+      acceptTenantInvitation: vi.fn(),
     },
   };
 });
@@ -76,7 +83,7 @@ describe("<AcceptInvite />", () => {
 
   test("expired: shows the expired message", async () => {
     mockedApi.getInvitation.mockResolvedValueOnce({
-      workspace: { name: "Acme", slug: "acme" },
+      workspace: { name: "Acme" },
       email: "invitee@example.com",
       expired: true,
     });
@@ -87,57 +94,104 @@ describe("<AcceptInvite />", () => {
   test("unauth: shows サインインして承認 button", async () => {
     authMockState.isSignedIn = false;
     mockedApi.getInvitation.mockResolvedValueOnce({
-      workspace: { name: "Acme", slug: "acme" },
+      workspace: { name: "Acme" },
       email: "invitee@example.com",
       expired: false,
     });
     renderAt("good-token");
     expect(await screen.findByRole("button", { name: "サインインして承認" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "ワークスペースに参加" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "テナントに参加" })).toBeNull();
   });
 
-  test("auth + accept: calls API and navigates to /dashboard/workspaces/:id", async () => {
+  test("auth + accept: calls API and navigates to /dashboard", async () => {
     authMockState.isSignedIn = true;
     mockedApi.getInvitation.mockResolvedValueOnce({
-      workspace: { name: "Acme", slug: "acme" },
+      workspace: { name: "Acme" },
       email: "invitee@example.com",
       expired: false,
     });
-    mockedApi.acceptInvitation.mockResolvedValueOnce({
-      workspace: { id: "ws-123", slug: "acme", name: "Acme" },
+    mockedApi.acceptTenantInvitation.mockResolvedValueOnce({
+      tenantId: "tenant-1",
+      role: "member",
     });
 
     renderAt("good-token", [
       {
-        path: "/dashboard/workspaces/:id",
-        element: <div>landed-on-workspace</div>,
+        path: "/dashboard",
+        element: <div>landed-on-dashboard</div>,
       },
     ]);
 
-    const joinBtn = await screen.findByRole("button", { name: "ワークスペースに参加" });
+    const joinBtn = await screen.findByRole("button", { name: "テナントに参加" });
     fireEvent.click(joinBtn);
 
     await waitFor(() =>
-      expect(mockedApi.acceptInvitation).toHaveBeenCalledWith("good-token", expect.any(Function)),
+      expect(mockedApi.acceptTenantInvitation).toHaveBeenCalledWith(
+        "good-token",
+        expect.any(Function),
+      ),
     );
-    expect(await screen.findByText("landed-on-workspace")).toBeInTheDocument();
+    expect(await screen.findByText("landed-on-dashboard")).toBeInTheDocument();
   });
 
-  test("auth + accept failure: shows error and does not navigate", async () => {
+  test("409 already_accepted / user_already_in_tenant: navigates to /dashboard", async () => {
     authMockState.isSignedIn = true;
     mockedApi.getInvitation.mockResolvedValueOnce({
-      workspace: { name: "Acme", slug: "acme" },
+      workspace: { name: "Acme" },
       email: "invitee@example.com",
       expired: false,
     });
-    mockedApi.acceptInvitation.mockRejectedValueOnce(
-      new ApiError(409, "email_mismatch", "409 email_mismatch"),
+    mockedApi.acceptTenantInvitation.mockRejectedValueOnce(
+      new ApiError(409, "already_accepted", "409 already_accepted"),
+    );
+
+    renderAt("good-token", [
+      {
+        path: "/dashboard",
+        element: <div>landed-on-dashboard</div>,
+      },
+    ]);
+
+    const joinBtn = await screen.findByRole("button", { name: "テナントに参加" });
+    fireEvent.click(joinBtn);
+
+    await waitFor(() => expect(mockedApi.acceptTenantInvitation).toHaveBeenCalled());
+    expect(await screen.findByText("landed-on-dashboard")).toBeInTheDocument();
+  });
+
+  test("auth + accept 403 email_mismatch: shows error and does not navigate", async () => {
+    authMockState.isSignedIn = true;
+    mockedApi.getInvitation.mockResolvedValueOnce({
+      workspace: { name: "Acme" },
+      email: "invitee@example.com",
+      expired: false,
+    });
+    mockedApi.acceptTenantInvitation.mockRejectedValueOnce(
+      new ApiError(403, "email_mismatch", "403 email_mismatch"),
     );
 
     renderAt("good-token");
-    const joinBtn = await screen.findByRole("button", { name: "ワークスペースに参加" });
+    const joinBtn = await screen.findByRole("button", { name: "テナントに参加" });
     fireEvent.click(joinBtn);
 
-    await waitFor(() => expect(screen.getByText(/409 email_mismatch/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/403 email_mismatch/));
+  });
+
+  test("auth + accept 410 expired: shows error", async () => {
+    authMockState.isSignedIn = true;
+    mockedApi.getInvitation.mockResolvedValueOnce({
+      workspace: { name: "Acme" },
+      email: "invitee@example.com",
+      expired: false,
+    });
+    mockedApi.acceptTenantInvitation.mockRejectedValueOnce(
+      new ApiError(410, "expired", "410 expired"),
+    );
+
+    renderAt("good-token");
+    const joinBtn = await screen.findByRole("button", { name: "テナントに参加" });
+    fireEvent.click(joinBtn);
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/410 expired/));
   });
 });

@@ -11,6 +11,7 @@ import Landing from "@/routes/Landing";
 import LinkForm from "@/routes/LinkForm";
 import Links from "@/routes/Links";
 import NotFound from "@/routes/NotFound";
+import Onboarding from "@/routes/Onboarding";
 import PublicLink from "@/routes/PublicLink";
 import Settings from "@/routes/Settings";
 import SignInPage from "@/routes/SignIn";
@@ -45,6 +46,10 @@ export default function App() {
           etc.) without requiring an explicit Route per step. */}
       <Route path="/sign-in/*" element={<SignInPage />} />
       <Route path="/sign-up/*" element={<SignUpPage />} />
+
+      {/* ISH-179: onboarding — tenant 作成フロー。Sign-in/Sign-up 後に遷移する。
+          既に tenant 所属済みのユーザーは 409 already_member で /dashboard へ redirect。 */}
+      <Route path="/onboarding" element={<Onboarding />} />
 
       <Route path="/dashboard" element={<ProtectedDashboard />}>
         <Route index element={<DashboardHome />} />

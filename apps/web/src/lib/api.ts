@@ -1,6 +1,5 @@
 import { httpFetch } from "./http";
 import type {
-  AcceptedInvitationWorkspace,
   BookingSummary,
   GoogleCalendarSummary,
   GoogleConnection,
@@ -146,21 +145,15 @@ export const api = {
       getToken,
     }),
 
-  // ISH-109: invitation acceptance.
-  // GET is intentionally unauthenticated — the unauth landing page calls it
-  // before the user signs in. Pass NO `getToken` so we don't attach a header.
+  // ISH-109 / ISH-179: invitation preview (GET, no auth).
+  // The unauth landing page reads it before the user has signed in.
+  // New shape (ISH-176): workspace no longer includes `slug`.
   getInvitation: (token: string) =>
     request<{
-      workspace: { name: string; slug: string };
+      workspace: { name: string };
       email: string;
       expired: boolean;
     }>(`/invitations/${encodeURIComponent(token)}`),
-
-  acceptInvitation: (token: string, getToken: AuthTokenGetter) =>
-    request<{ workspace: AcceptedInvitationWorkspace }>(
-      `/invitations/${encodeURIComponent(token)}/accept`,
-      { method: "POST", getToken },
-    ),
 
   // ISH-111: change a member's role within a workspace. Owner-only on the
   // server. Returns `{ ok: true }` (or `{ ok: true, noop: true }` if the new
@@ -174,6 +167,23 @@ export const api = {
     request<{ ok: true; noop?: boolean }>(
       `/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(userId)}`,
       { method: "PATCH", body: JSON.stringify({ role }), getToken },
+    ),
+
+  // ISH-179: onboarding — create a tenant for the authenticated user.
+  // 201 { tenantId, name, role } | 409 { error: "already_member" }
+  createTenant: (name: string, getToken: AuthTokenGetter) =>
+    request<{ tenantId: string; name: string; role: string }>("/onboarding/tenant", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+      getToken,
+    }),
+
+  // ISH-179: accept a tenant invitation by token.
+  // 201 { tenantId, role } | 404 | 409 | 410
+  acceptTenantInvitation: (token: string, getToken: AuthTokenGetter) =>
+    request<{ tenantId: string; role: string }>(
+      `/invitations/${encodeURIComponent(token)}/accept`,
+      { method: "POST", getToken },
     ),
 };
 
