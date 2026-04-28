@@ -1,16 +1,17 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
+import type { IdentityProfile } from "@/ports/identity";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import type { ClerkUserPayload } from "./domain";
 import { findUserByExternalId, insertUser } from "./repo";
 import {
   applyClerkUserDelete,
   applyClerkUserUpsert,
-  type ClerkPort,
   ensureUserByClerkId,
   getCurrentUserByClerkId,
   getUserById,
+  type IdentityLookupPort,
 } from "./usecase";
 
 let testDb: TestDb;
@@ -38,18 +39,18 @@ const samplePayload = (id: string): ClerkUserPayload => ({
 });
 
 /**
- * Build a fake `ClerkPort` whose `fetchUser` returns the given payload (or
- * the result of a builder fn). Counts invocations so tests can assert that
- * the cached path doesn't hit the SDK.
+ * Build a fake `IdentityLookupPort` whose `getUserByExternalId` returns the
+ * given profile (or the result of a builder fn). Counts invocations so tests
+ * can assert that the cached path doesn't hit the identity provider.
  */
-function fakeClerkPort(
-  fetcher: (clerkId: string) => Promise<ClerkUserPayload>,
-): ClerkPort & { calls: number } {
+function fakeIdentityPort(
+  fetcher: (externalId: string) => Promise<IdentityProfile | null>,
+): IdentityLookupPort & { calls: number } {
   const port = {
     calls: 0,
-    fetchUser: async (clerkId: string) => {
+    getUserByExternalId: async (externalId: string) => {
       port.calls += 1;
-      return fetcher(clerkId);
+      return fetcher(externalId);
     },
   };
   return port;
@@ -96,18 +97,28 @@ describe("users/usecase (integration)", () => {
     expect(await findUserByExternalId(db, clerkId)).toBeNull();
   });
 
-  test("ensureUserByClerkId returns existing user without calling Clerk", async () => {
+  test("ensureUserByClerkId returns existing user without calling identity provider", async () => {
     const externalId = `c_${randomUUID()}`;
     await insertUser(db, { externalId, email: "exist@x.com", name: "Exist" });
-    const port = fakeClerkPort(async () => samplePayload(externalId));
+    const port = fakeIdentityPort(async () => ({
+      externalId,
+      email: "exist@x.com",
+      firstName: "Exist",
+      lastName: null,
+    }));
     const result = await ensureUserByClerkId(db, externalId, port);
     expect(port.calls).toBe(0);
     expect(result.email).toBe("exist@x.com");
   });
 
-  test("ensureUserByClerkId lazy-fetches from Clerk and upserts when missing", async () => {
+  test("ensureUserByClerkId lazy-fetches from identity provider and upserts when missing", async () => {
     const clerkId = `c_${randomUUID()}`;
-    const port = fakeClerkPort(async (id) => samplePayload(id));
+    const port = fakeIdentityPort(async (id) => ({
+      externalId: id,
+      email: "u@example.com",
+      firstName: "First",
+      lastName: "Last",
+    }));
     const result = await ensureUserByClerkId(db, clerkId, port);
     expect(port.calls).toBe(1);
     expect(result.email).toBe("u@example.com");
@@ -117,7 +128,7 @@ describe("users/usecase (integration)", () => {
   });
 
   test("ensureUserByClerkId surfaces fetcher errors", async () => {
-    const port = fakeClerkPort(async () => {
+    const port = fakeIdentityPort(async () => {
       throw new Error("clerk down");
     });
     await expect(ensureUserByClerkId(db, `c_${randomUUID()}`, port)).rejects.toThrow(/clerk down/);

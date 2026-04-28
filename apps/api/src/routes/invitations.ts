@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "@/db/client";
-import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
+import { type AuthVars, attachDbUser, getDbUser, requireAuth } from "@/middleware/auth";
 import { findInvitationByToken, findWorkspaceById } from "@/workspaces/repo";
 import { acceptInvitation } from "@/workspaces/usecase";
 
@@ -38,7 +38,7 @@ export function createInvitationsRoute() {
   });
 
   // Auth-gated accept. Per-route middleware so GET above stays public.
-  route.post("/:token/accept", clerkAuth(), requireAuth, attachDbUser, async (c) => {
+  route.post("/:token/accept", requireAuth, attachDbUser, async (c) => {
     const token = c.req.param("token");
     const dbUser = getDbUser(c);
     const result = await acceptInvitation(db, dbUser.id, dbUser.email, token);

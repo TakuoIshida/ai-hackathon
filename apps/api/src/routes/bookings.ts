@@ -3,7 +3,7 @@ import { type CancelBookingPorts, cancelBookingByOwner } from "@/bookings/cancel
 import { listOwnerBookings } from "@/bookings/usecase";
 import { config } from "@/config";
 import { db } from "@/db/client";
-import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
+import { type AuthVars, attachDbUser, getDbUser, requireAuth } from "@/middleware/auth";
 import { createBookingNotifier } from "@/notifications/booking-notifier";
 import { createResendSender } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
@@ -39,7 +39,7 @@ export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): H
   Variables: AuthVars;
 }> {
   const route = new Hono<{ Variables: AuthVars }>();
-  const middlewares = deps.authMiddlewares ?? [clerkAuth(), requireAuth, attachDbUser];
+  const middlewares = deps.authMiddlewares ?? [requireAuth, attachDbUser];
   for (const mw of middlewares) {
     route.use("*", mw);
   }
