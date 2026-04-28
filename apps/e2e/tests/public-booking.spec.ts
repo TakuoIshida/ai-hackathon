@@ -13,13 +13,22 @@ test.describe("public booking flow", () => {
     const SLUG = "intro-30min-public";
     const TITLE = "30 min meeting";
 
-    // Seed slot 3 days out so it's always visible in the current month grid
-    // unless we're within 3 days of month-end; in that case widen the slots
-    // response to also accept queries for next month (we serve the same slot).
+    // Seed slots for today through today+35. Today is always inside the
+    // current month's calendar grid, so the test never breaks on month-end
+    // days. (A previous version emitted only one slot at today+3, which
+    // silently broke on the last 2-3 days of any month.) Time = 14:00 UTC
+    // (23:00 JST) keeps the slot in the future for the typical 00-08 UTC CI
+    // window. The first slot (today) is reserved as `slotStart` so the
+    // booking POST mock can echo it back.
     const slotStart = new Date();
-    slotStart.setUTCDate(slotStart.getUTCDate() + 3);
-    slotStart.setUTCHours(2, 0, 0, 0); // 11:00 JST
+    slotStart.setUTCHours(14, 0, 0, 0); // 23:00 JST today
     const slotEnd = new Date(slotStart.getTime() + 30 * 60_000);
+
+    const slots = Array.from({ length: 36 }, (_, i) => {
+      const start = new Date(slotStart.getTime() + i * 24 * 60 * 60_000);
+      const end = new Date(start.getTime() + 30 * 60_000);
+      return { start: start.toISOString(), end: end.toISOString() };
+    });
 
     await page.route(`**/public/links/${SLUG}`, (route) =>
       route.fulfill({
@@ -42,7 +51,7 @@ test.describe("public booking flow", () => {
         body: JSON.stringify({
           durationMinutes: 30,
           timeZone: "Asia/Tokyo",
-          slots: [{ start: slotStart.toISOString(), end: slotEnd.toISOString() }],
+          slots,
         }),
       }),
     );

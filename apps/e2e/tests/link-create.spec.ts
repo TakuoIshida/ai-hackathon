@@ -76,13 +76,20 @@ test.describe("link create → public URL renders slots", () => {
       }),
     );
 
-    // GET /public/links/:slug/slots — emit one slot ~3 days out so it always
-    // lands inside the visible month grid even when "today" is near a month
-    // boundary; we widen the search by also probing the next two months below.
-    const slotStart = new Date();
-    slotStart.setUTCDate(slotStart.getUTCDate() + 3);
-    slotStart.setUTCHours(2, 0, 0, 0); // 11:00 JST
-    const slotEnd = new Date(slotStart.getTime() + 30 * 60_000);
+    // GET /public/links/:slug/slots — emit slots for today through today+35
+    // days. Today is always inside the current month's calendar grid (the
+    // grid always shows the month containing "today"), so the test never
+    // breaks on month-boundary days. (A previous version emitted only one
+    // slot at today+3, which silently broke on the last 2-3 days of any
+    // month.) The slot's time is set to 14:00 UTC = 23:00 JST so today's
+    // slot is still in the future for the typical 00-08 UTC CI window.
+    const slots = Array.from({ length: 36 }, (_, i) => {
+      const start = new Date();
+      start.setUTCDate(start.getUTCDate() + i);
+      start.setUTCHours(14, 0, 0, 0); // 23:00 JST
+      const end = new Date(start.getTime() + 30 * 60_000);
+      return { start: start.toISOString(), end: end.toISOString() };
+    });
     await page.route(`**/public/links/${SLUG}/slots**`, (route) =>
       route.fulfill({
         status: 200,
@@ -90,7 +97,7 @@ test.describe("link create → public URL renders slots", () => {
         body: JSON.stringify({
           durationMinutes: 30,
           timeZone: "Asia/Tokyo",
-          slots: [{ start: slotStart.toISOString(), end: slotEnd.toISOString() }],
+          slots,
         }),
       }),
     );
