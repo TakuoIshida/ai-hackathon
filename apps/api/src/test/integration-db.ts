@@ -158,6 +158,14 @@ async function applyMigrationsIfNeeded(sql: postgres.Sql): Promise<void> {
       probe = makeSentinel(sql, "common", "users");
     } else if (name.startsWith("0002_")) {
       probe = makeSentinel(sql, "tenant", "bookings");
+    } else if (name.startsWith("0003_")) {
+      // sentinel: check that the tenant_isolation policy exists on bookings
+      probe = sql<Array<{ present: boolean }>>`
+        SELECT EXISTS (
+          SELECT 1 FROM pg_policies
+          WHERE schemaname = 'tenant' AND tablename = 'bookings' AND policyname = 'tenant_isolation'
+        ) AS present
+      `;
     } else {
       // Unknown migration: always apply (safe because SQL uses IF NOT EXISTS /
       // IF EXISTS where appropriate, or will error loudly).
