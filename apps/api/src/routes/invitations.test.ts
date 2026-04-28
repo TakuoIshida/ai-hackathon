@@ -65,12 +65,19 @@ function fakeAuthWithDbUser(user: User): MiddlewareHandler {
 }
 
 /**
- * Fake middleware that also sets `tenantId` on the context (replaces
- * `attachTenantContext` for tests). Does NOT open a DB transaction.
+ * Fake middleware that also sets `tenantId` and `tenantRole` on the context
+ * (replaces `attachTenantContext` for tests). Does NOT open a DB transaction.
+ *
+ * ISH-193: tests must supply `tenantRole` because the real middleware now
+ * stashes it for `getTenantRole(c)` callers (e.g. owner check in route).
  */
-function fakeTenantContext(tenantId: string): MiddlewareHandler {
+function fakeTenantContext(
+  tenantId: string,
+  tenantRole: "owner" | "member" = "owner",
+): MiddlewareHandler {
   return async (c, next) => {
     c.set("tenantId", tenantId as never);
+    c.set("tenantRole", tenantRole as never);
     await next();
   };
 }
@@ -177,7 +184,7 @@ describe("POST /tenant/invitations — validation and business logic", () => {
     testApp.route(
       "/tenant/invitations",
       createTenantInvitationsRoute({
-        authMiddlewares: [fakeAuthWithDbUser(member), fakeTenantContext(tenant.id)],
+        authMiddlewares: [fakeAuthWithDbUser(member), fakeTenantContext(tenant.id, "member")],
       }),
     );
 

@@ -1,8 +1,6 @@
 import { zValidator } from "@hono/zod-validator";
-import { eq } from "drizzle-orm";
 import { Hono, type MiddlewareHandler } from "hono";
 import { db } from "@/db/client";
-import { tenantMembers } from "@/db/schema/common";
 import { acceptInvitationParamsSchema, createInvitationBodySchema } from "@/invitations/schemas";
 import { acceptInvitation, createInvitation } from "@/invitations/usecase";
 import {
@@ -11,6 +9,7 @@ import {
   attachTenantContext,
   getDbUser,
   getTenantId,
+  getTenantRole,
   requireAuth,
 } from "@/middleware/auth";
 import { findInvitationByToken, findWorkspaceById } from "@/workspaces/repo";
@@ -70,14 +69,11 @@ export function createTenantInvitationsRoute(deps: TenantInvitationsRouteDeps = 
     const tenantId = getTenantId(c);
     const { email, role } = c.req.valid("json");
 
-    // Verify the caller is an owner of this tenant.
-    const [membership] = await db
-      .select({ role: tenantMembers.role })
-      .from(tenantMembers)
-      .where(eq(tenantMembers.userId, dbUser.id))
-      .limit(1);
-
-    if (!membership || membership.role !== "owner") {
+    // Caller's role is resolved by attachTenantContext alongside tenantId
+    // (ISH-193) — no extra query needed here. The middleware also ensures
+    // the role belongs to THIS tenantId, so the owner check is implicitly
+    // tenant-scoped (resolves ISH-196 defense-in-depth concern).
+    if (getTenantRole(c) !== "owner") {
       return c.json({ error: "forbidden" }, 403);
     }
 
