@@ -34,12 +34,20 @@ beforeEach(async () => {
 });
 
 /**
- * Inject `clerkAuth` directly so we exercise the real `requireAuth` middleware
- * without standing up a real Clerk session.
+ * Inject `identityClaims` directly so we exercise the real `requireAuth`
+ * middleware without standing up a real Clerk session. Mirrors what `attachAuth`
+ * does after the vendor middleware resolves the session.
  */
 function fakeClerkSession(userId: string | null): MiddlewareHandler {
   return async (c, next) => {
-    c.set("clerkAuth", (userId ? { userId } : { userId: null }) as never);
+    if (userId) {
+      c.set("identityClaims", {
+        externalId: userId,
+        email: `${userId}@test.com`,
+        emailVerified: true,
+      } as never);
+    }
+    // No identityClaims set → requireAuth will reject with 401.
     await next();
   };
 }

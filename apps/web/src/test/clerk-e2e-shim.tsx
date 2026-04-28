@@ -36,6 +36,14 @@ export function SignUpButton({ children }: { children?: ReactNode; mode?: string
   return <>{children}</>;
 }
 
+// ISH-178: ClerkAuthAdapter imports SignOutButton from @clerk/clerk-react and
+// re-exports it through AuthAdapter. The e2e shim must provide a matching
+// symbol or rollup fails to resolve the production build with the same
+// "ExportNamedDeclaration.bind" error pattern as SignUpButton above.
+export function SignOutButton({ children }: { children?: ReactNode }) {
+  return <>{children}</>;
+}
+
 export function RedirectToSignIn() {
   return null;
 }

@@ -1,6 +1,6 @@
-import { SignIn } from "@clerk/clerk-react";
 import * as stylex from "@stylexjs/stylex";
 import { Navigate } from "react-router-dom";
+import { auth } from "@/auth";
 import { colors, space } from "@/styles/tokens.stylex";
 
 const HAS_CLERK = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
@@ -39,7 +39,7 @@ const styles = stylex.create({
 
 /**
  * `/sign-in` route. Renders Clerk's hosted-style component inline so
- * `<RedirectToSignIn />` (App.tsx ProtectedDashboard) lands users in our own
+ * `<Navigate to="/sign-in" />` (App.tsx ProtectedDashboard) lands users in our own
  * shell instead of bouncing out to Clerk's domain. The Clerk component handles
  * its own subpaths (e.g. `/sign-in/factor-one`) — `App.tsx` mounts the route
  * with a wildcard so those nested URLs reach this component.
@@ -52,12 +52,7 @@ export default function SignInPage() {
         <h1 {...stylex.props(styles.heading)}>サインイン</h1>
         <p {...stylex.props(styles.subhead)}>アカウントにアクセスして日程調整を続けます。</p>
       </div>
-      <SignIn
-        path="/sign-in"
-        routing="path"
-        signUpUrl="/sign-up"
-        fallbackRedirectUrl="/dashboard"
-      />
+      <auth.SignInPage />
     </main>
   );
 }

@@ -1,7 +1,7 @@
-import { SignInButton, SignUpButton, useAuth } from "@clerk/clerk-react";
 import * as stylex from "@stylexjs/stylex";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -35,7 +35,7 @@ export default function AcceptInvite() {
   // We branch on `isSignedIn` rather than wrapping with <SignedIn>/<SignedOut>
   // so the component is straightforward to test with a single mock of
   // `useAuth` (see Settings.test.tsx for the stable-getToken pattern).
-  const { isSignedIn, getToken } = useAuth();
+  const { isSignedIn, getToken } = auth.useAuth();
   const navigate = useNavigate();
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
   const [accept, setAccept] = useState<AcceptState>({ kind: "idle" });
@@ -169,20 +169,20 @@ export default function AcceptInvite() {
             </Button>
           ) : (
             <div {...stylex.props(styles.row)}>
-              <SignInButton
+              <auth.SignInButton
                 mode="modal"
                 forceRedirectUrl={returnUrl}
                 signUpForceRedirectUrl={returnUrl}
               >
                 <Button>サインインして承認</Button>
-              </SignInButton>
-              <SignUpButton
+              </auth.SignInButton>
+              <auth.SignUpButton
                 mode="modal"
                 forceRedirectUrl={returnUrl}
                 signInForceRedirectUrl={returnUrl}
               >
                 <Button variant="outline">アカウントを作成</Button>
-              </SignUpButton>
+              </auth.SignUpButton>
             </div>
           )}
         </CardFooter>

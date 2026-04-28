@@ -1,46 +1,133 @@
-import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
-import type { Context, MiddlewareHandler } from "hono";
+import type { Context, Hono, MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { db } from "@/db/client";
-import { productionClerkPort } from "@/users/clerk-port";
+import { buildClerkIdentityProvider } from "@/identity/clerk-identity-provider";
+import type { IdentityClaims, IdentityProviderPort } from "@/ports/identity";
 import type { User } from "@/users/domain";
 import { ensureUserByClerkId } from "@/users/usecase";
 
-export const clerkAuth = clerkMiddleware;
+// ---------------------------------------------------------------------------
+// Hono typed variables
+// ---------------------------------------------------------------------------
 
+/**
+ * Context variables set by the auth middleware stack.
+ * Routes that mount `attachDbUser` can read `c.get("dbUser")` with the
+ * correct type. Routes that run after `attachAuth` / `requireAuth` can read
+ * `c.get("identityClaims")`.
+ */
+export type AuthVars = {
+  dbUser: User;
+  identityClaims: IdentityClaims;
+};
+
+// ---------------------------------------------------------------------------
+// Module-level Clerk identity provider singleton
+// ---------------------------------------------------------------------------
+
+/**
+ * Singleton used by `attachDbUser` for the lazy-create path.
+ * Initialized once at module load so the Clerk client is constructed once,
+ * not on every request. `attachAuth` replaces this when called (to support
+ * dependency injection in tests that supply a fake idp).
+ */
+let _idp: IdentityProviderPort = buildClerkIdentityProvider();
+
+// ---------------------------------------------------------------------------
+// attachAuth — composition-root helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Attach the vendor identity middleware to a Hono app and make identity claims
+ * available on the context for every authenticated request.
+ *
+ * Call this once in the app bootstrap (e.g. app.ts) BEFORE route registration.
+ * Public routes (health, webhooks, invitation previews) remain accessible
+ * because the 401 guard is NOT applied globally here — use `requireAuth`
+ * per-route to gate protected endpoints.
+ */
+export function attachAuth(app: Hono, idp: IdentityProviderPort): void {
+  // Store idp so attachDbUser's lazy-create path uses the same provider.
+  _idp = idp;
+
+  // 1. Vendor middleware: Clerk (or future provider) sets its auth state in
+  //    the hono context so getClaims() can read it.
+  app.use("*", idp.middleware());
+
+  // 2. Resolve claims and stash on context. Does NOT throw for unauthenticated
+  //    requests — public routes must remain accessible without a session.
+  app.use("*", async (c, next) => {
+    const claims = idp.getClaims(c);
+    if (claims) {
+      c.set("identityClaims", claims);
+    }
+    await next();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// requireAuth — per-route 401 guard
+// ---------------------------------------------------------------------------
+
+/**
+ * Middleware that rejects unauthenticated requests with 401.
+ * Mount AFTER `attachAuth` on any route that requires a signed-in user.
+ */
 export const requireAuth: MiddlewareHandler = async (c, next) => {
-  const auth = getAuth(c);
-  if (!auth?.userId) {
+  const claims = c.get("identityClaims") as IdentityClaims | undefined;
+  if (!claims) {
     throw new HTTPException(401, { message: "unauthorized" });
   }
   await next();
 };
 
+// ---------------------------------------------------------------------------
+// getClerkUserId — backward-compat helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the externalId (Clerk userId / sub) from the identity claims stored
+ * on the context. Throws 401 HTTPException when claims are absent.
+ *
+ * Named `getClerkUserId` for backward compat with existing route and usecase
+ * call-sites. The returned string is `IdentityClaims.externalId`.
+ */
 export function getClerkUserId(c: Context): string {
-  const auth = getAuth(c);
-  if (!auth?.userId) {
+  const claims = c.get("identityClaims") as IdentityClaims | undefined;
+  if (!claims) {
     throw new HTTPException(401, { message: "unauthorized" });
   }
-  return auth.userId;
+  return claims.externalId;
 }
 
-// Hono's typed variables. Routes that mount `attachDbUser` can read
-// `c.get("dbUser")` with the correct type.
-export type AuthVars = { dbUser: User };
+// ---------------------------------------------------------------------------
+// attachDbUser — DB user resolution
+// ---------------------------------------------------------------------------
 
-// Resolves the Clerk user → DB user once per request and stashes it on the
-// context. Mount this AFTER `clerkAuth()` + `requireAuth` on routes that need
-// the local user record.
-//
-// The Clerk SDK adapter is built on each request via `productionClerkPort()`;
-// the call is cheap (just a closure) and keeps the middleware stateless.
-// Test stacks bypass `attachDbUser` and inject their own clerk-id-aware mw.
+/**
+ * Resolves the identity-provider user → DB user once per request and stashes
+ * it on the context. Mount AFTER `requireAuth` on routes that need the local
+ * user record.
+ *
+ * Uses `_idp.getUserByExternalId` (the module-level identity provider set by
+ * `attachAuth`) for the lazy-create path when the user is not yet in the DB.
+ * In production this is the Clerk implementation; tests can supply a fake idp
+ * via `attachAuth(app, fakeIdp)` or bypass this middleware entirely through
+ * `authMiddlewares` dependency injection in the route factory.
+ */
 export const attachDbUser: MiddlewareHandler<{ Variables: AuthVars }> = async (c, next) => {
-  const clerkId = getClerkUserId(c);
-  const dbUser = await ensureUserByClerkId(db, clerkId, productionClerkPort());
+  const externalId = getClerkUserId(c);
+  const idp = _idp;
+  const dbUser = await ensureUserByClerkId(db, externalId, {
+    getUserByExternalId: (id) => idp.getUserByExternalId(id),
+  });
   c.set("dbUser", dbUser);
   await next();
 };
+
+// ---------------------------------------------------------------------------
+// getDbUser — typed context accessor
+// ---------------------------------------------------------------------------
 
 export function getDbUser(c: Context<{ Variables: AuthVars }>): User {
   const dbUser = c.get("dbUser");

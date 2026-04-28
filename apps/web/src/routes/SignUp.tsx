@@ -1,6 +1,6 @@
-import { SignUp } from "@clerk/clerk-react";
 import * as stylex from "@stylexjs/stylex";
 import { Navigate } from "react-router-dom";
+import { auth } from "@/auth";
 import { colors, space } from "@/styles/tokens.stylex";
 
 const HAS_CLERK = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
@@ -50,12 +50,7 @@ export default function SignUpPage() {
         <h1 {...stylex.props(styles.heading)}>サインアップ</h1>
         <p {...stylex.props(styles.subhead)}>新しいアカウントを作成してください。</p>
       </div>
-      <SignUp
-        path="/sign-up"
-        routing="path"
-        signInUrl="/sign-in"
-        fallbackRedirectUrl="/dashboard"
-      />
+      <auth.SignUpPage />
     </main>
   );
 }

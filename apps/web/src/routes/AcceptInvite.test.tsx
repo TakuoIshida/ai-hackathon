@@ -10,8 +10,9 @@ const getToken = async () => "fake-token";
 const authMockState: { isSignedIn: boolean } = { isSignedIn: false };
 
 vi.mock("@clerk/clerk-react", () => {
+  const PassThrough = ({ children }: { children?: React.ReactNode }) => <>{children}</>;
   return {
-    useAuth: () => ({ getToken, isSignedIn: authMockState.isSignedIn }),
+    useAuth: () => ({ getToken, isSignedIn: authMockState.isSignedIn, userId: null }),
     useUser: () => ({
       isSignedIn: authMockState.isSignedIn,
       user: authMockState.isSignedIn
@@ -20,8 +21,15 @@ vi.mock("@clerk/clerk-react", () => {
     }),
     // Render the inner button and call the in-test sign-in trigger so the
     // unauth flow can be observed without the real Clerk modal.
-    SignInButton: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-    SignUpButton: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    SignInButton: PassThrough,
+    SignUpButton: PassThrough,
+    SignOutButton: PassThrough,
+    SignedIn: PassThrough,
+    SignedOut: PassThrough,
+    ClerkProvider: PassThrough,
+    SignIn: () => null,
+    SignUp: () => null,
+    UserButton: () => null,
   };
 });
 

@@ -3,9 +3,16 @@ import { getValidAccessToken } from "@/google/access-token";
 import { createEvent, deleteEvent, queryFreeBusy } from "@/google/calendar";
 import type { GoogleConfig } from "@/google/config";
 import { getOauthAccountByUser, listUserCalendars } from "@/google/repo";
+import { buildClerkIdentityProvider } from "@/identity/clerk-identity-provider";
 import { findLinkById, listLinkCoOwnerUserIds } from "@/links/repo";
 import { computePublicSlots } from "@/links/usecase";
-import type { GooglePort, LinkAvailabilityPort, LinkLookupPort, UserLookupPort } from "@/ports";
+import type {
+  GooglePort,
+  IdentityProviderPort,
+  LinkAvailabilityPort,
+  LinkLookupPort,
+  UserLookupPort,
+} from "@/ports";
 import { findUserById } from "@/users/repo";
 
 type Database = typeof DbClient;
@@ -76,4 +83,13 @@ export function buildUserLookupPort(database: Database): UserLookupPort {
       return user ? { id: user.id, email: user.email, name: user.name } : null;
     },
   };
+}
+
+/**
+ * Build the production IdentityProviderPort backed by Clerk.
+ * Swap this function's return value to switch identity providers without
+ * touching any other app code.
+ */
+export function buildIdentityProvider(): IdentityProviderPort {
+  return buildClerkIdentityProvider();
 }

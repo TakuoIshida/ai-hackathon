@@ -5,11 +5,15 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 // Mock Clerk's <SignIn />. The route's job is the surrounding shell + the
 // bridging props (path / routing / signUpUrl / fallbackRedirectUrl); the
 // Clerk component itself is exhaustively tested upstream.
-vi.mock("@clerk/clerk-react", () => ({
-  SignIn: (props: Record<string, unknown>) => (
-    <div data-testid="clerk-sign-in" data-props={JSON.stringify(props)} />
-  ),
-}));
+vi.mock("@clerk/clerk-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@clerk/clerk-react")>();
+  return {
+    ...actual,
+    SignIn: (props: Record<string, unknown>) => (
+      <div data-testid="clerk-sign-in" data-props={JSON.stringify(props)} />
+    ),
+  };
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();

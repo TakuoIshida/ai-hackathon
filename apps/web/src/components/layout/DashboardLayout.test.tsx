@@ -2,9 +2,13 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@clerk/clerk-react", () => ({
-  UserButton: () => <div data-testid="user-button" />,
-}));
+vi.mock("@clerk/clerk-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@clerk/clerk-react")>();
+  return {
+    ...actual,
+    UserButton: () => <div data-testid="user-button" />,
+  };
+});
 
 import { DashboardLayout } from "./DashboardLayout";
 

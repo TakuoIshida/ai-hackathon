@@ -4,7 +4,7 @@ import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { config } from "@/config";
 import { db } from "@/db/client";
-import { type AuthVars, attachDbUser, clerkAuth, getDbUser, requireAuth } from "@/middleware/auth";
+import { type AuthVars, attachDbUser, getDbUser, requireAuth } from "@/middleware/auth";
 import { createResendSender } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
 import { createWorkspaceInputSchema } from "@/workspaces/schemas";
@@ -44,7 +44,6 @@ const changeRoleBodySchema = z.object({
 export function createWorkspacesRoute(deps: WorkspacesRouteDeps = productionDeps) {
   const route = new Hono<{ Variables: AuthVars }>();
 
-  route.use("*", clerkAuth());
   route.use("*", requireAuth);
   route.use("*", attachDbUser);
 
@@ -130,6 +129,7 @@ export function createWorkspacesRoute(deps: WorkspacesRouteDeps = productionDeps
         createdAt: m.createdAt,
       })),
       callerRole: result.callerRole,
+      callerUserId: result.callerUserId,
     });
   });
 
