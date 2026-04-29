@@ -14,6 +14,26 @@ ISH-184 / ISH-185 / ISH-186 の手順を上から順に実行する。
 
 ## Phase 0. 事前準備 (5 分)
 
+### 0-A. 既存データの有無を確認 (ISH-184)
+
+> **重要**: \`0002_tenant-schema.sql\` は \`DROP TABLE public.bookings\` などの破壊的操作を含む。本番にユーザデータが入っている場合、データ消失する。
+
+- [ ] superuser で接続して既存テーブルの行数を確認
+  ```bash
+  psql "$DATABASE_URL_ADMIN" <<'EOF'
+  SELECT 'public.users' AS t, count(*) FROM public.users
+  UNION ALL SELECT 'public.workspaces', count(*) FROM public.workspaces
+  UNION ALL SELECT 'public.bookings', count(*) FROM public.bookings
+  UNION ALL SELECT 'public.availability_links', count(*) FROM public.availability_links;
+  EOF
+  ```
+- [ ] **判定:**
+  - 全テーブル 0 件 (ハッカソン状態) → そのまま Phase 1 へ進む (ISH-184 no-op 適用)
+  - **データあり** → ⚠️ **STOP** — 本 runbook の Phase 1 を実行すると消える。先に backfill script を作成 (separate issue)、本 runbook は中断
+- [ ] 判定結果を Linear ISH-184 に記録 (no-op か、新規 backfill issue を切ったか)
+
+### 0-B. バックアップ + パスワード準備
+
 - [ ] Cloud SQL の **手動スナップショット** を取得
   - GCP Console → Cloud SQL → 該当インスタンス → 「Backups」→「Create backup」
   - 名前例: `pre-multi-tenant-rollout-2026-04-29`
