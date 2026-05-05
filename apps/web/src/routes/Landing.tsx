@@ -55,7 +55,7 @@ function AuthActions() {
       </auth.SignedOut>
       <auth.SignedIn>
         <Button asChild>
-          <Link to="/dashboard">ダッシュボードへ</Link>
+          <Link to="/availability-sharings">ダッシュボードへ</Link>
         </Button>
       </auth.SignedIn>
     </div>

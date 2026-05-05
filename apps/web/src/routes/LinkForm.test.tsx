@@ -50,10 +50,10 @@ const mockedApi = vi.mocked(api);
 
 function renderForm() {
   return render(
-    <MemoryRouter initialEntries={["/dashboard/links/new"]}>
+    <MemoryRouter initialEntries={["/availability-sharings/new"]}>
       <Routes>
-        <Route path="/dashboard/links/new" element={<LinkForm />} />
-        <Route path="/dashboard/links" element={<div>Links list page</div>} />
+        <Route path="/availability-sharings/new" element={<LinkForm />} />
+        <Route path="/availability-sharings" element={<div>Links list page</div>} />
       </Routes>
     </MemoryRouter>,
   );

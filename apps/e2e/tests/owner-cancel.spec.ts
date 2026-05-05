@@ -9,7 +9,7 @@ import { expect, test } from "@playwright/test";
 // (apps/web/src/test/clerk-e2e-shim.tsx) and all API responses are mocked.
 
 test.describe("owner-side booking cancel", () => {
-  test("owner cancels from /dashboard/bookings/:id and the detail flips to canceled", async ({
+  test("owner cancels from /confirmed-list/:id and the detail flips to canceled", async ({
     page,
   }) => {
     const BOOKING_ID = "bk-owner-cancel-1";
@@ -79,7 +79,7 @@ test.describe("owner-side booking cancel", () => {
 
     // Visit the detail page directly. With the auth bypass, the dashboard
     // layout renders without redirecting through Clerk.
-    await page.goto(`/dashboard/bookings/${BOOKING_ID}`);
+    await page.goto(`/confirmed-list/${BOOKING_ID}`);
 
     // Wait for the detail card to materialize. The list-and-filter pattern
     // means the booking title appears AFTER GET /bookings resolves.

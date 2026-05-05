@@ -114,7 +114,7 @@ describe("<AcceptInvite />", () => {
 
     renderAt("good-token", [
       {
-        path: "/dashboard",
+        path: "/availability-sharings",
         element: <div>landed-on-dashboard</div>,
       },
     ]);
@@ -143,7 +143,7 @@ describe("<AcceptInvite />", () => {
 
     renderAt("good-token", [
       {
-        path: "/dashboard",
+        path: "/availability-sharings",
         element: <div>landed-on-dashboard</div>,
       },
     ]);

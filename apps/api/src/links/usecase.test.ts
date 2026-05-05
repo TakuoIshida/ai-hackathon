@@ -100,6 +100,29 @@ describe("links/usecase: CRUD", () => {
     expect(second.kind).toBe("slug_taken");
   });
 
+  // ISH-227: reserved slugs collide with FE app routes (flat URL after
+  // /dashboard prefix removal). Reject them here so the DB never has a row
+  // that shadows /availability-sharings, /calendar, etc.
+  test("createLinkForUser rejects reserved slugs (collide with FE app routes)", async () => {
+    const tenantId = await seedTenant();
+    const userId = await seedUser();
+    for (const reserved of ["availability-sharings", "calendar", "settings", "sign-in"]) {
+      const result = await createLinkForUser(db, userId, tenantId, baseInput({ slug: reserved }));
+      expect(result.kind).toBe("slug_taken");
+    }
+  });
+
+  test("checkSlugAvailability rejects reserved slugs", async () => {
+    expect(await checkSlugAvailability(db, "calendar")).toEqual({
+      slug: "calendar",
+      available: false,
+    });
+    expect(await checkSlugAvailability(db, "Calendar")).toEqual({
+      slug: "Calendar",
+      available: false,
+    });
+  });
+
   test("listLinks returns links scoped to user", async () => {
     const tenantId = await seedTenant();
     const userA = await seedUser();

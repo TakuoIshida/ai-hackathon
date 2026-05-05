@@ -76,7 +76,7 @@ describe("<Bookings />", () => {
     expect(screen.getByText("Deep dive")).toBeInTheDocument();
     const detailLinks = screen.getAllByRole("link", { name: "詳細" });
     expect(detailLinks).toHaveLength(2);
-    expect(detailLinks[0]).toHaveAttribute("href", "/dashboard/bookings/b1");
+    expect(detailLinks[0]).toHaveAttribute("href", "/confirmed-list/b1");
   });
 
   test("shows the empty state when no upcoming bookings exist", async () => {

@@ -180,7 +180,7 @@ export default function LinkForm() {
       } else {
         await api.createLink(form, () => getToken());
       }
-      navigate("/dashboard/links");
+      navigate("/availability-sharings");
     } catch (err) {
       if (err instanceof ApiError) {
         setError(`${err.status}: ${err.code}`);
@@ -472,7 +472,7 @@ export default function LinkForm() {
       {error && <p {...stylex.props(styles.error)}>{error}</p>}
 
       <div {...stylex.props(styles.actions)}>
-        <Button variant="outline" type="button" onClick={() => navigate("/dashboard/links")}>
+        <Button variant="outline" type="button" onClick={() => navigate("/availability-sharings")}>
           キャンセル
         </Button>
         <Button type="submit" disabled={submitting || slugStatus === "taken"}>

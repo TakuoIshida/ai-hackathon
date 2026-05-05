@@ -50,9 +50,9 @@ function futureBooking(overrides: Partial<BookingSummary> = {}): BookingSummary 
 
 function renderAt(id: string) {
   return render(
-    <MemoryRouter initialEntries={[`/dashboard/bookings/${id}`]}>
+    <MemoryRouter initialEntries={[`/confirmed-list/${id}`]}>
       <Routes>
-        <Route path="/dashboard/bookings/:id" element={<BookingDetail />} />
+        <Route path="/confirmed-list/:id" element={<BookingDetail />} />
       </Routes>
     </MemoryRouter>,
   );

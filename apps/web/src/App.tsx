@@ -6,8 +6,9 @@ import { PublicLayout } from "@/components/layout/PublicLayout";
 import AcceptInvite from "@/routes/AcceptInvite";
 import BookingDetail from "@/routes/BookingDetail";
 import Bookings from "@/routes/Bookings";
+import Calendar from "@/routes/Calendar";
 import CancelBooking from "@/routes/CancelBooking";
-import DashboardHome from "@/routes/DashboardHome";
+import Forms from "@/routes/Forms";
 import Landing from "@/routes/Landing";
 import LinkForm from "@/routes/LinkForm";
 import Links from "@/routes/Links";
@@ -17,8 +18,7 @@ import PublicLink from "@/routes/PublicLink";
 import Settings from "@/routes/Settings";
 import SignInPage from "@/routes/SignIn";
 import SignUpPage from "@/routes/SignUp";
-import WorkspaceDetail from "@/routes/WorkspaceDetail";
-import Workspaces from "@/routes/Workspaces";
+import UnconfirmedList from "@/routes/UnconfirmedList";
 
 // ISH-225: dev-only component showcase. Lazy-loaded so it doesn't bloat the
 // production bundle for normal users. Accessible at /dev/components in dev,
@@ -28,7 +28,13 @@ const SHOW_DEV_ROUTES = import.meta.env.DEV || import.meta.env.VITE_SHOW_DEV_ROU
 
 const HAS_CLERK = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
 
-function ProtectedDashboard() {
+/**
+ * ISH-227: protected app shell. The `/dashboard` URL prefix has been removed —
+ * authenticated routes now sit at the root (/availability-sharings, /calendar,
+ * etc.). The `:slug` public route remains in `<PublicLayout />` and is matched
+ * only when the explicit named routes don't.
+ */
+function ProtectedApp() {
   if (!HAS_CLERK) return <Navigate to="/" replace />;
   return (
     <>
@@ -36,7 +42,6 @@ function ProtectedDashboard() {
         <DashboardLayout />
       </auth.SignedIn>
       <auth.SignedOut>
-        {/* ISH-178: RedirectToSignIn 相当を router 経由で実現 */}
         <Navigate to="/sign-in" replace />
       </auth.SignedOut>
     </>
@@ -55,20 +60,29 @@ export default function App() {
       <Route path="/sign-up/*" element={<SignUpPage />} />
 
       {/* ISH-179: onboarding — tenant 作成フロー。Sign-in/Sign-up 後に遷移する。
-          既に tenant 所属済みのユーザーは 409 already_member で /dashboard へ redirect。 */}
+          既に tenant 所属済みのユーザーは 409 already_member で
+          /availability-sharings へ redirect。 */}
       <Route path="/onboarding" element={<Onboarding />} />
 
-      <Route path="/dashboard" element={<ProtectedDashboard />}>
-        <Route index element={<DashboardHome />} />
-        <Route path="links" element={<Links />} />
-        <Route path="links/new" element={<LinkForm />} />
-        <Route path="links/:id/edit" element={<LinkForm />} />
-        <Route path="bookings" element={<Bookings />} />
-        <Route path="bookings/:id" element={<BookingDetail />} />
-        <Route path="workspaces" element={<Workspaces />} />
-        <Route path="workspaces/:id" element={<WorkspaceDetail />} />
-        <Route path="settings" element={<Settings />} />
+      {/* ISH-227: 旧 /dashboard prefix を撤去。すべてフラットに配置。
+          ProtectedApp が auth gate を担う。 */}
+      <Route element={<ProtectedApp />}>
+        <Route path="/availability-sharings" element={<Links />} />
+        <Route path="/availability-sharings/new" element={<LinkForm />} />
+        <Route path="/availability-sharings/:id/edit" element={<LinkForm />} />
+        <Route path="/calendar" element={<Calendar />} />
+        <Route path="/unconfirmed-list" element={<UnconfirmedList />} />
+        <Route path="/confirmed-list" element={<Bookings />} />
+        <Route path="/confirmed-list/:id" element={<BookingDetail />} />
+        <Route path="/forms" element={<Forms />} />
+        <Route path="/settings" element={<Settings />} />
       </Route>
+
+      {/* Backward-compat redirects for anyone hitting old /dashboard URLs. */}
+      <Route path="/dashboard" element={<Navigate to="/availability-sharings" replace />} />
+      <Route path="/dashboard/links" element={<Navigate to="/availability-sharings" replace />} />
+      <Route path="/dashboard/bookings" element={<Navigate to="/confirmed-list" replace />} />
+      <Route path="/dashboard/settings" element={<Navigate to="/settings" replace />} />
 
       {SHOW_DEV_ROUTES && (
         <Route

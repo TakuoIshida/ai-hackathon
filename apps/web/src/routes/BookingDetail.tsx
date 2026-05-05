@@ -78,7 +78,7 @@ export default function BookingDetail() {
         </CardHeader>
         <CardFooter>
           <Button asChild variant="outline">
-            <Link to="/dashboard/bookings">一覧に戻る</Link>
+            <Link to="/confirmed-list">一覧に戻る</Link>
           </Button>
         </CardFooter>
       </Card>
@@ -111,7 +111,7 @@ export default function BookingDetail() {
 
   return (
     <div {...stylex.props(styles.page)}>
-      <Link to="/dashboard/bookings" {...stylex.props(styles.back)}>
+      <Link to="/confirmed-list" {...stylex.props(styles.back)}>
         ← 予約一覧
       </Link>
       <h1 {...stylex.props(styles.heading)}>{b.linkTitle}</h1>

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 // Scenario 2 of ISH-139:
-//   Authenticated owner creates a link from /dashboard/links/new, then opens
+//   Authenticated owner creates a link from /availability-sharings/new, then opens
 //   the public URL and sees the calendar with at least one slot.
 //
 // All API endpoints are stubbed at the page-route layer:
@@ -103,7 +103,7 @@ test.describe("link create → public URL renders slots", () => {
     );
 
     // Drive the form.
-    await page.goto("/dashboard/links/new");
+    await page.goto("/availability-sharings/new");
     await expect(page.getByRole("heading", { name: "新規リンク" })).toBeVisible();
     await page.getByLabel("スラッグ (URL)").fill(SLUG);
     await page.getByLabel("タイトル").fill(TITLE);
@@ -113,9 +113,9 @@ test.describe("link create → public URL renders slots", () => {
     await page.getByLabel("このリンクを公開する").check();
     await page.getByRole("button", { name: "作成" }).click();
 
-    // After create the form navigates to /dashboard/links — the row we just
+    // After create the form navigates to /availability-sharings — the row we just
     // POSTed should be visible in the list.
-    await expect(page).toHaveURL(/\/dashboard\/links$/);
+    await expect(page).toHaveURL(/\/availability-sharings$/);
     await expect(page.getByText(TITLE)).toBeVisible();
     await expect(page.getByText(`/${SLUG}`)).toBeVisible();
 

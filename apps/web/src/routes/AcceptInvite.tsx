@@ -105,12 +105,12 @@ export default function AcceptInvite() {
     try {
       // POST /invitations/:token/accept → { tenantId, role }
       await api.acceptTenantInvitation(token, getToken);
-      navigate("/dashboard", { replace: true });
+      navigate("/availability-sharings", { replace: true });
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 409) {
           // already_accepted or user_already_in_tenant → already belongs to tenant
-          navigate("/dashboard", { replace: true });
+          navigate("/availability-sharings", { replace: true });
           return;
         }
         setAccept({
