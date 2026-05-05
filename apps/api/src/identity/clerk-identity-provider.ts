@@ -31,13 +31,24 @@ export function buildClerkIdentityProvider(): IdentityProviderPort {
     };
   }
 
-  // Lazy-init: the Clerk client is only constructed when buildClerkIdentityProvider()
-  // is called (at app boot), not on every request. The secretKey read happens
-  // once here — tests that set process.env before importing will pick it up.
-  const clerk = createClerkClient({
-    secretKey: process.env.CLERK_SECRET_KEY ?? "",
-    publishableKey: process.env.CLERK_PUBLISHABLE_KEY ?? "",
-  });
+  // ISH-191: defer the Clerk client construction until the first call site
+  // that actually needs it (currently `getUserByExternalId`). This means tests
+  // that exercise only `getClaims` / `middleware` no longer have to set
+  // `CLERK_SECRET_KEY` before importing this module — the env read happens at
+  // first use, not at port construction.
+  //
+  // The cache is closure-local (one client per `buildClerkIdentityProvider()`
+  // call), not module-level — same hygiene as ISH-190's idp move.
+  let cachedClient: ReturnType<typeof createClerkClient> | null = null;
+  const getClerk = () => {
+    if (!cachedClient) {
+      cachedClient = createClerkClient({
+        secretKey: process.env.CLERK_SECRET_KEY ?? "",
+        publishableKey: process.env.CLERK_PUBLISHABLE_KEY ?? "",
+      });
+    }
+    return cachedClient;
+  };
 
   return {
     middleware: (): MiddlewareHandler => clerkMiddleware(),
@@ -67,7 +78,7 @@ export function buildClerkIdentityProvider(): IdentityProviderPort {
 
     getUserByExternalId: async (externalId: string): Promise<IdentityProfile | null> => {
       try {
-        const user = await clerk.users.getUser(externalId);
+        const user = await getClerk().users.getUser(externalId);
         const primaryEmail = user.emailAddresses.find((e) => e.id === user.primaryEmailAddressId);
         // Fall back to first email if primaryEmailAddressId is not set.
         const resolvedEmail = primaryEmail?.emailAddress ?? user.emailAddresses[0]?.emailAddress;
