@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { auth } from "@/auth";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -18,6 +19,12 @@ import SignInPage from "@/routes/SignIn";
 import SignUpPage from "@/routes/SignUp";
 import WorkspaceDetail from "@/routes/WorkspaceDetail";
 import Workspaces from "@/routes/Workspaces";
+
+// ISH-225: dev-only component showcase. Lazy-loaded so it doesn't bloat the
+// production bundle for normal users. Accessible at /dev/components in dev,
+// or in prod when VITE_SHOW_DEV_ROUTES === "1".
+const DevComponents = lazy(() => import("@/routes/DevComponents"));
+const SHOW_DEV_ROUTES = import.meta.env.DEV || import.meta.env.VITE_SHOW_DEV_ROUTES === "1";
 
 const HAS_CLERK = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
 
@@ -62,6 +69,17 @@ export default function App() {
         <Route path="workspaces/:id" element={<WorkspaceDetail />} />
         <Route path="settings" element={<Settings />} />
       </Route>
+
+      {SHOW_DEV_ROUTES && (
+        <Route
+          path="/dev/components"
+          element={
+            <Suspense fallback={null}>
+              <DevComponents />
+            </Suspense>
+          }
+        />
+      )}
 
       <Route element={<PublicLayout />}>
         <Route path="cancel/:token" element={<CancelBooking />} />
