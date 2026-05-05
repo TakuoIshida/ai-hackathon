@@ -1,0 +1,13 @@
+<svg width="100%" viewBox="0 0 680 400" role="img" xmlns="http://www.w3.org/2000/svg" style="">
+  <title style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">Rips logo</title>
+  <desc style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">Black serif wordmark "Rips" with a gradient circle above the letter i</desc>
+  <defs>
+    <radialGradient id="dotGrad" cx="45%" cy="60%" r="55%">
+      <stop offset="0%" stop-color="#e8a898"/>
+      <stop offset="60%" stop-color="#7bafc4"/>
+      <stop offset="100%" stop-color="#5a8fa8"/>
+    </radialGradient>
+  </defs>
+  <circle cx="355" cy="118" r="38" fill="url(#dotGrad)" style="stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <text x="340" y="330" font-family="Georgia, 'Times New Roman', serif" font-size="260" font-weight="700" fill="#0a0a0a" text-anchor="middle" letter-spacing="-4" style="fill:rgb(10, 10, 10);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Georgia, &quot;Times New Roman&quot;, serif;font-size:260px;font-weight:700;text-anchor:middle;dominant-baseline:auto">Rips</text>
+</svg>
