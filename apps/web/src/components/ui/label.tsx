@@ -1,11 +1,11 @@
 import * as stylex from "@stylexjs/stylex";
 import * as React from "react";
-import { colors, space } from "@/styles/tokens.stylex";
+import { colors, space, typography } from "@/styles/tokens.stylex";
 
 const styles = stylex.create({
   base: {
-    fontSize: "0.875rem",
-    fontWeight: 500,
+    fontSize: typography.fontSizeSm,
+    fontWeight: typography.fontWeightMedium,
     color: colors.fg,
     display: "block",
     marginBottom: space.xs,

@@ -1,13 +1,14 @@
 import * as stylex from "@stylexjs/stylex";
 import * as React from "react";
-import { colors, radius, space } from "@/styles/tokens.stylex";
+import { colors, radius, space, typography } from "@/styles/tokens.stylex";
 
 const styles = stylex.create({
   base: {
     height: "2.5rem",
     width: "100%",
     paddingInline: space.md,
-    fontSize: "0.875rem",
+    fontFamily: typography.fontFamilySans,
+    fontSize: typography.fontSizeSm,
     backgroundColor: colors.bg,
     color: colors.fg,
     border: `1px solid ${colors.border}`,

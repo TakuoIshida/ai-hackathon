@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import * as React from "react";
-import { colors, radius, space } from "@/styles/tokens.stylex";
+import { colors, radius, space, typography } from "@/styles/tokens.stylex";
 
 const styles = stylex.create({
   card: {
@@ -18,12 +18,13 @@ const styles = stylex.create({
     gap: space.xs,
   },
   title: {
-    fontSize: "1.125rem",
-    fontWeight: 600,
+    fontSize: typography.fontSizeLg,
+    fontWeight: typography.fontWeightSemibold,
+    lineHeight: typography.lineHeightTight,
     margin: 0,
   },
   description: {
-    fontSize: "0.875rem",
+    fontSize: typography.fontSizeSm,
     color: colors.muted,
     margin: 0,
   },
