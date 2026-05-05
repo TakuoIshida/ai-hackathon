@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { LinkSummary } from "@/lib/types";
+import { TestQueryProvider } from "@/test/query-test-utils";
 
 vi.mock("@clerk/clerk-react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@clerk/clerk-react")>();
@@ -33,9 +34,11 @@ beforeEach(() => {
 
 function renderLinks() {
   return render(
-    <MemoryRouter>
-      <Links />
-    </MemoryRouter>,
+    <TestQueryProvider>
+      <MemoryRouter>
+        <Links />
+      </MemoryRouter>
+    </TestQueryProvider>,
   );
 }
 

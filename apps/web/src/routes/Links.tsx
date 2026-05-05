@@ -1,10 +1,9 @@
 import * as stylex from "@stylexjs/stylex";
-import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ApiError, api } from "@/lib/api";
+import { ApiError } from "@/lib/api";
+import { useLinksQuery } from "@/lib/queries";
 import type { LinkSummary } from "@/lib/types";
 import { colors, space } from "@/styles/tokens.stylex";
 
@@ -39,29 +38,9 @@ const styles = stylex.create({
   error: { color: colors.destructive, fontSize: "0.875rem" },
 });
 
-type LoadState =
-  | { status: "loading" }
-  | { status: "ok"; links: LinkSummary[] }
-  | { status: "error"; message: string };
-
 export default function Links() {
-  const { getToken } = auth.useAuth();
-  const [state, setState] = useState<LoadState>({ status: "loading" });
-
-  const reload = useCallback(async () => {
-    setState({ status: "loading" });
-    try {
-      const { links } = await api.listLinks(() => getToken());
-      setState({ status: "ok", links });
-    } catch (err) {
-      const message = err instanceof ApiError ? `${err.status} ${err.code}` : "failed to load";
-      setState({ status: "error", message });
-    }
-  }, [getToken]);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
+  // ISH-226: lifted off useState+useEffect onto TanStack Query.
+  const { data, isLoading, isError, error, refetch } = useLinksQuery();
 
   return (
     <div {...stylex.props(styles.page)}>
@@ -72,24 +51,26 @@ export default function Links() {
         </Button>
       </div>
 
-      {state.status === "loading" && <div {...stylex.props(styles.empty)}>読み込み中...</div>}
+      {isLoading && <div {...stylex.props(styles.empty)}>読み込み中...</div>}
 
-      {state.status === "error" && (
+      {isError && (
         <Card>
           <CardHeader>
             <CardTitle>読み込みに失敗しました</CardTitle>
             <CardDescription>API への接続を確認してください。</CardDescription>
           </CardHeader>
           <CardBody>
-            <p {...stylex.props(styles.error)}>{state.message}</p>
-            <Button variant="outline" onClick={reload}>
+            <p {...stylex.props(styles.error)}>
+              {error instanceof ApiError ? `${error.status} ${error.code}` : "failed to load"}
+            </p>
+            <Button variant="outline" onClick={() => refetch()}>
               再試行
             </Button>
           </CardBody>
         </Card>
       )}
 
-      {state.status === "ok" && state.links.length === 0 && (
+      {data && data.links.length === 0 && (
         <Card>
           <CardHeader>
             <CardTitle>まだリンクがありません</CardTitle>
@@ -101,9 +82,9 @@ export default function Links() {
         </Card>
       )}
 
-      {state.status === "ok" && state.links.length > 0 && (
+      {data && data.links.length > 0 && (
         <div {...stylex.props(styles.list)}>
-          {state.links.map((link) => (
+          {data.links.map((link) => (
             <LinkRow key={link.id} link={link} />
           ))}
         </div>
