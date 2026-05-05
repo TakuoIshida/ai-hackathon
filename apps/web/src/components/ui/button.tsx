@@ -1,7 +1,7 @@
 import { Slot } from "@radix-ui/react-slot";
 import * as stylex from "@stylexjs/stylex";
 import * as React from "react";
-import { colors, radius, space } from "@/styles/tokens.stylex";
+import { colors, radius, space, typography } from "@/styles/tokens.stylex";
 
 const styles = stylex.create({
   base: {
@@ -12,8 +12,9 @@ const styles = stylex.create({
     whiteSpace: "nowrap",
     borderRadius: radius.md,
     border: "1px solid transparent",
-    fontWeight: 500,
-    fontSize: "0.875rem",
+    fontFamily: typography.fontFamilySans,
+    fontWeight: typography.fontWeightMedium,
+    fontSize: typography.fontSizeSm,
     cursor: { default: "pointer", ":disabled": "not-allowed" },
     opacity: { default: 1, ":disabled": 0.5 },
     transitionProperty: "background-color, color, border-color, opacity",
@@ -46,7 +47,7 @@ const styles = stylex.create({
   sizeSm: {
     height: "2.25rem",
     paddingInline: space.sm,
-    fontSize: "0.8125rem",
+    fontSize: typography.fontSizeXs,
   },
   sizeLg: {
     height: "2.75rem",
