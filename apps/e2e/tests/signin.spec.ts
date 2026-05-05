@@ -28,22 +28,20 @@ test.describe("signin → dashboard", () => {
     ).toBeVisible();
     await expect(page.getByText(/VITE_CLERK_PUBLISHABLE_KEY/)).toBeHidden();
 
-    // Navigate to /dashboard. With the bypass, ProtectedDashboard renders the
-    // DashboardLayout directly instead of redirecting to "/" or to Clerk.
-    await page.goto("/dashboard");
+    // ISH-227: top tab nav. Old /dashboard prefix removed; /dashboard now
+    // 301-equivalent redirects to /availability-sharings via App.tsx.
+    await page.goto("/availability-sharings");
 
-    // Dashboard shell — sidebar brand + main nav links. The home page's
-    // "リンクを作成" button also matches getByRole("link", { name: "リンク" })
-    // without exact:true, so we anchor every nav assertion to exact match to
-    // disambiguate.
+    // Top tab nav — brand + each tab is a link with exact label.
     await expect(page.getByRole("heading", { level: 1, name: "AI Hackathon" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "ダッシュボード", exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "リンク", exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "予約", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "空き時間リンク", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "カレンダー", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "未確定の調整", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "確定済の予定", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "フォーム", exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "設定", exact: true })).toBeVisible();
 
-    // Dashboard home content.
-    await expect(page.getByRole("heading", { name: "ダッシュボード" })).toBeVisible();
-    await expect(page.getByText("はじめに")).toBeVisible();
+    // Body — Links page heading.
+    await expect(page.getByRole("heading", { name: "リンク" })).toBeVisible();
   });
 });

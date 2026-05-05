@@ -99,7 +99,9 @@ describe("<Onboarding />", () => {
       role: "owner",
     });
 
-    renderOnboarding([{ path: "/dashboard", element: <div data-testid="dashboard" /> }]);
+    renderOnboarding([
+      { path: "/availability-sharings", element: <div data-testid="dashboard" /> },
+    ]);
 
     await screen.findByRole("textbox");
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "Acme Inc." } });
@@ -117,7 +119,9 @@ describe("<Onboarding />", () => {
       new ApiError(409, "already_member", "409 already_member"),
     );
 
-    renderOnboarding([{ path: "/dashboard", element: <div data-testid="dashboard" /> }]);
+    renderOnboarding([
+      { path: "/availability-sharings", element: <div data-testid="dashboard" /> },
+    ]);
 
     await screen.findByRole("textbox");
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "Acme Inc." } });

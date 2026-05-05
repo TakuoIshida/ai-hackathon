@@ -158,7 +158,7 @@ function BookingRow({ booking, tz }: { booking: BookingSummary; tz: string }) {
         </span>
       </div>
       <Button asChild variant="outline" size="sm">
-        <Link to={`/dashboard/bookings/${booking.id}`}>詳細</Link>
+        <Link to={`/confirmed-list/${booking.id}`}>詳細</Link>
       </Button>
     </div>
   );

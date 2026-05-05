@@ -47,7 +47,7 @@ export default function Links() {
       <div {...stylex.props(styles.toolbar)}>
         <h1 {...stylex.props(styles.heading)}>リンク</h1>
         <Button asChild>
-          <Link to="/dashboard/links/new">+ 新規リンク</Link>
+          <Link to="/availability-sharings/new">+ 新規リンク</Link>
         </Button>
       </div>
 
@@ -116,7 +116,7 @@ function LinkRow({ link }: { link: LinkSummary }) {
           URLコピー
         </Button>
         <Button asChild variant="outline" size="sm">
-          <Link to={`/dashboard/links/${link.id}/edit`}>編集</Link>
+          <Link to={`/availability-sharings/${link.id}/edit`}>編集</Link>
         </Button>
       </div>
     </div>

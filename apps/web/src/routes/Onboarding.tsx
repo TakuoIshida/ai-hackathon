@@ -112,12 +112,12 @@ function OnboardingForm() {
     try {
       await api.createTenant(name.trim(), getToken);
       // 201 → tenant created successfully → go to dashboard
-      navigate("/dashboard", { replace: true });
+      navigate("/availability-sharings", { replace: true });
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 409) {
           // already_member → user already belongs to a tenant → go to dashboard
-          navigate("/dashboard", { replace: true });
+          navigate("/availability-sharings", { replace: true });
           return;
         }
         if (err.status === 400) {

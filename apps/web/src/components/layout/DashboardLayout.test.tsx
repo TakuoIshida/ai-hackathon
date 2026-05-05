@@ -18,8 +18,8 @@ describe("<DashboardLayout />", () => {
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route element={<DashboardLayout />}>
-            <Route path="/dashboard" element={<div>Home Page</div>} />
-            <Route path="/dashboard/links" element={<div>Links Page</div>} />
+            <Route path="/availability-sharings" element={<div>Links Page</div>} />
+            <Route path="/calendar" element={<div>Calendar Page</div>} />
           </Route>
         </Routes>
       </MemoryRouter>,
@@ -27,19 +27,21 @@ describe("<DashboardLayout />", () => {
   }
 
   it("shows brand, all nav items, and the matched outlet", () => {
-    renderAt("/dashboard");
+    renderAt("/availability-sharings");
     expect(screen.getByRole("heading", { level: 1, name: /AI Hackathon/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "ダッシュボード" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "リンク" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "予約" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "空き時間リンク" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "カレンダー" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "未確定の調整" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "確定済の予定" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "フォーム" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "設定" })).toBeInTheDocument();
-    expect(screen.getByText("Home Page")).toBeInTheDocument();
+    expect(screen.getByText("Links Page")).toBeInTheDocument();
     expect(screen.getByTestId("user-button")).toBeInTheDocument();
   });
 
   it("renders different children based on path", () => {
-    renderAt("/dashboard/links");
-    expect(screen.getByText("Links Page")).toBeInTheDocument();
-    expect(screen.queryByText("Home Page")).toBeNull();
+    renderAt("/calendar");
+    expect(screen.getByText("Calendar Page")).toBeInTheDocument();
+    expect(screen.queryByText("Links Page")).toBeNull();
   });
 });

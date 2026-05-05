@@ -35,6 +35,44 @@ export type UpdateLinkResult =
   | { kind: "not_found" }
   | { kind: "slug_taken" };
 
+/**
+ * Slugs that collide with FE app routes (ISH-227). The FE uses flat URLs at
+ * the root (/availability-sharings, /calendar, ...) and a catch-all `/:slug`
+ * for public booking pages. To prevent a public link from shadowing an app
+ * route, we reject these names at create / update / availability-check time.
+ *
+ * Keep this list in sync with `apps/web/src/App.tsx` whenever a new
+ * authenticated top-level route is introduced.
+ */
+const RESERVED_SLUGS = new Set<string>([
+  // Authenticated app tabs
+  "availability-sharings",
+  "calendar",
+  "unconfirmed-list",
+  "confirmed-list",
+  "forms",
+  "settings",
+  // Auth flow + onboarding
+  "sign-in",
+  "sign-up",
+  "onboarding",
+  // Public flow
+  "cancel",
+  "invite",
+  "invitations",
+  // Internal
+  "dev",
+  "dashboard",
+  "api",
+  "health",
+  "webhooks",
+  "public",
+]);
+
+export function isReservedSlug(slug: string): boolean {
+  return RESERVED_SLUGS.has(slug.toLowerCase());
+}
+
 export async function listLinks(database: Database, userId: string): Promise<Link[]> {
   return listLinksForUser(database, userId);
 }
@@ -51,6 +89,9 @@ export async function checkSlugAvailability(
   database: Database,
   slug: string,
 ): Promise<{ slug: string; available: boolean }> {
+  if (isReservedSlug(slug)) {
+    return { slug, available: false };
+  }
   const taken = await isSlugTaken(database, slug);
   return { slug, available: !taken };
 }
@@ -61,7 +102,7 @@ export async function createLinkForUser(
   tenantId: string,
   input: CreateLinkCommand,
 ): Promise<CreateLinkResult> {
-  if (await isSlugTaken(database, input.slug)) {
+  if (isReservedSlug(input.slug) || (await isSlugTaken(database, input.slug))) {
     return { kind: "slug_taken" };
   }
   const link = await createLink(database, userId, tenantId, input);
@@ -77,8 +118,10 @@ export async function updateLinkForUser(
   if (patch.slug !== undefined) {
     const existing = await getLinkForUser(database, userId, linkId);
     if (!existing) return { kind: "not_found" };
-    if (existing.slug !== patch.slug && (await isSlugTaken(database, patch.slug))) {
-      return { kind: "slug_taken" };
+    if (existing.slug !== patch.slug) {
+      if (isReservedSlug(patch.slug) || (await isSlugTaken(database, patch.slug))) {
+        return { kind: "slug_taken" };
+      }
     }
   }
   const updated = await updateLink(database, userId, linkId, patch);
