@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import * as React from "react";
-import { colors, radius, space, typography } from "@/styles/tokens.stylex";
+import { colors, radius, shadow, space, typography } from "@/styles/tokens.stylex";
 
 const styles = stylex.create({
   card: {
@@ -11,6 +11,14 @@ const styles = stylex.create({
     display: "flex",
     flexDirection: "column",
     gap: space.md,
+  },
+  variantDefault: {},
+  variantElevated: {
+    boxShadow: shadow.md,
+    borderColor: "transparent",
+  },
+  variantOutline: {
+    backgroundColor: "transparent",
   },
   header: {
     display: "flex",
@@ -40,9 +48,20 @@ const styles = stylex.create({
   },
 });
 
-export const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ style, ...props }, ref) => {
-    const sx = stylex.props(styles.card);
+const variantMap = {
+  default: styles.variantDefault,
+  elevated: styles.variantElevated,
+  outline: styles.variantOutline,
+} as const;
+
+export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** Visual style. Default: default. */
+  variant?: keyof typeof variantMap;
+}
+
+export const Card = React.forwardRef<HTMLDivElement, CardProps>(
+  ({ style, variant = "default", ...props }, ref) => {
+    const sx = stylex.props(styles.card, variantMap[variant]);
     return <div ref={ref} {...props} className={sx.className} style={{ ...sx.style, ...style }} />;
   },
 );

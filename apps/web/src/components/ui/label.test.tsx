@@ -15,4 +15,16 @@ describe("<Label />", () => {
     expect(label.tagName).toBe("LABEL");
     expect(label).toHaveAttribute("for", "tz");
   });
+
+  it("renders a required asterisk when required is set", () => {
+    render(<Label required>Email</Label>);
+    expect(screen.getByText("Email")).toBeInTheDocument();
+    expect(screen.getByText("*")).toBeInTheDocument();
+  });
+
+  it("renders helperText below the label", () => {
+    render(<Label helperText="形式: name@example.com">Email</Label>);
+    expect(screen.getByText("Email")).toBeInTheDocument();
+    expect(screen.getByText("形式: name@example.com")).toBeInTheDocument();
+  });
 });

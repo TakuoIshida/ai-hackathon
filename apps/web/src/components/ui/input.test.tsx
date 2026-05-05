@@ -19,4 +19,22 @@ describe("<Input />", () => {
     render(<Input disabled placeholder="x" />);
     expect(screen.getByPlaceholderText("x")).toBeDisabled();
   });
+
+  it("sets aria-invalid when error is true", () => {
+    render(<Input placeholder="x" error />);
+    expect(screen.getByPlaceholderText("x")).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("renders leftAddon and rightAddon", () => {
+    render(
+      <Input
+        placeholder="amount"
+        leftAddon={<span data-testid="left">¥</span>}
+        rightAddon={<span data-testid="right">.00</span>}
+      />,
+    );
+    expect(screen.getByTestId("left")).toBeInTheDocument();
+    expect(screen.getByTestId("right")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("amount")).toBeInTheDocument();
+  });
 });

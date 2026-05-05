@@ -30,4 +30,9 @@ describe("<Card />", () => {
     expect(node).toBeInTheDocument();
     expect(node).toHaveAttribute("style");
   });
+
+  it("accepts variant prop", () => {
+    render(<Card data-testid="card" variant="elevated" />);
+    expect(screen.getByTestId("card")).toBeInTheDocument();
+  });
 });
