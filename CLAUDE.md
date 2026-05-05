@@ -4,6 +4,85 @@ Conventions and guardrails for AI agents (Claude, Copilot, etc.) working in
 this repo. Human contributor docs live in `README.md`; this file captures the
 rules that are easy to get wrong when generating code automatically.
 
+## Multi-tenant 規約
+
+This repo is multi-tenant. Tenant 分離は **RLS (Row Level Security)** で強制
+されており、application コードからは暗黙に効きます。新規スキーマ・テーブル・
+認証コードを書くときに守るべき規約をここに集約します。設計の詳細は
+`docs/design/` 配下を参照。
+
+### Schema 配置 (common / tenant)
+
+- **common schema** — tenant 横断で参照される 3 テーブルのみ
+  - `users`, `tenants`, `tenant_members`
+  - RLS 対象外 (login 解決前は tenant_id を絞れないため)
+- **tenant schema** — 業務データすべて
+  - 新規追加テーブルは原則 tenant schema に置く
+  - 全テーブルに `tenant_id text NOT NULL REFERENCES common.tenants(id)` を
+    必須
+
+現状の割り振りは [`docs/design/schema-map.md`](docs/design/schema-map.md)。
+
+### tenant_id index 必須
+
+tenant schema の **すべての** テーブルに `tenant_id` index を作る:
+
+```sql
+CREATE INDEX idx_<table>_tenant_id ON tenant.<table>(tenant_id);
+```
+
+複合 index にする場合は `(tenant_id, ...)` の順 (leftmost prefix で活かす)。
+
+**理由**: RLS が全クエリに `WHERE tenant_id = current_setting('app.tenant_id')`
+を暗黙適用するため、index 無しは全件スキャン → 性能崩壊。
+
+### PK/FK は ULID(text)
+
+新規テーブルの PK/FK は `text` + ULID。Drizzle helper を使う:
+
+```ts
+import { ulidPk } from "@/db/helpers/ulid";
+
+export const fooBar = pgTable("foo_bar", {
+  id: ulidPk(),
+  // ...
+});
+```
+
+`serial` / `uuid` / `bigint` PK は使わない。詳細:
+[`docs/design/ulid.md`](docs/design/ulid.md)。
+
+### 認証ベンダー SDK の直接 import 禁止
+
+Clerk SDK (`@clerk/*`, `@hono/clerk-auth`) は将来差し替え可能にしてあるので
+**adapter ファイル以外から直接 import しない**:
+
+- BE: `apps/api/src/identity/clerk-*.ts` のみ
+- FE: `apps/web/src/auth/clerk-*.tsx` のみ
+
+application コードは port (`IdentityProviderPort` / `AuthAdapter`) 越しに呼ぶ。
+詳細: [`docs/design/auth-vendor-abstraction.md`](docs/design/auth-vendor-abstraction.md)。
+
+### tenant_id propagation (middleware + AsyncLocalStorage)
+
+API リクエスト処理では `attachTenantContext` middleware が tx を確保し、
+`SELECT set_config('app.tenant_id', ...)` を発行する。`requestScope`
+(AsyncLocalStorage) が tx + tenantId を保持し、`db` proxy が透過的に拾うので
+**repos / usecases は tenantId を意識する必要はなく、引数にも渡さない**。
+
+mount しない例外パス (現状):
+
+- `/onboarding/tenant` (user は tenant 未所属)
+- `/webhooks` (user session なし)
+- `/public/*`, `/health`, `/invitations/:token` GET (公開エンドポイント)
+
+詳細: [`docs/design/rls.md`](docs/design/rls.md)。
+
+### tenant_members.role は const + type union で一本化
+
+`role` の追加は `apps/api/src/db/schema/common.ts::TENANT_MEMBER_ROLES` を
+唯一の source of truth として行う (CHECK 制約と TS union が drift しない)。
+
 ## Test file placement
 
 **These rules apply to new files only. Existing files are not relocated.**

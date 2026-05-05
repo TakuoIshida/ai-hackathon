@@ -137,7 +137,37 @@ bun run db:migrate    # apply to Neon
 bun run db:studio     # open Drizzle Studio
 ```
 
-Schema lives in `apps/api/src/db/schema.ts`.
+Schema lives in `apps/api/src/db/schema/` (one file per logical group:
+`common.ts`, `tenant.ts`, `links.ts`, `bookings.ts`, `google.ts`).
+
+## Schema map (multi-tenant)
+
+Schema 構成は **multi-tenant** で `common` (tenant 横断) と `tenant`
+(tenant スコープ + RLS) に分かれている。
+
+| Schema | テーブル |
+|--------|---------|
+| `common` | `users`, `tenants`, `tenant_members` |
+| `tenant` | `availability_links`, `availability_rules`, `availability_excludes`, `bookings`, `link_owners`, `google_oauth_accounts`, `google_calendars`, `invitations` |
+
+共通ルール:
+
+- 全 PK/FK は **ULID(text)** (`apps/api/src/db/helpers/ulid.ts::ulidPk`)
+- `tenant.*` は `tenant_id text NOT NULL REFERENCES common.tenants(id)` +
+  **`tenant_id` index 必須**
+- `tenant.*` は全テーブル `ENABLE ROW LEVEL SECURITY`、`app.tenant_id`
+  セッション変数で絞る (request scope で `SELECT set_config(...)`)
+- DB role: migration は `admin` (BYPASSRLS)、runtime は `app` (RLS 適用)
+
+設計ドキュメント:
+
+- [`docs/design/schema-map.md`](docs/design/schema-map.md) — 全テーブル仕様
+- [`docs/design/rls.md`](docs/design/rls.md) — RLS / role / SET LOCAL
+- [`docs/design/ulid.md`](docs/design/ulid.md) — ULID 戦略
+- [`docs/design/auth-vendor-abstraction.md`](docs/design/auth-vendor-abstraction.md) —
+  `IdentityProviderPort` / `AuthAdapter`
+
+AI agent 向け規約は [`CLAUDE.md`](CLAUDE.md) の "Multi-tenant 規約" を参照。
 
 ## API endpoints
 
