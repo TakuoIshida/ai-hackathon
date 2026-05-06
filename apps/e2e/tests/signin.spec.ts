@@ -50,9 +50,11 @@ test.describe("signin → dashboard", () => {
     await expect(page.getByRole("link", { name: "フォーム", exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "チーム設定", exact: true })).toBeVisible();
 
-    // Body — Links page heading. exact:true is required because the empty
-    // state below renders a "まだリンクがありません" heading whose name partially
-    // matches "リンク" without strict-mode equality.
-    await expect(page.getByRole("heading", { name: "リンク", exact: true })).toBeVisible();
+    // Body — Links page H1. ISH-237 (L-04) renamed it from "リンク" to
+    // "空き時間リンク" to match the brand wording. level:1 + exact:true
+    // disambiguates from the top tab nav link with the same text.
+    await expect(
+      page.getByRole("heading", { level: 1, name: "空き時間リンク", exact: true }),
+    ).toBeVisible();
   });
 });
