@@ -166,6 +166,17 @@ async function applyMigrationsIfNeeded(sql: postgres.Sql): Promise<void> {
           WHERE schemaname = 'tenant' AND tablename = 'bookings' AND policyname = 'tenant_isolation'
         ) AS present
       `;
+    } else if (name.startsWith("0004_")) {
+      // 0004_invitations-role (ISH-252): sentinel = role column on
+      // tenant.invitations.
+      probe = sql<Array<{ present: boolean }>>`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'tenant'
+            AND table_name = 'invitations'
+            AND column_name = 'role'
+        ) AS present
+      `;
     } else {
       // Unknown migration: always apply (safe because SQL uses IF NOT EXISTS /
       // IF EXISTS where appropriate, or will error loudly).

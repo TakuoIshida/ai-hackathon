@@ -13,7 +13,11 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 import { tenantId, ulidPk } from "../helpers/ulid";
-import { tenants, users } from "./common";
+import { TENANT_MEMBER_ROLES, tenants, users } from "./common";
+
+// SQL fragment for the role CHECK constraint (matches common.tenant_members).
+// Single source of truth: TENANT_MEMBER_ROLES in common.ts.
+const TENANT_MEMBER_ROLES_SQL = sql.raw(TENANT_MEMBER_ROLES.map((r) => `'${r}'`).join(", "));
 
 /**
  * Tenant schema: business data tables isolated per tenant.
@@ -39,6 +43,12 @@ export const invitations = tenantSchema.table(
     invitedByUserId: text("invited_by_user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    /**
+     * Role to assign on acceptance (ISH-252). Values mirror
+     * common.tenant_members.role — see TENANT_MEMBER_ROLES in common.ts.
+     * Default 'member' so the column is safe to backfill on existing rows.
+     */
+    role: text("role").notNull().default("member"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -49,6 +59,8 @@ export const invitations = tenantSchema.table(
     // Once acceptedAt is set, the row is kept for audit but the constraint
     // releases so the same email can be re-invited later.
     uniqueIndex("uniq_tenant_email_open").on(t.tenantId, t.email).where(sql`accepted_at IS NULL`),
+    // Role must match the values allowed by common.tenant_members.role.
+    check("invitations_role_check", sql`${t.role} IN (${TENANT_MEMBER_ROLES_SQL})`),
   ],
 );
 

@@ -1,6 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
-import { tenantMembers } from "@/db/schema/common";
+import { type TenantMemberRole, tenantMembers } from "@/db/schema/common";
 import { type Invitation, invitations } from "@/db/schema/tenant";
 
 type Database = typeof DbClient;
@@ -62,6 +62,8 @@ export type InsertInvitationInput = {
   email: string;
   invitedByUserId: string;
   expiresAt: Date;
+  /** ISH-252: persist requested role so acceptInvitation can read it back. */
+  role: TenantMemberRole;
 };
 
 export async function insertInvitation(
@@ -75,6 +77,7 @@ export async function insertInvitation(
       email: input.email,
       invitedByUserId: input.invitedByUserId,
       expiresAt: input.expiresAt,
+      role: input.role,
       // token uses defaultRandom() in schema
     })
     .returning();
@@ -98,7 +101,7 @@ export async function markInvitationAccepted(
     invitationId: string;
     userId: string;
     tenantId: string;
-    role: "owner" | "member";
+    role: TenantMemberRole;
     now: Date;
   },
 ): Promise<void> {
