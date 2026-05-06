@@ -14,7 +14,7 @@ process.env.CLERK_PUBLISHABLE_KEY ??= "pk_test_ZXhhbXBsZS5jb20k";
 
 const { app } = await import("@/app");
 
-describe("/tenant/members auth gate (ISH-250 / ISH-251)", () => {
+describe("/tenant/members auth gate (ISH-250 / ISH-251 / ISH-256)", () => {
   test("GET /tenant/members → 401 unauth", async () => {
     const res = await app.request("/tenant/members", { method: "GET" });
     expect(res.status).toBe(401);
@@ -23,6 +23,15 @@ describe("/tenant/members auth gate (ISH-250 / ISH-251)", () => {
   test("DELETE /tenant/members/:userId → 401 unauth", async () => {
     const res = await app.request("/tenant/members/00000000-0000-0000-0000-000000000000", {
       method: "DELETE",
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("PATCH /tenant/members/:userId → 401 unauth", async () => {
+    const res = await app.request("/tenant/members/00000000-0000-0000-0000-000000000000", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "member" }),
     });
     expect(res.status).toBe(401);
   });
@@ -149,6 +158,112 @@ describe("DELETE /tenant/members/:userId (ISH-251)", () => {
     const a = buildAppAs(owner.externalId, owner.email);
 
     const res = await a.request(`/tenant/members/${ulid()}`, { method: "DELETE" });
+    expect(res.status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /tenant/members/:userId — change role (ISH-256)
+// ---------------------------------------------------------------------------
+
+describe("PATCH /tenant/members/:userId (ISH-256)", () => {
+  test("non-owner caller → 403 forbidden", async () => {
+    const tenant = await seedTenant();
+    await seedUser(tenant.id, "owner", "owner");
+    const caller = await seedUser(tenant.id, "member", "caller");
+    const target = await seedUser(tenant.id, "member", "target");
+    const a = buildAppAs(caller.externalId, caller.email);
+
+    const res = await a.request(`/tenant/members/${target.userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "owner" }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  test("400 when role is not in the allowed enum", async () => {
+    const tenant = await seedTenant();
+    const owner = await seedUser(tenant.id, "owner", "owner");
+    const target = await seedUser(tenant.id, "member", "target");
+    const a = buildAppAs(owner.externalId, owner.email);
+
+    const res = await a.request(`/tenant/members/${target.userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "admin" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("owner promotes a member to owner → 200 ok and DB row updated", async () => {
+    const tenant = await seedTenant();
+    const owner = await seedUser(tenant.id, "owner", "owner");
+    const target = await seedUser(tenant.id, "member", "target");
+    const a = buildAppAs(owner.externalId, owner.email);
+
+    const res = await a.request(`/tenant/members/${target.userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "owner" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; noop?: boolean };
+    expect(body.ok).toBe(true);
+    expect(body.noop).toBeUndefined();
+
+    const rows = await testDb.select().from(tenantMembers);
+    const targetRow = rows.find((r) => r.userId === target.userId);
+    expect(targetRow?.role).toBe("owner");
+  });
+
+  test("target already has the requested role → 200 noop=true", async () => {
+    const tenant = await seedTenant();
+    const owner = await seedUser(tenant.id, "owner", "owner");
+    const target = await seedUser(tenant.id, "member", "target");
+    const a = buildAppAs(owner.externalId, owner.email);
+
+    const res = await a.request(`/tenant/members/${target.userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "member" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; noop?: boolean };
+    expect(body.ok).toBe(true);
+    expect(body.noop).toBe(true);
+  });
+
+  test("demoting the only remaining owner (incl. self) → 409 last_owner", async () => {
+    const tenant = await seedTenant();
+    const owner = await seedUser(tenant.id, "owner", "owner");
+    const a = buildAppAs(owner.externalId, owner.email);
+
+    const res = await a.request(`/tenant/members/${owner.userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "member" }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("last_owner");
+
+    // Owner role unchanged.
+    const rows = await testDb.select().from(tenantMembers);
+    const ownerRow = rows.find((r) => r.userId === owner.userId);
+    expect(ownerRow?.role).toBe("owner");
+  });
+
+  test("target not in this tenant → 404 not_found", async () => {
+    const tenant = await seedTenant();
+    const owner = await seedUser(tenant.id, "owner", "owner");
+    const a = buildAppAs(owner.externalId, owner.email);
+
+    const res = await a.request(`/tenant/members/${ulid()}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "owner" }),
+    });
     expect(res.status).toBe(404);
   });
 });

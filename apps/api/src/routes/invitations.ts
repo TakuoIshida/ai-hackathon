@@ -2,7 +2,7 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono, type MiddlewareHandler } from "hono";
 import { db } from "@/db/client";
 import { acceptInvitationParamsSchema, createInvitationBodySchema } from "@/invitations/schemas";
-import { acceptInvitation, createInvitation } from "@/invitations/usecase";
+import { acceptInvitation, createInvitation, revokeTenantInvitation } from "@/invitations/usecase";
 import {
   type AuthVars,
   attachDbUser,
@@ -94,6 +94,34 @@ export function createTenantInvitationsRoute(deps: TenantInvitationsRouteDeps = 
       },
       201,
     );
+  });
+
+  /**
+   * DELETE /tenant/invitations/:invitationId
+   *
+   * Revoke a still-open invitation (ISH-256). Owner-only. Once accepted, the
+   * row is preserved for audit and cannot be deleted via this endpoint —
+   * 409 already_accepted in that case.
+   *
+   * Responses:
+   *   200 { ok: true }
+   *   401 unauthenticated
+   *   403 caller is not an owner
+   *   404 not_found (no invitation with this id in the caller's tenant)
+   *   409 already_accepted
+   */
+  route.delete("/:invitationId", async (c) => {
+    if (getTenantRole(c) !== "owner") return c.json({ error: "forbidden" }, 403);
+    const tenantId = getTenantId(c);
+    const callerUserId = getDbUser(c).id;
+    const invitationId = c.req.param("invitationId");
+
+    const result = await revokeTenantInvitation(db, callerUserId, tenantId, invitationId);
+    if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
+    if (result.kind === "already_accepted") {
+      return c.json({ error: "already_accepted" }, 409);
+    }
+    return c.json({ ok: true });
   });
 
   return route;

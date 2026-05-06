@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
 import { type TenantMemberRole, tenantMembers, users } from "@/db/schema/common";
+import { deleteInvitationForTenant, findInvitationByIdForTenant } from "@/tenant-members/repo";
 import {
   findOpenInvitationByEmail,
   findOpenInvitationByToken,
@@ -178,4 +179,37 @@ export async function acceptInvitation(
   });
 
   return { kind: "ok", tenantId: invitation.tenantId, role };
+}
+
+// ---------------------------------------------------------------------------
+// revokeTenantInvitation (ISH-256)
+// ---------------------------------------------------------------------------
+
+/**
+ * Revoke (delete) a still-open tenant invitation. Caller authorization
+ * (owner-only) is enforced at the route layer via `getTenantRole(c)`. Once
+ * accepted, the invitation row is kept for audit and cannot be deleted via
+ * this endpoint.
+ *
+ * Status precedence:
+ *   not_found → already_accepted → ok
+ */
+export type RevokeTenantInvitationResult =
+  | { kind: "ok" }
+  | { kind: "not_found" }
+  | { kind: "already_accepted" };
+
+export async function revokeTenantInvitation(
+  database: Database,
+  _callerUserId: string,
+  tenantId: string,
+  invitationId: string,
+): Promise<RevokeTenantInvitationResult> {
+  const invitation = await findInvitationByIdForTenant(database, tenantId, invitationId);
+  if (!invitation) return { kind: "not_found" };
+  if (invitation.acceptedAt !== null) return { kind: "already_accepted" };
+
+  const deleted = await deleteInvitationForTenant(database, tenantId, invitationId);
+  if (!deleted) return { kind: "not_found" };
+  return { kind: "ok" };
 }
