@@ -202,6 +202,20 @@ export const api = {
       `/invitations/${encodeURIComponent(token)}/accept`,
       { method: "POST", getToken },
     ),
+
+  // ISH-239: issue a tenant invitation (owner only). The API accepts one
+  // email per request, so the modal POSTs each chip in parallel and
+  // aggregates per-email results.
+  // 201 { invitationId, token, expiresAt } | 400 | 401 | 403 | 409
+  createTenantInvitation: (
+    input: { email: string; role: "owner" | "member" },
+    getToken: AuthTokenGetter,
+  ) =>
+    request<{ invitationId: string; token: string; expiresAt: string }>("/tenant/invitations", {
+      method: "POST",
+      body: JSON.stringify(input),
+      getToken,
+    }),
 };
 
 export type { InvitationSummary };
