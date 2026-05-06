@@ -1,7 +1,9 @@
 import * as stylex from "@stylexjs/stylex";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { auth } from "@/auth";
+import { LinkCreateLayout, type LinkMode } from "@/components/availability-link/LinkCreateLayout";
+import { type LocationKind, SettingsPanel } from "@/components/availability-link/SettingsPanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,13 +12,12 @@ import { ApiError, api } from "@/lib/api";
 import {
   BUFFER_CHOICES,
   DEFAULT_RANGE_DAYS,
-  DURATION_CHOICES,
   type LinkInput,
   SLOT_INTERVAL_CHOICES,
   WEEKDAY_LABELS,
   type Weekday,
 } from "@/lib/types";
-import { colors, space } from "@/styles/tokens.stylex";
+import { colors, space, typography } from "@/styles/tokens.stylex";
 
 const browserTimeZone =
   typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "Asia/Tokyo";
@@ -45,8 +46,19 @@ const emptyInput: LinkInput = {
 };
 
 const styles = stylex.create({
-  page: { display: "flex", flexDirection: "column", gap: space.lg, maxWidth: "48rem" },
-  heading: { fontSize: "1.5rem", fontWeight: 600, margin: 0 },
+  body: { display: "flex", flexDirection: "column", gap: space.lg },
+  heading: {
+    fontSize: typography.fontSizeXl,
+    fontWeight: typography.fontWeightBold,
+    color: colors.blue900,
+    margin: 0,
+  },
+  subheading: {
+    fontSize: typography.fontSizeSm,
+    color: colors.ink500,
+    marginBlockStart: 0,
+    marginBlockEnd: space.md,
+  },
   field: { display: "flex", flexDirection: "column", gap: space.xs },
   fieldRow: { display: "flex", gap: space.md, flexWrap: "wrap" },
   fieldHalf: { flex: "1 1 12rem", display: "flex", flexDirection: "column", gap: space.xs },
@@ -60,7 +72,21 @@ const styles = stylex.create({
   excludeRow: { display: "flex", gap: space.sm, alignItems: "center" },
   toggle: { display: "flex", alignItems: "center", gap: space.sm },
   error: { color: colors.destructive, fontSize: "0.8125rem" },
-  actions: { display: "flex", gap: space.sm, justifyContent: "flex-end" },
+  // Calendar mode placeholder — `calendar` UI 本体は ISH-239 (C-02) で実装。
+  calendarPlaceholder: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.sm,
+    padding: space.xl,
+    backgroundColor: colors.bg,
+    border: `1px dashed ${colors.blue200}`,
+    borderRadius: "0.625rem",
+    color: colors.blue800,
+    minHeight: "20rem",
+    alignItems: "center",
+    justifyContent: "center",
+    textAlign: "center",
+  },
 });
 
 const WEEKDAYS: Weekday[] = [0, 1, 2, 3, 4, 5, 6];
@@ -93,6 +119,10 @@ export default function LinkForm() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [slugStatus, setSlugStatus] = useState<"idle" | "checking" | "available" | "taken">("idle");
+  // ISH-238 scaffolding: mode 切替の UI のみ実装。calendar 本体は ISH-239 (C-02)。
+  const [mode, setMode] = useState<LinkMode>("form");
+  const [location, setLocation] = useState<LocationKind>("meet");
+  const formRef = useRef<HTMLFormElement | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -170,8 +200,9 @@ export default function LinkForm() {
     });
   };
 
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const onPatchForm = (patch: Partial<LinkInput>) => setForm((f) => ({ ...f, ...patch }));
+
+  const submitNow = async () => {
     setError(null);
     setSubmitting(true);
     try {
@@ -192,293 +223,327 @@ export default function LinkForm() {
     }
   };
 
+  const onFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await submitNow();
+  };
+
+  const onPublishClick = () => {
+    // Trigger native form validation (required attrs) before submitting via submitNow().
+    const el = formRef.current;
+    if (el && !el.reportValidity()) return;
+    void submitNow();
+  };
+
+  const publishDisabled = submitting || slugStatus === "taken";
+
   if (loading) return <p>読み込み中...</p>;
 
+  const settingsPanel = (
+    <SettingsPanel
+      form={form}
+      onChange={onPatchForm}
+      location={location}
+      onLocationChange={setLocation}
+    />
+  );
+
   return (
-    <form {...stylex.props(styles.page)} onSubmit={onSubmit}>
-      <h1 {...stylex.props(styles.heading)}>{isEdit ? "リンクを編集" : "新規リンク"}</h1>
+    <LinkCreateLayout
+      mode={mode}
+      onModeChange={setMode}
+      title={isEdit ? "編集" : "新規作成"}
+      rightPanel={settingsPanel}
+      rightPanelWidth={mode === "calendar" ? 380 : 460}
+      onBack={() => navigate("/availability-sharings")}
+      onPublish={onPublishClick}
+      publishing={submitting}
+      publishDisabled={publishDisabled}
+    >
+      <form ref={formRef} {...stylex.props(styles.body)} onSubmit={onFormSubmit}>
+        {/* Basic info — slug + description + tz. タイトル / 所要時間 は SettingsPanel 側に移動済み。 */}
+        <Card>
+          <CardHeader>
+            <CardTitle>基本情報</CardTitle>
+            <CardDescription>公開URL、説明、タイムゾーンを設定します。</CardDescription>
+          </CardHeader>
+          <CardBody>
+            <div {...stylex.props(styles.field)}>
+              <Label htmlFor="slug">スラッグ (URL)</Label>
+              <Input
+                id="slug"
+                value={form.slug}
+                onChange={(e) => setForm({ ...form, slug: e.target.value })}
+                placeholder="intro-30min"
+                disabled={isEdit}
+                required
+              />
+              <span {...stylex.props(styles.caption)}>
+                {slugStatus === "checking" && "確認中..."}
+                {slugStatus === "available" && "✓ 利用可能"}
+                {slugStatus === "taken" && (
+                  <span {...stylex.props(styles.error)}>このスラッグは使用済みです</span>
+                )}
+              </span>
+            </div>
+            <div {...stylex.props(styles.field)}>
+              <Label htmlFor="description">説明（任意）</Label>
+              <Input
+                id="description"
+                value={form.description ?? ""}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+              />
+            </div>
+            <div {...stylex.props(styles.field)}>
+              <Label htmlFor="tz">タイムゾーン</Label>
+              <Input
+                id="tz"
+                value={form.timeZone}
+                onChange={(e) => setForm({ ...form, timeZone: e.target.value })}
+              />
+            </div>
+          </CardBody>
+        </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>基本情報</CardTitle>
-          <CardDescription>公開URL、タイトル、会議時間を設定します。</CardDescription>
-        </CardHeader>
-        <CardBody>
-          <div {...stylex.props(styles.field)}>
-            <Label htmlFor="slug">スラッグ (URL)</Label>
-            <Input
-              id="slug"
-              value={form.slug}
-              onChange={(e) => setForm({ ...form, slug: e.target.value })}
-              placeholder="intro-30min"
-              disabled={isEdit}
-              required
-            />
-            <span {...stylex.props(styles.caption)}>
-              {slugStatus === "checking" && "確認中..."}
-              {slugStatus === "available" && "✓ 利用可能"}
-              {slugStatus === "taken" && (
-                <span {...stylex.props(styles.error)}>このスラッグは使用済みです</span>
-              )}
+        {mode === "calendar" ? (
+          // ISH-239 (C-02) で本実装予定。本 issue は scaffolding のみ。
+          <section
+            {...stylex.props(styles.calendarPlaceholder)}
+            aria-label="カレンダー mode placeholder"
+          >
+            <strong>カレンダーで選択 (準備中)</strong>
+            <span>
+              ドラッグで候補時間を作成する UI は ISH-239
+              で実装します。今は「曜日×時間帯」モードに切り替えてください。
             </span>
-          </div>
-          <div {...stylex.props(styles.field)}>
-            <Label htmlFor="title">タイトル</Label>
-            <Input
-              id="title"
-              value={form.title}
-              onChange={(e) => setForm({ ...form, title: e.target.value })}
-              required
-            />
-          </div>
-          <div {...stylex.props(styles.field)}>
-            <Label htmlFor="description">説明（任意）</Label>
-            <Input
-              id="description"
-              value={form.description ?? ""}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-            />
-          </div>
-          <div {...stylex.props(styles.field)}>
-            <Label htmlFor="duration">会議時間</Label>
-            <select
-              id="duration"
-              value={form.durationMinutes}
-              onChange={(e) => setForm({ ...form, durationMinutes: Number(e.target.value) })}
-            >
-              {DURATION_CHOICES.map((d) => (
-                <option key={d} value={d}>
-                  {d} 分
-                </option>
-              ))}
-            </select>
-          </div>
-          <div {...stylex.props(styles.field)}>
-            <Label htmlFor="tz">タイムゾーン</Label>
-            <Input
-              id="tz"
-              value={form.timeZone}
-              onChange={(e) => setForm({ ...form, timeZone: e.target.value })}
-            />
-          </div>
-        </CardBody>
-      </Card>
+          </section>
+        ) : (
+          <>
+            <h2 {...stylex.props(styles.heading)}>受付可能な時間帯を指定</h2>
+            <p {...stylex.props(styles.subheading)}>
+              曜日ごとに受付時間を設定します。既存予定との重なりは自動で除外されます。
+            </p>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>営業時間</CardTitle>
-          <CardDescription>曜日ごとに受付時間帯を設定します。</CardDescription>
-        </CardHeader>
-        <CardBody>
-          {WEEKDAYS.map((wd) => {
-            const rule = form.rules.find((r) => r.weekday === wd);
-            return (
-              <div key={wd} {...stylex.props(styles.weekdayRow)}>
+            <Card>
+              <CardHeader>
+                <CardTitle>営業時間</CardTitle>
+                <CardDescription>曜日ごとに受付時間帯を設定します。</CardDescription>
+              </CardHeader>
+              <CardBody>
+                {WEEKDAYS.map((wd) => {
+                  const rule = form.rules.find((r) => r.weekday === wd);
+                  return (
+                    <div key={wd} {...stylex.props(styles.weekdayRow)}>
+                      <label {...stylex.props(styles.toggle)}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(rule)}
+                          onChange={() => toggleWeekday(wd)}
+                        />
+                        {WEEKDAY_LABELS[wd]}
+                      </label>
+                      <Input
+                        type="time"
+                        disabled={!rule}
+                        value={rule ? formatTime(rule.startMinute) : "09:00"}
+                        onChange={(e) => {
+                          const m = parseTime(e.target.value);
+                          if (m !== null) setRule(wd, { startMinute: m });
+                        }}
+                      />
+                      <Input
+                        type="time"
+                        disabled={!rule}
+                        value={rule ? formatTime(rule.endMinute) : "17:00"}
+                        onChange={(e) => {
+                          const m = parseTime(e.target.value);
+                          if (m !== null) setRule(wd, { endMinute: m });
+                        }}
+                      />
+                      <span />
+                    </div>
+                  );
+                })}
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>スロット設定</CardTitle>
+                <CardDescription>
+                  前後バッファ・開始間隔・1日の上限・受付期間を設定できます。
+                </CardDescription>
+              </CardHeader>
+              <CardBody>
+                <div {...stylex.props(styles.fieldRow)}>
+                  <div {...stylex.props(styles.fieldHalf)}>
+                    <Label htmlFor="bbefore">前バッファ</Label>
+                    <select
+                      id="bbefore"
+                      value={form.bufferBeforeMinutes}
+                      onChange={(e) =>
+                        setForm({ ...form, bufferBeforeMinutes: Number(e.target.value) })
+                      }
+                    >
+                      {BUFFER_CHOICES.map((b) => (
+                        <option key={b} value={b}>
+                          {b} 分
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div {...stylex.props(styles.fieldHalf)}>
+                    <Label htmlFor="bafter">後バッファ</Label>
+                    <select
+                      id="bafter"
+                      value={form.bufferAfterMinutes}
+                      onChange={(e) =>
+                        setForm({ ...form, bufferAfterMinutes: Number(e.target.value) })
+                      }
+                    >
+                      {BUFFER_CHOICES.map((b) => (
+                        <option key={b} value={b}>
+                          {b} 分
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div {...stylex.props(styles.fieldRow)}>
+                  <div {...stylex.props(styles.fieldHalf)}>
+                    <Label htmlFor="interval">開始間隔</Label>
+                    <select
+                      id="interval"
+                      value={form.slotIntervalMinutes ?? ""}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          slotIntervalMinutes:
+                            e.target.value === "" ? null : Number(e.target.value),
+                        })
+                      }
+                    >
+                      <option value="">duration に揃える</option>
+                      {SLOT_INTERVAL_CHOICES.map((m) => (
+                        <option key={m} value={m}>
+                          {m} 分
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div {...stylex.props(styles.fieldHalf)}>
+                    <Label htmlFor="maxPerDay">1日の上限</Label>
+                    <Input
+                      id="maxPerDay"
+                      type="number"
+                      min={1}
+                      value={form.maxPerDay ?? ""}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          maxPerDay: e.target.value === "" ? null : Number(e.target.value),
+                        })
+                      }
+                      placeholder="無制限"
+                    />
+                  </div>
+                </div>
+                <div {...stylex.props(styles.fieldRow)}>
+                  <div {...stylex.props(styles.fieldHalf)}>
+                    <Label htmlFor="lead">受付開始 (時間先)</Label>
+                    <Input
+                      id="lead"
+                      type="number"
+                      min={0}
+                      value={form.leadTimeHours}
+                      onChange={(e) => setForm({ ...form, leadTimeHours: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div {...stylex.props(styles.fieldHalf)}>
+                    <Label htmlFor="range">受付期間 (日先)</Label>
+                    <Input
+                      id="range"
+                      type="number"
+                      min={1}
+                      max={365}
+                      value={form.rangeDays}
+                      onChange={(e) => setForm({ ...form, rangeDays: Number(e.target.value) })}
+                    />
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>休日除外</CardTitle>
+                <CardDescription>個別に予約を受け付けない日を追加できます。</CardDescription>
+              </CardHeader>
+              <CardBody>
+                {form.excludes.map((d, i) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: excludes is a list of dates that may repeat; index is needed to distinguish duplicates while editing.
+                  <div key={`${d}-${i}`} {...stylex.props(styles.excludeRow)}>
+                    <Input
+                      type="date"
+                      value={d}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          excludes: form.excludes.map((x, j) => (j === i ? e.target.value : x)),
+                        })
+                      }
+                    />
+                    <Button
+                      variant="ghost"
+                      type="button"
+                      onClick={() =>
+                        setForm({ ...form, excludes: form.excludes.filter((_, j) => j !== i) })
+                      }
+                    >
+                      削除
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={() => {
+                    const today = new Date().toISOString().slice(0, 10);
+                    setForm({ ...form, excludes: [...form.excludes, today] });
+                  }}
+                >
+                  + 日付を追加
+                </Button>
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>公開設定</CardTitle>
+              </CardHeader>
+              <CardBody>
                 <label {...stylex.props(styles.toggle)}>
                   <input
                     type="checkbox"
-                    checked={Boolean(rule)}
-                    onChange={() => toggleWeekday(wd)}
+                    checked={form.isPublished}
+                    onChange={(e) => setForm({ ...form, isPublished: e.target.checked })}
                   />
-                  {WEEKDAY_LABELS[wd]}
+                  このリンクを公開する
                 </label>
-                <Input
-                  type="time"
-                  disabled={!rule}
-                  value={rule ? formatTime(rule.startMinute) : "09:00"}
-                  onChange={(e) => {
-                    const m = parseTime(e.target.value);
-                    if (m !== null) setRule(wd, { startMinute: m });
-                  }}
-                />
-                <Input
-                  type="time"
-                  disabled={!rule}
-                  value={rule ? formatTime(rule.endMinute) : "17:00"}
-                  onChange={(e) => {
-                    const m = parseTime(e.target.value);
-                    if (m !== null) setRule(wd, { endMinute: m });
-                  }}
-                />
-                <span />
-              </div>
-            );
-          })}
-        </CardBody>
-      </Card>
+                <span {...stylex.props(styles.caption)}>
+                  非公開の間、公開URLは 404 を返します。
+                </span>
+              </CardBody>
+            </Card>
+          </>
+        )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>スロット設定</CardTitle>
-          <CardDescription>
-            前後バッファ・開始間隔・1日の上限・受付期間を設定できます。
-          </CardDescription>
-        </CardHeader>
-        <CardBody>
-          <div {...stylex.props(styles.fieldRow)}>
-            <div {...stylex.props(styles.fieldHalf)}>
-              <Label htmlFor="bbefore">前バッファ</Label>
-              <select
-                id="bbefore"
-                value={form.bufferBeforeMinutes}
-                onChange={(e) => setForm({ ...form, bufferBeforeMinutes: Number(e.target.value) })}
-              >
-                {BUFFER_CHOICES.map((b) => (
-                  <option key={b} value={b}>
-                    {b} 分
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div {...stylex.props(styles.fieldHalf)}>
-              <Label htmlFor="bafter">後バッファ</Label>
-              <select
-                id="bafter"
-                value={form.bufferAfterMinutes}
-                onChange={(e) => setForm({ ...form, bufferAfterMinutes: Number(e.target.value) })}
-              >
-                {BUFFER_CHOICES.map((b) => (
-                  <option key={b} value={b}>
-                    {b} 分
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div {...stylex.props(styles.fieldRow)}>
-            <div {...stylex.props(styles.fieldHalf)}>
-              <Label htmlFor="interval">開始間隔</Label>
-              <select
-                id="interval"
-                value={form.slotIntervalMinutes ?? ""}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    slotIntervalMinutes: e.target.value === "" ? null : Number(e.target.value),
-                  })
-                }
-              >
-                <option value="">duration に揃える</option>
-                {SLOT_INTERVAL_CHOICES.map((m) => (
-                  <option key={m} value={m}>
-                    {m} 分
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div {...stylex.props(styles.fieldHalf)}>
-              <Label htmlFor="maxPerDay">1日の上限</Label>
-              <Input
-                id="maxPerDay"
-                type="number"
-                min={1}
-                value={form.maxPerDay ?? ""}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    maxPerDay: e.target.value === "" ? null : Number(e.target.value),
-                  })
-                }
-                placeholder="無制限"
-              />
-            </div>
-          </div>
-          <div {...stylex.props(styles.fieldRow)}>
-            <div {...stylex.props(styles.fieldHalf)}>
-              <Label htmlFor="lead">受付開始 (時間先)</Label>
-              <Input
-                id="lead"
-                type="number"
-                min={0}
-                value={form.leadTimeHours}
-                onChange={(e) => setForm({ ...form, leadTimeHours: Number(e.target.value) })}
-              />
-            </div>
-            <div {...stylex.props(styles.fieldHalf)}>
-              <Label htmlFor="range">受付期間 (日先)</Label>
-              <Input
-                id="range"
-                type="number"
-                min={1}
-                max={365}
-                value={form.rangeDays}
-                onChange={(e) => setForm({ ...form, rangeDays: Number(e.target.value) })}
-              />
-            </div>
-          </div>
-        </CardBody>
-      </Card>
+        {error && <p {...stylex.props(styles.error)}>{error}</p>}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>休日除外</CardTitle>
-          <CardDescription>個別に予約を受け付けない日を追加できます。</CardDescription>
-        </CardHeader>
-        <CardBody>
-          {form.excludes.map((d, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: excludes is a list of dates that may repeat; index is needed to distinguish duplicates while editing.
-            <div key={`${d}-${i}`} {...stylex.props(styles.excludeRow)}>
-              <Input
-                type="date"
-                value={d}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    excludes: form.excludes.map((x, j) => (j === i ? e.target.value : x)),
-                  })
-                }
-              />
-              <Button
-                variant="ghost"
-                type="button"
-                onClick={() =>
-                  setForm({ ...form, excludes: form.excludes.filter((_, j) => j !== i) })
-                }
-              >
-                削除
-              </Button>
-            </div>
-          ))}
-          <Button
-            variant="outline"
-            type="button"
-            onClick={() => {
-              const today = new Date().toISOString().slice(0, 10);
-              setForm({ ...form, excludes: [...form.excludes, today] });
-            }}
-          >
-            + 日付を追加
-          </Button>
-        </CardBody>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>公開設定</CardTitle>
-        </CardHeader>
-        <CardBody>
-          <label {...stylex.props(styles.toggle)}>
-            <input
-              type="checkbox"
-              checked={form.isPublished}
-              onChange={(e) => setForm({ ...form, isPublished: e.target.checked })}
-            />
-            このリンクを公開する
-          </label>
-          <span {...stylex.props(styles.caption)}>非公開の間、公開URLは 404 を返します。</span>
-        </CardBody>
-      </Card>
-
-      {error && <p {...stylex.props(styles.error)}>{error}</p>}
-
-      <div {...stylex.props(styles.actions)}>
-        <Button variant="outline" type="button" onClick={() => navigate("/availability-sharings")}>
-          キャンセル
-        </Button>
-        <Button type="submit" disabled={submitting || slugStatus === "taken"}>
-          {submitting ? "送信中..." : isEdit ? "更新" : "作成"}
-        </Button>
-      </div>
-    </form>
+        {/* hidden submit so the form retains native submit semantics. The visible
+            "リンクを発行" button (in subnav) calls submitNow() directly. */}
+        <button type="submit" hidden tabIndex={-1} aria-hidden="true" />
+      </form>
+    </LinkCreateLayout>
   );
 }

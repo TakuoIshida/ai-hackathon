@@ -13,8 +13,17 @@ import { expect, test } from "@playwright/test";
 // All API calls are mocked with page.route() so this spec runs hermetically.
 test.describe("signin → dashboard", () => {
   test("landing shows sign-in CTA, dashboard renders the brand and nav", async ({ page }) => {
-    // The dashboard makes a /bookings call on mount; an empty list keeps the
-    // empty-state visible without surfacing a 401/500 banner.
+    // ISH-227 swapped the post-signin landing from /dashboard (DashboardHome,
+    // no API calls on mount) to /availability-sharings (Links.tsx). Links.tsx
+    // calls GET /links via TanStack Query on mount (ISH-226). The api request
+    // layer (apps/web/src/lib/api.ts) hard-redirects to /sign-in on a 401, so
+    // we MUST mock /links to a 200 here — otherwise the e2e shim renders the
+    // dashboard for a frame, the real API rejects the bypass token, and the
+    // page jumps to /sign-in before the assertions run. /bookings is mocked
+    // for the same reason on confirmed-list / booking-detail flows.
+    await page.route("**/links", (route) =>
+      route.fulfill({ status: 200, body: JSON.stringify({ links: [] }) }),
+    );
     await page.route("**/bookings", (route) =>
       route.fulfill({ status: 200, body: JSON.stringify({ bookings: [] }) }),
     );
@@ -41,7 +50,9 @@ test.describe("signin → dashboard", () => {
     await expect(page.getByRole("link", { name: "フォーム", exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "チーム設定", exact: true })).toBeVisible();
 
-    // Body — Links page heading.
-    await expect(page.getByRole("heading", { name: "リンク" })).toBeVisible();
+    // Body — Links page heading. exact:true is required because the empty
+    // state below renders a "まだリンクがありません" heading whose name partially
+    // matches "リンク" without strict-mode equality.
+    await expect(page.getByRole("heading", { name: "リンク", exact: true })).toBeVisible();
   });
 });
