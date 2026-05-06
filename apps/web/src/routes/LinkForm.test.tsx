@@ -80,7 +80,7 @@ describe("<LinkForm />", () => {
     });
 
     expect(await screen.findByText("このスラッグは使用済みです")).toBeInTheDocument();
-    const submit = screen.getByRole("button", { name: "作成" });
+    const submit = screen.getByRole("button", { name: /リンクを発行/ });
     expect(submit).toBeDisabled();
   });
 
@@ -95,7 +95,7 @@ describe("<LinkForm />", () => {
     // Wait for the slug debounce (300ms) to settle as "available"
     await screen.findByText("✓ 利用可能");
 
-    fireEvent.click(screen.getByRole("button", { name: "作成" }));
+    fireEvent.click(screen.getByRole("button", { name: /リンクを発行/ }));
 
     await waitFor(() => expect(mockedApi.createLink).toHaveBeenCalledTimes(1));
     expect(mockedApi.createLink).toHaveBeenCalledWith(
@@ -116,7 +116,7 @@ describe("<LinkForm />", () => {
     fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: "Intro 30" } });
     await screen.findByText("✓ 利用可能");
 
-    fireEvent.click(screen.getByRole("button", { name: "作成" }));
+    fireEvent.click(screen.getByRole("button", { name: /リンクを発行/ }));
 
     expect(await screen.findByText("409: slug_taken")).toBeInTheDocument();
     // The user remains on the form (not on the redirected list page).
