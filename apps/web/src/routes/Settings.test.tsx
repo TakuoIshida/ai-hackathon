@@ -1,7 +1,18 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { ToastProvider } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api";
 import type { GoogleConnection } from "@/lib/types";
+
+// ISH-240: Settings now mounts <InviteMembersModal>, which calls useToast() at
+// the top of its body — every render must therefore be inside a ToastProvider.
+function renderSettings() {
+  return render(
+    <ToastProvider>
+      <Settings />
+    </ToastProvider>,
+  );
+}
 
 // Stable getToken reference — without this, every render returns a fresh
 // closure and `load`'s useCallback re-fires `useEffect`, eating queued
@@ -74,7 +85,7 @@ describe("<Settings /> calendar flag toggles (pessimistic)", () => {
       calendar: { ...calA, usedForBusy: false },
     });
 
-    render(<Settings />);
+    renderSettings();
 
     const busyChecks = await screen.findAllByLabelText("空き判定");
     expect(busyChecks[0]).toBeChecked();
@@ -107,7 +118,7 @@ describe("<Settings /> calendar flag toggles (pessimistic)", () => {
       calendar: { ...calB, usedForWrites: true },
     });
 
-    render(<Settings />);
+    renderSettings();
 
     const writesRadios = await screen.findAllByLabelText("書込先");
     expect(writesRadios[0]).toBeChecked();
@@ -137,7 +148,7 @@ describe("<Settings /> calendar flag toggles (pessimistic)", () => {
       new ApiError(403, "forbidden", "403 forbidden"),
     );
 
-    render(<Settings />);
+    renderSettings();
 
     const busyChecks = await screen.findAllByLabelText("空き判定");
     expect(busyChecks[0]).toBeChecked();
@@ -163,7 +174,7 @@ describe("<Settings /> calendar flag toggles (pessimistic)", () => {
       }),
     );
 
-    render(<Settings />);
+    renderSettings();
 
     const busyChecks = await screen.findAllByLabelText("空き判定");
     fireEvent.click(busyChecks[0]);
@@ -183,7 +194,7 @@ describe("<Settings /> Google connection display", () => {
   test("connected: shows the linked account email", async () => {
     mockedApi.getGoogleConnection.mockResolvedValue(connected());
 
-    render(<Settings />);
+    renderSettings();
 
     expect(await screen.findByText("owner@example.com")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Google アカウントを連携/ })).toBeNull();
@@ -192,7 +203,7 @@ describe("<Settings /> Google connection display", () => {
   test("disconnected: shows the Google connect button pointing at the API connect URL", async () => {
     mockedApi.getGoogleConnection.mockResolvedValue({ connected: false, calendars: [] });
 
-    render(<Settings />);
+    renderSettings();
 
     const connectLink = await screen.findByRole("link", { name: /Google アカウントを連携/ });
     expect(connectLink).toBeInTheDocument();
