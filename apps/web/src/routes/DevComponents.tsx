@@ -35,6 +35,7 @@ import { EmailChipsInput } from "@/components/ui/email-chips-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/ui/logo";
+import { PromoBanner } from "@/components/ui/promo-banner";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Select,
@@ -453,6 +454,17 @@ export default function DevComponents() {
               </CardFooter>
             </Card>
           </div>
+        </section>
+
+        {/* Marketing */}
+        <section {...stylex.props(styles.section)}>
+          <h2 {...stylex.props(styles.sectionTitle)}>Marketing</h2>
+          <PromoBanner
+            title="お試し期間中は空き時間リンクを無制限にご利用いただけます"
+            description="2026/05/25まで · チームメンバーを招待して、共催リンクも作成できます"
+            primaryAction={{ label: "プランについて" }}
+            secondaryAction={{ label: "詳細を見る" }}
+          />
         </section>
 
         {/* Feedback */}
