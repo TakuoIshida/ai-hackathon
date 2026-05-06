@@ -7,6 +7,7 @@ import {
   ownerCancelEmail,
   ownerConfirmEmail,
   ownerReminderEmail,
+  workspaceInviteEmail,
 } from "./templates";
 
 const baseCtx: BookingNotificationContext = {
@@ -138,5 +139,93 @@ describe("guestReminderEmail (ISH-95)", () => {
     const m = guestReminderEmail(baseCtx);
     expect(m.text).toContain("https://meet.google.com/abc");
     expect(m.text).toContain(baseCtx.cancelUrl);
+  });
+});
+
+describe("workspaceInviteEmail (ISH-243)", () => {
+  const inviteCtx = {
+    to: "invitee@example.com",
+    workspaceName: "team",
+    acceptUrl: "https://app.example.com/invite/a8f3-token-e2c1",
+    expiresAt: new Date("2026-05-07T15:20:00Z"), // 2026/05/08 00:20 JST
+    inviterName: "Ishida T",
+  } as const;
+
+  test("addressed to invitee with branded subject", () => {
+    const m = workspaceInviteEmail(inviteCtx);
+    expect(m.to).toBe("invitee@example.com");
+    expect(m.subject).toContain("Rips");
+    expect(m.subject).toContain("team");
+    expect(m.subject).toContain("招待");
+  });
+
+  test("html includes inviter, team name, and CTA URL", () => {
+    const m = workspaceInviteEmail(inviteCtx);
+    expect(m.html).toContain("Ishida T");
+    expect(m.html).toContain("team");
+    expect(m.html).toContain(inviteCtx.acceptUrl);
+    expect(m.html).toContain("招待を受諾する");
+  });
+
+  test("html includes 24h expiry callout with formatted JST timestamp", () => {
+    const m = workspaceInviteEmail(inviteCtx);
+    expect(m.html).toContain("24時間有効");
+    // 2026-05-07T15:20Z → 2026/05/08 00:20 JST → contains 00:20 in JST
+    expect(m.html).toContain("00:20");
+  });
+
+  test("html includes 'このあとの流れ' 3-step list", () => {
+    const m = workspaceInviteEmail(inviteCtx);
+    expect(m.html).toContain("このあとの流れ");
+    expect(m.html).toContain("Googleアカウントでログイン");
+    expect(m.html).toContain("Googleカレンダーへのアクセスを許可");
+    expect(m.html).toContain("セットアップ完了");
+  });
+
+  test("html renders gradient circle + inline SVG logo", () => {
+    const m = workspaceInviteEmail(inviteCtx);
+    // Gradient circle bg + the inline SVG mark
+    expect(m.html).toContain("linear-gradient(135deg,#C7DCEF 0%,#4F92BE 60%,#D9695F 130%)");
+    expect(m.html).toContain("<svg");
+    expect(m.html).toContain('aria-label="Rips"');
+  });
+
+  test("html includes plain-text fallback URL", () => {
+    const m = workspaceInviteEmail(inviteCtx);
+    // The accept URL appears at least twice: once in the CTA href, once in fallback span.
+    const occurrences = m.html.split(inviteCtx.acceptUrl).length - 1;
+    expect(occurrences).toBeGreaterThanOrEqual(2);
+  });
+
+  test("escapes html-unsafe characters in workspace + inviter names", () => {
+    const m = workspaceInviteEmail({
+      ...inviteCtx,
+      workspaceName: "team <Hacker>",
+      inviterName: "Ishida <T>",
+    });
+    expect(m.html).not.toContain("team <Hacker>");
+    expect(m.html).not.toContain("Ishida <T>");
+    expect(m.html).toContain("team &lt;Hacker&gt;");
+    expect(m.html).toContain("Ishida &lt;T&gt;");
+  });
+
+  test("falls back to generic copy when inviterName is missing", () => {
+    const m = workspaceInviteEmail({ ...inviteCtx, inviterName: undefined });
+    // Generic lead does not embed an inviter name, but team name + CTA still present.
+    expect(m.html).toContain("team");
+    expect(m.text).toContain("team");
+    expect(m.text).toContain(inviteCtx.acceptUrl);
+    expect(m.text).not.toContain("Ishida T");
+  });
+
+  test("plain text alternative carries the same key information", () => {
+    const m = workspaceInviteEmail(inviteCtx);
+    expect(m.text).toContain("team");
+    expect(m.text).toContain("Ishida T");
+    expect(m.text).toContain(inviteCtx.acceptUrl);
+    expect(m.text).toContain("24時間有効");
+    expect(m.text).toContain("Googleアカウントでログイン");
+    expect(m.text).toContain("Googleカレンダーへのアクセスを許可");
+    expect(m.text).toContain("セットアップ完了");
   });
 });
