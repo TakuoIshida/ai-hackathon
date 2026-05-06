@@ -1,5 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
-import { Mail, Search } from "lucide-react";
+import { AlertTriangle, Calendar, Clock, Globe, Link2, Mail, Search, Users } from "lucide-react";
 import * as React from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -43,6 +43,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { StatCard } from "@/components/ui/stat-card";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -92,6 +93,11 @@ const styles = stylex.create({
   grid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fill, minmax(14rem, 1fr))",
+    gap: space.md,
+  },
+  statGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(16rem, 1fr))",
     gap: space.md,
   },
   panel: {
@@ -457,6 +463,56 @@ export default function DevComponents() {
                 <TooltipContent>Tooltip text</TooltipContent>
               </Tooltip>
             </div>
+          </div>
+        </section>
+
+        {/* Data */}
+        <section {...stylex.props(styles.section)}>
+          <h2 {...stylex.props(styles.sectionTitle)}>Data</h2>
+          <div {...stylex.props(styles.statGrid)}>
+            <StatCard
+              label="アクティブなリンク"
+              value={4}
+              sub="+1 今月"
+              icon={<Link2 size={18} />}
+              tone="blue"
+            />
+            <StatCard
+              label="今週のアクセス数"
+              value={270}
+              sub="+18% 先週比"
+              icon={<Globe size={18} />}
+              tone="mint"
+            />
+            <StatCard
+              label="予約済の予定"
+              value={29}
+              sub="今月"
+              icon={<Calendar size={18} />}
+              tone="lilac"
+            />
+            <StatCard
+              label="平均応答時間"
+              value="2.4h"
+              sub="リンク作成→予約"
+              icon={<Clock size={18} />}
+              tone="amber"
+            />
+            <StatCard
+              label="期限切れ招待"
+              value={1}
+              sub="再送が可能です"
+              icon={<AlertTriangle size={18} />}
+              tone="rose"
+            />
+            <StatCard
+              label="アクティブメンバー"
+              value={3}
+              total={10}
+              sub="プランの上限まであと 7名"
+              icon={<Users size={18} />}
+              tone="mint"
+            />
           </div>
         </section>
 
