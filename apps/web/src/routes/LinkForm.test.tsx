@@ -122,4 +122,61 @@ describe("<LinkForm />", () => {
     // The user remains on the form (not on the redirected list page).
     expect(screen.queryByText("Links list page")).toBeNull();
   });
+
+  // --- ISH-244: form mode の曜日×時間帯 UI を再構成 ---
+  test("form mode: preset chip click updates the from/to inputs", () => {
+    renderForm();
+    fireEvent.click(screen.getByRole("button", { name: "1ヶ月" }));
+    const from = screen.getByLabelText("公開期間 開始日") as HTMLInputElement;
+    const to = screen.getByLabelText("公開期間 終了日") as HTMLInputElement;
+    // From=today; To=today+30. We can't pin "today" globally here, but we can
+    // assert (a) preset is now active and (b) from === today's input value.
+    expect(from.value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(to.value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(screen.getByRole("button", { name: "1ヶ月" })).toHaveAttribute("aria-pressed", "true");
+    // diff(to, from) should be exactly 30 days
+    const dayMs = 86400000;
+    const diff = Math.round(
+      (new Date(to.value).getTime() - new Date(from.value).getTime()) / dayMs,
+    );
+    expect(diff).toBe(30);
+  });
+
+  test("form mode: weekday toggle on → off replaces time inputs with '受付なし'", () => {
+    renderForm();
+    // emptyInput has Mon-Fri populated with 9-17 ranges; only Sat/Sun start off.
+    expect(screen.getAllByText("受付なし")).toHaveLength(2);
+    expect(screen.getByLabelText("月曜日 1番目 開始時刻")).toHaveValue("09:00");
+
+    // Toggle monday off
+    fireEvent.click(screen.getByLabelText("月曜日 受付"));
+
+    expect(screen.queryByLabelText("月曜日 1番目 開始時刻")).toBeNull();
+    expect(screen.getAllByText("受付なし")).toHaveLength(3);
+
+    // Toggle monday back on → default 09-17
+    fireEvent.click(screen.getByLabelText("月曜日 受付"));
+    expect(screen.getByLabelText("月曜日 1番目 開始時刻")).toHaveValue("09:00");
+    expect(screen.getByLabelText("月曜日 1番目 終了時刻")).toHaveValue("17:00");
+  });
+
+  test("form mode: '平日に一括適用' copies monday's ranges to tue-fri", () => {
+    renderForm();
+    // Tighten monday to 10-12
+    fireEvent.change(screen.getByLabelText("月曜日 1番目 開始時刻"), {
+      target: { value: "10:00" },
+    });
+    fireEvent.change(screen.getByLabelText("月曜日 1番目 終了時刻"), {
+      target: { value: "12:00" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /平日に一括適用/ }));
+
+    for (const day of ["月", "火", "水", "木", "金"]) {
+      expect(screen.getByLabelText(`${day}曜日 1番目 開始時刻`)).toHaveValue("10:00");
+      expect(screen.getByLabelText(`${day}曜日 1番目 終了時刻`)).toHaveValue("12:00");
+    }
+    // 土日 stay off
+    expect(screen.getAllByText("受付なし")).toHaveLength(2);
+  });
 });

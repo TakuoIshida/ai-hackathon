@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import type { LinkInput } from "@/lib/types";
 import { colors, radius, space, typography } from "@/styles/tokens.stylex";
+import { AcceptanceSummary } from "./AcceptanceSummary";
 
 /**
  * Right-side settings panel shown next to the calendar / form mode body.
@@ -36,6 +37,8 @@ export interface SettingsPanelProps {
   hostName?: string;
   /** Initial used by the host avatar (1 char). */
   hostInitial?: string;
+  /** When true, show the form-mode 受付サマリー card at the bottom (ISH-244). */
+  showAcceptanceSummary?: boolean;
 }
 
 const styles = stylex.create({
@@ -151,6 +154,7 @@ export function SettingsPanel({
   onLocationChange,
   hostName = "主催者",
   hostInitial = "H",
+  showAcceptanceSummary = false,
 }: SettingsPanelProps) {
   const titleId = React.useId();
   const durationId = React.useId();
@@ -235,6 +239,11 @@ export function SettingsPanel({
           </Button>
         </div>
       </div>
+
+      {/* 5. Acceptance summary (form mode only — ISH-244) */}
+      {showAcceptanceSummary && (
+        <AcceptanceSummary rules={form.rules} durationMinutes={form.durationMinutes} />
+      )}
     </div>
   );
 }
