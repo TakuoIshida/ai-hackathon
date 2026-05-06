@@ -30,9 +30,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { DurationPicker } from "@/components/ui/duration-picker";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   Select,
   SelectContent,
@@ -195,6 +197,8 @@ export default function DevComponents() {
   const [agreed, setAgreed] = React.useState(false);
   const [notify, setNotify] = React.useState(true);
   const [radio, setRadio] = React.useState("a");
+  const [segMode, setSegMode] = React.useState<"calendar" | "form">("calendar");
+  const [duration, setDuration] = React.useState(30);
 
   return (
     <TooltipProvider>
@@ -316,6 +320,26 @@ export default function DevComponents() {
                   <RadioGroupItem value="b" aria-label="B" /> <span>B</span>
                 </div>
               </RadioGroup>
+            </div>
+            <div {...stylex.props(styles.panel)}>
+              <p {...stylex.props(styles.panelLabel)}>SegmentedControl (ISH-238)</p>
+              <SegmentedControl
+                value={segMode}
+                onChange={setSegMode}
+                aria-label="入力モード"
+                options={[
+                  { value: "calendar", label: "カレンダーで選択" },
+                  { value: "form", label: "曜日×時間帯" },
+                ]}
+              />
+            </div>
+            <div {...stylex.props(styles.panel)}>
+              <p {...stylex.props(styles.panelLabel)}>DurationPicker (ISH-238)</p>
+              <DurationPicker
+                value={duration}
+                onChange={setDuration}
+                aria-label="所要時間 (sample)"
+              />
             </div>
           </div>
         </section>
