@@ -24,6 +24,7 @@ import { availabilityLinks, tenantMembers, tenants, users } from "@/db/schema";
 import type { AuthVars } from "@/middleware/auth";
 import type { IdentityClaims } from "@/ports/identity";
 import { linksRoute } from "@/routes/links";
+import { tenantMembersRoute } from "@/routes/tenant.members";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 
 // Set Clerk env so any module that lazy-reads it during import does not crash.
@@ -203,5 +204,24 @@ describe("cross-tenant access — full stack 404 (ISH-183)", () => {
     const ids = body.links.map((l) => l.id);
     expect(ids).toContain(seed.tenantA.linkId);
     expect(ids).not.toContain(seed.tenantB.linkId);
+  });
+
+  // ISH-250: tenant-scoped members listing.
+  test("Tenant A user → GET /tenant/members only returns own tenant members (no B leakage)", async () => {
+    const seed = await seedTwoTenants();
+    const app = new Hono<{ Variables: AuthVars }>();
+    app.use("*", fakeIdentitySession(seed.tenantA.ownerExtId, seed.tenantA.ownerEmail));
+    app.route("/tenant/members", tenantMembersRoute);
+
+    const res = await app.request("/tenant/members");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      members: Array<{ email: string }>;
+      callerRole: string;
+    };
+    const emails = body.members.map((m) => m.email);
+    expect(emails).toContain(seed.tenantA.ownerEmail);
+    expect(emails).not.toContain(seed.tenantB.ownerEmail);
+    expect(body.callerRole).toBe("owner");
   });
 });
