@@ -106,17 +106,20 @@ describe("<InviteMembersModal />", () => {
     expect(screen.getByTestId("invite-submit")).toBeDisabled();
   });
 
-  it("renders both role options and accepts switching to 管理者", () => {
+  it("renders both role options and accepts switching to オーナー (no 管理者 option)", () => {
     render(<Harness />);
     const trigger = screen.getByTestId("invite-role-trigger");
     expect(trigger).toHaveTextContent("メンバー");
     // Open the Radix Select popover by clicking the trigger.
     fireEvent.click(trigger);
     // Items render in a portal — find by role.
-    const adminOption = screen.getByRole("option", { name: "管理者" });
+    const ownerOption = screen.getByRole("option", { name: "オーナー" });
     expect(screen.getByRole("option", { name: "メンバー" })).toBeInTheDocument();
-    fireEvent.click(adminOption);
-    expect(trigger).toHaveTextContent("管理者");
+    // ISH-258: 「管理者」option must not exist; FE roles align with BE
+    // (owner / member only).
+    expect(screen.queryByRole("option", { name: "管理者" })).toBeNull();
+    fireEvent.click(ownerOption);
+    expect(trigger).toHaveTextContent("オーナー");
   });
 
   it("POSTs one /tenant/invitations request per email on submit (member role)", async () => {
@@ -149,7 +152,7 @@ describe("<InviteMembersModal />", () => {
     expect(body1).toEqual({ email: "bob@example.com", role: "member" });
   });
 
-  it("maps 管理者 to API role 'owner'", async () => {
+  it("submits with API role 'owner' when オーナー is selected", async () => {
     vi.mocked(httpFetch).mockImplementation(
       async () =>
         new Response(
@@ -163,7 +166,7 @@ describe("<InviteMembersModal />", () => {
     );
     render(<Harness />);
     fireEvent.click(screen.getByTestId("invite-role-trigger"));
-    fireEvent.click(screen.getByRole("option", { name: "管理者" }));
+    fireEvent.click(screen.getByRole("option", { name: "オーナー" }));
     const input = getEmailInput();
     fireEvent.change(input, { target: { value: "alice@example.com" } });
     fireEvent.keyDown(input, { key: "Enter" });

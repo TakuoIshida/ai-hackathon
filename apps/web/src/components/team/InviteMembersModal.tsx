@@ -26,7 +26,7 @@ import { colors, radius, space, typography } from "@/styles/tokens.stylex";
  * InviteMembersModal (ISH-239 / M-02).
  *
  * メンバー招待モーダル。EmailChipsInput (M-01) で複数 email を chip 化し、
- * 権限 (メンバー / 管理者 = API role member / owner) を select で選び、
+ * 権限 (メンバー / オーナー = API role member / owner) を select で選び、
  * `/tenant/invitations` に email ごとに POST する。
  *
  * The API accepts one email per request, so we fan out with `Promise.all`
@@ -106,9 +106,7 @@ const styles = stylex.create({
   },
 });
 
-type InviteRole = "member" | "admin";
-
-const roleToApi = (role: InviteRole): "member" | "owner" => (role === "admin" ? "owner" : "member");
+type InviteRole = "member" | "owner";
 
 export type InviteMembersModalProps = {
   open: boolean;
@@ -140,11 +138,8 @@ export function InviteMembersModal({ open, onOpenChange, teamName }: InviteMembe
     if (submitDisabled) return;
     setSubmitting(true);
     try {
-      const apiRole = roleToApi(role);
       const results = await Promise.allSettled(
-        validEmails.map((email) =>
-          api.createTenantInvitation({ email, role: apiRole }, () => getToken()),
-        ),
+        validEmails.map((email) => api.createTenantInvitation({ email, role }, () => getToken())),
       );
       const failures: { email: string; reason: string }[] = [];
       results.forEach((r, i) => {
@@ -231,7 +226,7 @@ export function InviteMembersModal({ open, onOpenChange, teamName }: InviteMembe
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="member">メンバー</SelectItem>
-              <SelectItem value="admin">管理者</SelectItem>
+              <SelectItem value="owner">オーナー</SelectItem>
             </SelectContent>
           </Select>
         </div>
