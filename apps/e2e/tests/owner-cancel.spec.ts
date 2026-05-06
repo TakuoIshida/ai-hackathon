@@ -45,10 +45,10 @@ test.describe("owner-side booking cancel", () => {
       createdAt: new Date().toISOString(),
     };
 
-    // Two handlers. Playwright matches routes in REVERSE registration order,
-    // so the narrower DELETE handler (registered second) is checked first
-    // when both could match a `/bookings/:id` URL. We use globs because
-    // they are stable across Playwright versions and easy to read.
+    // ISH-254: BookingDetail now calls GET /bookings/:id directly (was list+filter).
+    // Two route handlers — Playwright matches in REVERSE registration order, so
+    // the narrower `**/bookings/*` (registered second) is checked first when both
+    // could match. The list endpoint is kept for any incidental callers.
     await page.route("**/bookings", async (route, req) => {
       if (req.method() !== "GET") return route.fallback();
       return route.fulfill({
@@ -58,17 +58,26 @@ test.describe("owner-side booking cancel", () => {
       });
     });
     await page.route("**/bookings/*", async (route, req) => {
-      if (req.method() !== "DELETE") return route.fallback();
-      booking = {
-        ...booking,
-        status: "canceled",
-        canceledAt: new Date().toISOString(),
-      };
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ ok: true }),
-      });
+      if (req.method() === "GET") {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ booking }),
+        });
+      }
+      if (req.method() === "DELETE") {
+        booking = {
+          ...booking,
+          status: "canceled",
+          canceledAt: new Date().toISOString(),
+        };
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ok: true }),
+        });
+      }
+      return route.fallback();
     });
 
     // The browser confirm() must auto-accept so we don't hang waiting for a
