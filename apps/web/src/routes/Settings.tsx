@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { StatCard } from "@/components/ui/stat-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useToast } from "@/components/ui/toast";
 import { ApiError, api, googleConnectUrl } from "@/lib/api";
 import type { GoogleCalendarSummary, GoogleConnection } from "@/lib/types";
 import { colors, radius, space, typography } from "@/styles/tokens.stylex";
@@ -228,6 +229,19 @@ const styles = stylex.create({
     color: colors.ink500,
     fontSize: typography.fontSizeSm,
     textAlign: "center",
+  },
+  // Organization info form
+  orgForm: { display: "flex", flexDirection: "column", gap: space.md },
+  orgFooter: { display: "flex", gap: space.sm },
+  requiredMark: {
+    color: colors.destructive,
+    marginInlineStart: "0.25rem",
+    fontWeight: typography.fontWeightBold,
+  },
+  fieldError: {
+    fontSize: typography.fontSizeXs,
+    color: colors.destructive,
+    marginTop: "0.125rem",
   },
 });
 
@@ -538,6 +552,173 @@ function MemberRowView({ member }: { member: MemberRow }) {
 }
 
 // ---------------------------------------------------------------------------
+// Organization info form (ISH-249)
+// ---------------------------------------------------------------------------
+
+interface OrgInfo {
+  companyName: string;
+  teamName: string;
+  contactName: string;
+  phoneNumber: string;
+}
+
+const INITIAL_ORG_INFO: OrgInfo = {
+  companyName: "",
+  teamName: TENANT_NAME,
+  contactName: "",
+  phoneNumber: "",
+};
+
+const PHONE_REGEX = /^[0-9-]+$/;
+
+type OrgErrors = Partial<Record<keyof OrgInfo, string>>;
+
+function validateOrg(values: OrgInfo): OrgErrors {
+  const errors: OrgErrors = {};
+  if (!values.teamName.trim()) errors.teamName = "チーム名を入力してください";
+  if (!values.contactName.trim()) errors.contactName = "担当者名を入力してください";
+  if (!values.phoneNumber.trim()) {
+    errors.phoneNumber = "電話番号を入力してください";
+  } else if (!PHONE_REGEX.test(values.phoneNumber.trim())) {
+    errors.phoneNumber = "半角数字とハイフンのみで入力してください";
+  }
+  return errors;
+}
+
+function OrganizationInfoCard() {
+  const { toast } = useToast();
+  const [initial, setInitial] = useState<OrgInfo>(INITIAL_ORG_INFO);
+  const [values, setValues] = useState<OrgInfo>(INITIAL_ORG_INFO);
+  const [errors, setErrors] = useState<OrgErrors>({});
+  const [submitting, setSubmitting] = useState(false);
+
+  const dirty = useMemo(
+    () =>
+      values.companyName !== initial.companyName ||
+      values.teamName !== initial.teamName ||
+      values.contactName !== initial.contactName ||
+      values.phoneNumber !== initial.phoneNumber,
+    [values, initial],
+  );
+
+  const setField = <K extends keyof OrgInfo>(key: K, v: string) => {
+    setValues((prev) => ({ ...prev, [key]: v }));
+    if (errors[key]) setErrors((prev) => ({ ...prev, [key]: undefined }));
+  };
+
+  const onReset = () => {
+    setValues(initial);
+    setErrors({});
+  };
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const next = validateOrg(values);
+    setErrors(next);
+    if (Object.keys(next).length > 0) return;
+    setSubmitting(true);
+    // BE 側 PATCH /tenant 未実装。FE のみで Toast を出して保存済み扱いにする。
+    console.warn("TODO: PATCH /tenant — payload:", values);
+    await new Promise((r) => setTimeout(r, 500));
+    setInitial(values);
+    setSubmitting(false);
+    toast({ title: "保存しました", variant: "success" });
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>組織情報</CardTitle>
+        <CardDescription>請求書 / お問い合わせに使用される情報です。</CardDescription>
+      </CardHeader>
+      <CardBody>
+        <form id="org-info-form" onSubmit={onSubmit} noValidate {...stylex.props(styles.orgForm)}>
+          <div {...stylex.props(styles.field)}>
+            <Label htmlFor="org-company-name">会社名 (任意)</Label>
+            <Input
+              id="org-company-name"
+              value={values.companyName}
+              placeholder="e.g. Acme Inc."
+              onChange={(e) => setField("companyName", e.target.value)}
+              disabled={submitting}
+            />
+          </div>
+          <div {...stylex.props(styles.field)}>
+            <Label htmlFor="org-team-name">
+              チーム名<span {...stylex.props(styles.requiredMark)}>*</span>
+            </Label>
+            <Input
+              id="org-team-name"
+              value={values.teamName}
+              required
+              error={Boolean(errors.teamName)}
+              aria-describedby={errors.teamName ? "org-team-name-error" : undefined}
+              onChange={(e) => setField("teamName", e.target.value)}
+              disabled={submitting}
+            />
+            {errors.teamName && (
+              <span id="org-team-name-error" role="alert" {...stylex.props(styles.fieldError)}>
+                {errors.teamName}
+              </span>
+            )}
+          </div>
+          <div {...stylex.props(styles.field)}>
+            <Label htmlFor="org-contact-name">
+              担当者名<span {...stylex.props(styles.requiredMark)}>*</span>
+            </Label>
+            <Input
+              id="org-contact-name"
+              value={values.contactName}
+              required
+              error={Boolean(errors.contactName)}
+              aria-describedby={errors.contactName ? "org-contact-name-error" : undefined}
+              onChange={(e) => setField("contactName", e.target.value)}
+              disabled={submitting}
+            />
+            {errors.contactName && (
+              <span id="org-contact-name-error" role="alert" {...stylex.props(styles.fieldError)}>
+                {errors.contactName}
+              </span>
+            )}
+          </div>
+          <div {...stylex.props(styles.field)}>
+            <Label htmlFor="org-phone-number">
+              電話番号<span {...stylex.props(styles.requiredMark)}>*</span>
+            </Label>
+            <Input
+              id="org-phone-number"
+              type="tel"
+              value={values.phoneNumber}
+              placeholder="03-1234-5678"
+              required
+              error={Boolean(errors.phoneNumber)}
+              aria-describedby={errors.phoneNumber ? "org-phone-number-error" : undefined}
+              onChange={(e) => setField("phoneNumber", e.target.value)}
+              disabled={submitting}
+            />
+            {errors.phoneNumber && (
+              <span id="org-phone-number-error" role="alert" {...stylex.props(styles.fieldError)}>
+                {errors.phoneNumber}
+              </span>
+            )}
+          </div>
+        </form>
+      </CardBody>
+      <CardFooter>
+        <div {...stylex.props(styles.orgFooter)}>
+          <Button type="submit" form="org-info-form" disabled={!dirty || submitting}>
+            {submitting ? "保存中..." : "保存"}
+          </Button>
+          <Button type="button" variant="outline" onClick={onReset} disabled={!dirty || submitting}>
+            変更を破棄
+          </Button>
+        </div>
+      </CardFooter>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Basic info tab — existing Google connection + profile placeholders
 // ---------------------------------------------------------------------------
 
@@ -604,6 +785,7 @@ function BasicInfoTab() {
 
   return (
     <div {...stylex.props(styles.innerCard)}>
+      <OrganizationInfoCard />
       <Card>
         <CardHeader>
           <CardTitle>Google Workspace 連携</CardTitle>

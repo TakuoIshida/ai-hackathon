@@ -190,6 +190,55 @@ describe("<Settings /> calendar flag toggles (pessimistic)", () => {
   });
 });
 
+describe("<Settings /> 組織情報フォーム (ISH-249)", () => {
+  test("renders 4 fields (会社名 / チーム名 / 担当者名 / 電話番号)", async () => {
+    mockedApi.getGoogleConnection.mockResolvedValue(connected());
+
+    renderSettings();
+
+    expect(screen.getByLabelText(/会社名/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/チーム名/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/担当者名/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/電話番号/)).toBeInTheDocument();
+  });
+
+  test("blocks submit and shows inline errors when required fields are empty", async () => {
+    mockedApi.getGoogleConnection.mockResolvedValue(connected());
+
+    renderSettings();
+
+    // チーム名 / 担当者名 / 電話番号 を空にして 保存 → 3 つの error が出る。
+    // (チーム名 は initial 値があるので空に書き換える)
+    const teamName = screen.getByLabelText(/チーム名/) as HTMLInputElement;
+    fireEvent.change(teamName, { target: { value: "" } });
+
+    const saveButton = screen.getByRole("button", { name: /^保存$/ });
+    expect(saveButton).not.toBeDisabled();
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("チーム名を入力してください")).toBeInTheDocument();
+    });
+    expect(screen.getByText("担当者名を入力してください")).toBeInTheDocument();
+    expect(screen.getByText("電話番号を入力してください")).toBeInTheDocument();
+  });
+
+  test("blocks submit when phone number contains non-digit/hyphen characters", async () => {
+    mockedApi.getGoogleConnection.mockResolvedValue(connected());
+
+    renderSettings();
+
+    fireEvent.change(screen.getByLabelText(/担当者名/), { target: { value: "担当 太郎" } });
+    fireEvent.change(screen.getByLabelText(/電話番号/), { target: { value: "03-1234-abcd" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /^保存$/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("半角数字とハイフンのみで入力してください")).toBeInTheDocument();
+    });
+  });
+});
+
 describe("<Settings /> Google connection display", () => {
   test("connected: shows the linked account email", async () => {
     mockedApi.getGoogleConnection.mockResolvedValue(connected());
