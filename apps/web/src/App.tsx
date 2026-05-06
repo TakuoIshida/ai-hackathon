@@ -16,6 +16,7 @@ import NotFound from "@/routes/NotFound";
 import Onboarding from "@/routes/Onboarding";
 import PublicLink from "@/routes/PublicLink";
 import Settings from "@/routes/Settings";
+import SetupComplete from "@/routes/SetupComplete";
 import SignInPage from "@/routes/SignIn";
 import SignUpPage from "@/routes/SignUp";
 import UnconfirmedList from "@/routes/UnconfirmedList";
@@ -98,6 +99,11 @@ export default function App() {
       {/* ISH-241: AcceptInvite はフルスクリーン Welcome layout を内包するので
           PublicLayout の中央寄せ shell には乗せず、ルート直下に置く。 */}
       <Route path="invite/:token" element={<AcceptInvite />} />
+
+      {/* ISH-242 (O-03): Setup-complete 画面。AcceptInvite (O-02) → Google
+          OAuth 完了後の遷移先。full-bleed の 2-column layout なので
+          PublicLayout の中央寄せラッパーは経由させない。 */}
+      <Route path="/invite/:token/setup-calendar" element={<SetupComplete />} />
 
       <Route element={<PublicLayout />}>
         <Route path="cancel/:token" element={<CancelBooking />} />
