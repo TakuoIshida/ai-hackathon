@@ -127,6 +127,28 @@ export type WorkspaceMember = {
   createdAt: string;
 };
 
+// ISH-253 / ISH-250: tenant-scoped member listing returned by GET /tenant/members.
+// Active rows come from common.tenant_members; pending/expired rows come from
+// tenant.invitations (open invites whose acceptedAt is null). The two are
+// combined server-side into a single view per row.
+//
+// `id` is the userId for active members, or `inv:<invitationId>` for
+// pending/expired so React keys never collide across kinds.
+// `userId` is non-null only for active rows (no user exists for an unredeemed invite).
+// `expiresIn` is a human-friendly TTL ("残り 18 時間") and only set for pending.
+export type TenantMemberStatus = "active" | "pending" | "expired";
+
+export type TenantMemberView = {
+  id: string;
+  userId: string | null;
+  email: string;
+  name: string | null;
+  role: WorkspaceRole;
+  status: TenantMemberStatus;
+  joinedAt: string;
+  expiresIn?: string;
+};
+
 // ISH-109: invitation acceptance.
 export type InvitationSummary = {
   workspaceName: string;

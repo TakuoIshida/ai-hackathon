@@ -29,4 +29,8 @@ export const queryKeys = {
   invitations: {
     detail: (token: string) => ["invitations", "detail", token] as const,
   },
+  tenant: {
+    all: () => ["tenant"] as const,
+    members: () => ["tenant", "members"] as const,
+  },
 } as const;

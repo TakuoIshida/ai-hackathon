@@ -21,11 +21,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { StatCard } from "@/components/ui/stat-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
 import { ApiError, api, googleConnectUrl } from "@/lib/api";
-import type { GoogleCalendarSummary, GoogleConnection } from "@/lib/types";
+import { useTenantMembersQuery } from "@/lib/queries";
+import type {
+  GoogleCalendarSummary,
+  GoogleConnection,
+  TenantMemberStatus,
+  TenantMemberView,
+} from "@/lib/types";
 import { colors, radius, space, typography } from "@/styles/tokens.stylex";
 
 /**
@@ -36,10 +43,10 @@ import { colors, radius, space, typography } from "@/styles/tokens.stylex";
  * - メンバー ... アクティブ/招待中/期限切れ stats + members table + 招待 button
  * - 招待 / 通知 / プラン ... 未実装 placeholder
  *
- * メンバー一覧の API は workspace-scoped (`api.listMembers`) のみ存在し、
- * tenant 単位の listing endpoint がまだ無いので本 issue では mock データ。
- * 実 API 連携は別 issue (TODO: tenant members listing endpoint + WorkspaceId
- * → activeTenantId の解決)。
+ * メンバー一覧は ISH-253 で `useTenantMembersQuery()` (`GET /tenant/members`)
+ * に結線済。BE が active members + open invitations を joined view として
+ * 返すので、FE 側は status (`active` / `pending` / `expired`) で出し分け
+ * するだけで良い。再送ボタンは P3-2 で結線予定。
  */
 
 const styles = stylex.create({
@@ -142,17 +149,6 @@ const styles = stylex.create({
     backgroundColor: colors.mint100,
     color: colors.mint500,
   },
-  roleBadgeAdmin: {
-    display: "inline-flex",
-    alignItems: "center",
-    paddingInline: "0.5rem",
-    paddingBlock: "0.125rem",
-    fontSize: typography.fontSizeXs,
-    fontWeight: typography.fontWeightBold,
-    borderRadius: radius.full,
-    backgroundColor: colors.blue100,
-    color: colors.blue700,
-  },
   roleBadgeMember: { fontSize: typography.fontSizeSm, color: colors.ink700 },
   statusActive: {
     display: "inline-flex",
@@ -185,6 +181,17 @@ const styles = stylex.create({
   },
   joinedCol: { fontSize: typography.fontSizeSm, color: colors.ink700 },
   rowActions: { display: "flex", justifyContent: "flex-end", gap: space.xs },
+  membersErrorMsg: {
+    color: colors.destructive,
+    fontSize: typography.fontSizeSm,
+    margin: 0,
+  },
+  membersEmpty: {
+    padding: "2rem",
+    textAlign: "center",
+    color: colors.ink500,
+    fontSize: typography.fontSizeSm,
+  },
   // Basic info — existing layout
   innerCard: { display: "flex", flexDirection: "column", gap: space.md, maxWidth: "40rem" },
   field: { display: "flex", flexDirection: "column", gap: space.xs },
@@ -247,80 +254,75 @@ const styles = stylex.create({
 
 const TENANT_NAME = "team";
 
-type MemberStatus = "active" | "pending" | "expired";
+const PLAN_LIMIT = 10;
 
-interface MemberRow {
-  id: string;
-  name: string;
-  email: string;
-  role: "オーナー" | "管理者" | "メンバー";
-  status: MemberStatus;
-  color: string;
-  joined: string;
-  expiresIn?: string;
-}
-
-const MOCK_MEMBERS: MemberRow[] = [
-  {
-    id: "u1",
-    name: "Ishida T",
-    email: "ishida@team.example.com",
-    role: "オーナー",
-    status: "active",
-    color: "#4FB287",
-    joined: "2025/12/01",
-  },
-  {
-    id: "u2",
-    name: "T Ishida",
-    email: "tishida@team.example.com",
-    role: "管理者",
-    status: "active",
-    color: "#4F92BE",
-    joined: "2026/01/15",
-  },
-  {
-    id: "u3",
-    name: "山田 太郎",
-    email: "yamada@team.example.com",
-    role: "メンバー",
-    status: "active",
-    color: "#8B7AB8",
-    joined: "2026/02/03",
-  },
-  {
-    id: "u4",
-    name: "鈴木 花子",
-    email: "suzuki@team.example.com",
-    role: "メンバー",
-    status: "pending",
-    color: "#D9A040",
-    joined: "—",
-    expiresIn: "残り 18時間",
-  },
-  {
-    id: "u5",
-    name: "田中 健",
-    email: "tanaka@team.example.com",
-    role: "メンバー",
-    status: "expired",
-    color: "#B5C2D1",
-    joined: "—",
-  },
+// Stable color palette for member avatars. Hashing member.id -> palette index
+// gives a deterministic color per member (matches Links 一覧の MEMBER_PALETTE
+// 手法). Using member.id (not email) means pending invitations and active
+// members keep the same color even after acceptance flips status.
+const MEMBER_PALETTE: ReadonlyArray<string> = [
+  "#4FB287",
+  "#4F92BE",
+  "#8B7AB8",
+  "#D9A040",
+  "#D9695F",
+  "#5DADE2",
+  "#B5C2D1",
 ];
 
-const PLAN_LIMIT = 10;
+function hashSeed(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = (h * 16777619) >>> 0;
+  }
+  return h;
+}
+
+function memberColor(id: string): string {
+  const idx = hashSeed(id) % MEMBER_PALETTE.length;
+  const c = MEMBER_PALETTE[idx];
+  // Bounded indexing — TS can't see it.
+  if (!c) throw new Error("unreachable: MEMBER_PALETTE has stable length");
+  return c;
+}
+
+function memberInitial(member: TenantMemberView): string {
+  const source = member.name?.trim() || member.email;
+  return source.charAt(0).toUpperCase();
+}
+
+function memberDisplayName(member: TenantMemberView): string {
+  return member.name?.trim() || member.email;
+}
+
+function formatJoinedAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}/${mm}/${dd}`;
+}
 
 export default function Settings() {
   const [tab, setTab] = useState<string>("basic");
   const [inviteOpen, setInviteOpen] = useState(false);
 
+  // ISH-253: tenant-scoped member listing. We keep the hook at the root so
+  // tab switches don't re-fire the query (TanStack Query also dedupes by
+  // queryKey, but rendering the query in MembersTab only would still drop
+  // the cache once the tab unmounts — fine for now, but root-level keeps
+  // pending count visible across tabs).
+  const { data, isLoading, isError, error, refetch } = useTenantMembersQuery();
+  const members = data?.members ?? [];
+
   const stats = useMemo(() => {
-    const active = MOCK_MEMBERS.filter((m) => m.status === "active").length;
-    const pending = MOCK_MEMBERS.filter((m) => m.status === "pending").length;
-    const expired = MOCK_MEMBERS.filter((m) => m.status === "expired").length;
+    const active = members.filter((m) => m.status === "active").length;
+    const pending = members.filter((m) => m.status === "pending").length;
+    const expired = members.filter((m) => m.status === "expired").length;
     return { active, pending, expired };
-  }, []);
+  }, [members]);
 
   return (
     <div {...stylex.props(styles.page)}>
@@ -354,7 +356,14 @@ export default function Settings() {
 
         <TabsContent value="members">
           <div {...stylex.props(styles.panel)}>
-            <MembersTab stats={stats} />
+            <MembersTab
+              members={members}
+              stats={stats}
+              isLoading={isLoading}
+              isError={isError}
+              error={error}
+              onRetry={() => refetch()}
+            />
           </div>
         </TabsContent>
 
@@ -388,18 +397,33 @@ export default function Settings() {
 // Members tab
 // ---------------------------------------------------------------------------
 
-function MembersTab({ stats }: { stats: { active: number; pending: number; expired: number } }) {
+function MembersTab({
+  members,
+  stats,
+  isLoading,
+  isError,
+  error,
+  onRetry,
+}: {
+  members: TenantMemberView[];
+  stats: { active: number; pending: number; expired: number };
+  isLoading: boolean;
+  isError: boolean;
+  error: unknown;
+  onRetry: () => void;
+}) {
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"all" | MemberStatus>("all");
+  const [filter, setFilter] = useState<"all" | TenantMemberStatus>("all");
 
   const filteredMembers = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return MOCK_MEMBERS.filter((m) => {
+    return members.filter((m) => {
       if (filter !== "all" && m.status !== filter) return false;
       if (!q) return true;
-      return m.name.toLowerCase().includes(q) || m.email.toLowerCase().includes(q);
+      const name = (m.name ?? "").toLowerCase();
+      return name.includes(q) || m.email.toLowerCase().includes(q);
     });
-  }, [search, filter]);
+  }, [members, search, filter]);
 
   return (
     <>
@@ -408,7 +432,7 @@ function MembersTab({ stats }: { stats: { active: number; pending: number; expir
           label="アクティブメンバー"
           value={stats.active}
           total={PLAN_LIMIT}
-          sub={`プランの上限まであと ${PLAN_LIMIT - stats.active}名`}
+          sub={`プランの上限まであと ${Math.max(PLAN_LIMIT - stats.active, 0)}名`}
           icon={<Users size={20} />}
           tone="mint"
         />
@@ -428,90 +452,128 @@ function MembersTab({ stats }: { stats: { active: number; pending: number; expir
         />
       </div>
 
-      <Card style={{ padding: 0, overflow: "hidden", borderColor: colors.ink200 }}>
-        <div {...stylex.props(styles.membersToolbar)}>
-          <span {...stylex.props(styles.membersToolbarTitle)}>メンバー一覧</span>
-          <div {...stylex.props(styles.membersToolbarRight)}>
-            <div {...stylex.props(styles.searchWrap)}>
-              <span {...stylex.props(styles.searchIcon)}>
-                <Search size={14} />
-              </span>
-              <Input
-                {...stylex.props(styles.searchInput)}
-                placeholder="メンバーを検索"
-                aria-label="メンバーを検索"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
+      {isError && (
+        <Card style={{ borderColor: colors.ink200 }}>
+          <CardHeader>
+            <CardTitle>メンバーの読み込みに失敗しました</CardTitle>
+            <CardDescription>API への接続を確認してください。</CardDescription>
+          </CardHeader>
+          <CardBody>
+            <p {...stylex.props(styles.membersErrorMsg)}>
+              {error instanceof ApiError ? `${error.status} ${error.code}` : "failed to load"}
+            </p>
+          </CardBody>
+          <CardFooter>
+            <Button variant="outline" onClick={onRetry}>
+              再試行
+            </Button>
+          </CardFooter>
+        </Card>
+      )}
+
+      {!isError && (
+        <Card style={{ padding: 0, overflow: "hidden", borderColor: colors.ink200 }}>
+          <div {...stylex.props(styles.membersToolbar)}>
+            <span {...stylex.props(styles.membersToolbarTitle)}>メンバー一覧</span>
+            <div {...stylex.props(styles.membersToolbarRight)}>
+              <div {...stylex.props(styles.searchWrap)}>
+                <span {...stylex.props(styles.searchIcon)}>
+                  <Search size={14} />
+                </span>
+                <Input
+                  {...stylex.props(styles.searchInput)}
+                  placeholder="メンバーを検索"
+                  aria-label="メンバーを検索"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <Select
+                value={filter}
+                onValueChange={(v) => setFilter(v as "all" | TenantMemberStatus)}
+              >
+                <SelectTrigger style={{ width: "9rem", height: "2.125rem" }}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">すべて</SelectItem>
+                  <SelectItem value="active">アクティブ</SelectItem>
+                  <SelectItem value="pending">招待中</SelectItem>
+                  <SelectItem value="expired">期限切れ</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            <Select value={filter} onValueChange={(v) => setFilter(v as "all" | MemberStatus)}>
-              <SelectTrigger style={{ width: "9rem", height: "2.125rem" }}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">すべて</SelectItem>
-                <SelectItem value="active">アクティブ</SelectItem>
-                <SelectItem value="pending">招待中</SelectItem>
-                <SelectItem value="expired">期限切れ</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
-        </div>
 
-        <div {...stylex.props(styles.membersTableHeader)}>
-          <div>名前 / メール</div>
-          <div>権限</div>
-          <div>ステータス</div>
-          <div>追加日</div>
-          <div />
-        </div>
-
-        {filteredMembers.map((m) => (
-          <MemberRowView key={m.id} member={m} />
-        ))}
-
-        {filteredMembers.length === 0 && (
-          <div
-            style={{
-              padding: "2rem",
-              textAlign: "center",
-              color: colors.ink500,
-              fontSize: typography.fontSizeSm,
-            }}
-          >
-            該当するメンバーがいません
+          <div {...stylex.props(styles.membersTableHeader)}>
+            <div>名前 / メール</div>
+            <div>権限</div>
+            <div>ステータス</div>
+            <div>追加日</div>
+            <div />
           </div>
-        )}
-      </Card>
+
+          {isLoading && <MembersTableSkeleton />}
+
+          {!isLoading && filteredMembers.map((m) => <MemberRowView key={m.id} member={m} />)}
+
+          {!isLoading && filteredMembers.length === 0 && (
+            <div {...stylex.props(styles.membersEmpty)}>
+              {members.length === 0 ? "メンバーがいません" : "該当するメンバーがいません"}
+            </div>
+          )}
+        </Card>
+      )}
     </>
   );
 }
 
-function MemberRowView({ member }: { member: MemberRow }) {
+function MembersTableSkeleton() {
+  return (
+    <>
+      {[0, 1, 2].map((i) => (
+        <div key={i} {...stylex.props(styles.membersTableRow)} aria-hidden>
+          <div {...stylex.props(styles.memberMeta)}>
+            <Skeleton style={{ height: "2.25rem", width: "2.25rem", borderRadius: "50%" }} />
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              <Skeleton style={{ height: "1rem", width: "8rem" }} />
+              <Skeleton style={{ height: "0.75rem", width: "12rem" }} />
+            </div>
+          </div>
+          <Skeleton style={{ height: "1.25rem", width: "4rem" }} />
+          <Skeleton style={{ height: "1rem", width: "5rem" }} />
+          <Skeleton style={{ height: "1rem", width: "5rem" }} />
+          <Skeleton style={{ height: "1.5rem", width: "3rem" }} />
+        </div>
+      ))}
+    </>
+  );
+}
+
+function MemberRowView({ member }: { member: TenantMemberView }) {
   const rowStyle = stylex.props(
     styles.membersTableRow,
     member.status === "expired" && styles.memberRowExpired,
   );
+  const color = memberColor(member.id);
+  const initial = memberInitial(member);
+  const displayName = memberDisplayName(member);
   return (
     <div className={rowStyle.className} style={rowStyle.style}>
       <div {...stylex.props(styles.memberMeta)}>
-        <span {...stylex.props(styles.memberAvatar)} style={{ backgroundColor: member.color }}>
-          {member.name.charAt(0)}
+        <span {...stylex.props(styles.memberAvatar)} style={{ backgroundColor: color }}>
+          {initial}
         </span>
         <div>
-          <div {...stylex.props(styles.memberName)}>{member.name}</div>
+          <div {...stylex.props(styles.memberName)}>{displayName}</div>
           <div {...stylex.props(styles.memberEmail)}>{member.email}</div>
         </div>
       </div>
       <div>
-        {member.role === "オーナー" && (
-          <span {...stylex.props(styles.roleBadgeOwner)}>{member.role}</span>
-        )}
-        {member.role === "管理者" && (
-          <span {...stylex.props(styles.roleBadgeAdmin)}>{member.role}</span>
-        )}
-        {member.role === "メンバー" && (
-          <span {...stylex.props(styles.roleBadgeMember)}>{member.role}</span>
+        {member.role === "owner" ? (
+          <span {...stylex.props(styles.roleBadgeOwner)}>オーナー</span>
+        ) : (
+          <span {...stylex.props(styles.roleBadgeMember)}>メンバー</span>
         )}
       </div>
       <div>
@@ -539,7 +601,9 @@ function MemberRowView({ member }: { member: MemberRow }) {
           </span>
         )}
       </div>
-      <div {...stylex.props(styles.joinedCol)}>{member.joined}</div>
+      <div {...stylex.props(styles.joinedCol)}>
+        {member.status === "active" ? formatJoinedAt(member.joinedAt) : "—"}
+      </div>
       <div {...stylex.props(styles.rowActions)}>
         {member.status !== "active" && (
           <Button variant="outline" size="sm">

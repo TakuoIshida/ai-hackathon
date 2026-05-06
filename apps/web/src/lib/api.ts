@@ -8,6 +8,7 @@ import type {
   LinkInput,
   LinkSummary,
   MembershipRole,
+  TenantMemberView,
   WorkspaceDetail,
   WorkspaceMember,
   WorkspaceRole,
@@ -206,6 +207,15 @@ export const api = {
     request<{ tenantId: string; role: string }>(
       `/invitations/${encodeURIComponent(token)}/accept`,
       { method: "POST", getToken },
+    ),
+
+  // ISH-253 / ISH-250: tenant-scoped member listing. Returns active members
+  // joined with open invitations (pending / expired). RLS scopes to the
+  // caller's tenant — no tenantId in the path.
+  listTenantMembers: (getToken: AuthTokenGetter) =>
+    request<{ members: TenantMemberView[]; callerRole: WorkspaceRole; callerUserId: string }>(
+      "/tenant/members",
+      { getToken },
     ),
 
   // ISH-239: issue a tenant invitation (owner only). The API accepts one
