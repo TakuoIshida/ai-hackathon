@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { auth } from "@/auth";
 import { api } from "@/lib/api";
 import { queryKeys } from "./queryKeys";
@@ -18,5 +18,20 @@ export function useTenantMembersQuery() {
   return useQuery({
     queryKey: queryKeys.tenant.members(),
     queryFn: () => api.listTenantMembers(() => getToken()),
+  });
+}
+
+/**
+ * Mutation hook for `DELETE /tenant/members/:userId` (ISH-251). Invalidates
+ * the members query on success so the row disappears.
+ */
+export function useRemoveTenantMemberMutation() {
+  const { getToken } = auth.useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => api.removeTenantMember(userId, () => getToken()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.tenant.all() });
+    },
   });
 }

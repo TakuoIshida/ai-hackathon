@@ -41,12 +41,14 @@ vi.mock("@/lib/api", async (importOriginal) => {
       disconnectGoogle: vi.fn(),
       updateCalendarFlags: vi.fn(),
       listTenantMembers: vi.fn(),
+      // ISH-251: tenant-scoped member deletion.
+      removeTenantMember: vi.fn(),
     },
   };
 });
 
 import { api } from "@/lib/api";
-import Settings from "./Settings";
+import Settings, { MembersTab } from "./Settings";
 
 const mockedApi = vi.mocked(api);
 
@@ -467,5 +469,103 @@ describe("<Settings /> Members tab (ISH-253)", () => {
     const totalSpan = screen.getByText("/ 10");
     expect(totalSpan).toBeInTheDocument();
     expect(totalSpan.previousElementSibling?.textContent).toBe("2");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ISH-251: Members tab delete row-action visibility guards.
+//
+// Radix DropdownMenu uses pointer events that happy-dom cannot dispatch via
+// `fireEvent.click`, so we cannot reliably *open* the menu in unit tests.
+// Visibility of the trigger button itself is sufficient: the BE owner /
+// self / owner-target guards are pinned by tenant.members.test.ts, and the
+// FE guard surface-area is "show or don't show the trigger".
+// ---------------------------------------------------------------------------
+
+describe("<MembersTab /> 削除ガード — row action menu visibility (ISH-251)", () => {
+  const ownerSelf: TenantMemberView = {
+    id: "u-owner",
+    userId: "u-owner",
+    email: "owner@example.com",
+    name: "Owner",
+    role: "owner",
+    status: "active",
+    joinedAt: "2025-12-01T00:00:00Z",
+  };
+  const memberRow: TenantMemberView = {
+    id: "u-member",
+    userId: "u-member",
+    email: "member@example.com",
+    name: "Member",
+    role: "member",
+    status: "active",
+    joinedAt: "2026-01-15T00:00:00Z",
+  };
+  const pendingRow: TenantMemberView = {
+    id: "inv:1",
+    userId: null,
+    email: "invitee@example.com",
+    name: null,
+    role: "member",
+    status: "pending",
+    joinedAt: "2026-05-01T00:00:00Z",
+    expiresIn: "残り 18 時間",
+  };
+
+  const baseStats = { active: 2, pending: 0, expired: 0 };
+
+  const renderTab = (props: Parameters<typeof MembersTab>[0]) =>
+    render(
+      <TestQueryProvider>
+        <ToastProvider>
+          <MembersTab {...props} />
+        </ToastProvider>
+      </TestQueryProvider>,
+    );
+
+  test("caller is not owner → no row action menu rendered for any row", () => {
+    renderTab({
+      members: [ownerSelf, memberRow],
+      stats: baseStats,
+      isLoading: false,
+      isError: false,
+      error: null,
+      onRetry: () => {},
+      callerRole: "member",
+      callerUserId: "u-member",
+    });
+    expect(screen.queryByTestId("member-row-actions-owner@example.com")).toBeNull();
+    expect(screen.queryByTestId("member-row-actions-member@example.com")).toBeNull();
+  });
+
+  test("owner caller, self row → menu hidden on the self row, visible on others", () => {
+    renderTab({
+      members: [ownerSelf, memberRow],
+      stats: baseStats,
+      isLoading: false,
+      isError: false,
+      error: null,
+      onRetry: () => {},
+      callerRole: "owner",
+      callerUserId: "u-owner",
+    });
+    expect(screen.queryByTestId("member-row-actions-owner@example.com")).toBeNull();
+    expect(screen.getByTestId("member-row-actions-member@example.com")).toBeInTheDocument();
+  });
+
+  test("pending / expired rows do not show the active-row action menu (再送 button stays)", () => {
+    renderTab({
+      members: [ownerSelf, pendingRow],
+      stats: { active: 1, pending: 1, expired: 0 },
+      isLoading: false,
+      isError: false,
+      error: null,
+      onRetry: () => {},
+      callerRole: "owner",
+      callerUserId: "u-owner",
+    });
+    expect(screen.queryByTestId("member-row-actions-invitee@example.com")).toBeNull();
+    // 再送 button still renders for pending rows.
+    expect(screen.getByRole("button", { name: "再送" })).toBeInTheDocument();
   });
 });

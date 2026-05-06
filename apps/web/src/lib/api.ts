@@ -218,6 +218,16 @@ export const api = {
       { getToken },
     ),
 
+  // ISH-251: remove a tenant member. Owner-only on the server. Server-side
+  // guards: 400 cannot_remove_self / cannot_remove_owner, 403 forbidden,
+  // 404 not_found. The FE row-action menu hides for non-owners / self / owner
+  // targets so these errors only fire in race conditions.
+  removeTenantMember: (userId: string, getToken: AuthTokenGetter) =>
+    request<{ ok: true }>(`/tenant/members/${encodeURIComponent(userId)}`, {
+      method: "DELETE",
+      getToken,
+    }),
+
   // ISH-239: issue a tenant invitation (owner only). The API accepts one
   // email per request, so the modal POSTs each chip in parallel and
   // aggregates per-email results.

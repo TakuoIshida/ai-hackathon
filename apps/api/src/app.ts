@@ -11,6 +11,7 @@ import { linksRoute } from "@/routes/links";
 import { meRoute } from "@/routes/me";
 import { onboardingRoute } from "@/routes/onboarding";
 import { publicRoute } from "@/routes/public";
+import { tenantMembersRoute } from "@/routes/tenant.members";
 import { workspacesRoute } from "@/routes/workspaces";
 import { buildIdentityProvider } from "@/wiring";
 
@@ -49,6 +50,7 @@ app.route("/bookings", bookingsRoute);
 app.route("/workspaces", workspacesRoute);
 app.route("/invitations", invitationsRoute);
 app.route("/tenant/invitations", tenantInvitationsRoute);
+app.route("/tenant/members", tenantMembersRoute);
 app.route("/public", publicRoute);
 app.route("/webhooks", clerkWebhookRoute);
 
