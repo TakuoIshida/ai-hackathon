@@ -6,9 +6,7 @@ import { PublicLayout } from "@/components/layout/PublicLayout";
 import AcceptInvite from "@/routes/AcceptInvite";
 import BookingDetail from "@/routes/BookingDetail";
 import Bookings from "@/routes/Bookings";
-import Calendar from "@/routes/Calendar";
 import CancelBooking from "@/routes/CancelBooking";
-import Forms from "@/routes/Forms";
 import Landing from "@/routes/Landing";
 import LinkForm from "@/routes/LinkForm";
 import Links from "@/routes/Links";
@@ -19,7 +17,6 @@ import Settings from "@/routes/Settings";
 import SetupComplete from "@/routes/SetupComplete";
 import SignInPage from "@/routes/SignIn";
 import SignUpPage from "@/routes/SignUp";
-import UnconfirmedList from "@/routes/UnconfirmedList";
 
 // ISH-225: dev-only component showcase. Lazy-loaded so it doesn't bloat the
 // production bundle for normal users. Accessible at /dev/components in dev,
@@ -31,9 +28,9 @@ const HAS_CLERK = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
 
 /**
  * ISH-227: protected app shell. The `/dashboard` URL prefix has been removed —
- * authenticated routes now sit at the root (/availability-sharings, /calendar,
- * etc.). The `:slug` public route remains in `<PublicLayout />` and is matched
- * only when the explicit named routes don't.
+ * authenticated routes now sit at the root (/availability-sharings,
+ * /confirmed-list, /settings). The `:slug` public route remains in
+ * `<PublicLayout />` and is matched only when the explicit named routes don't.
  */
 function ProtectedApp() {
   if (!HAS_CLERK) return <Navigate to="/" replace />;
@@ -71,11 +68,8 @@ export default function App() {
         <Route path="/availability-sharings" element={<Links />} />
         <Route path="/availability-sharings/new" element={<LinkForm />} />
         <Route path="/availability-sharings/:id/edit" element={<LinkForm />} />
-        <Route path="/calendar" element={<Calendar />} />
-        <Route path="/unconfirmed-list" element={<UnconfirmedList />} />
         <Route path="/confirmed-list" element={<Bookings />} />
         <Route path="/confirmed-list/:id" element={<BookingDetail />} />
-        <Route path="/forms" element={<Forms />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
 
