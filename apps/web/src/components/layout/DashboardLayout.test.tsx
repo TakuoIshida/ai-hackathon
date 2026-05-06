@@ -27,7 +27,7 @@ describe("<DashboardLayout />", () => {
           <Routes>
             <Route element={<DashboardLayout />}>
               <Route path="/availability-sharings" element={<div>Links Page</div>} />
-              <Route path="/calendar" element={<div>Calendar Page</div>} />
+              <Route path="/confirmed-list" element={<div>Bookings Page</div>} />
             </Route>
           </Routes>
         </MemoryRouter>
@@ -45,20 +45,21 @@ describe("<DashboardLayout />", () => {
   it("renders all nav items (with 設定 → チーム設定 rename) and the matched outlet", () => {
     renderAt("/availability-sharings");
     expect(screen.getByRole("link", { name: "空き時間リンク" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "カレンダー" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "未確定の調整" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "確定済の予定" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "フォーム" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "チーム設定" })).toBeInTheDocument();
     // 旧ラベルは存在しない
     expect(screen.queryByRole("link", { name: "設定" })).toBeNull();
+    // ISH-259: 削除された nav エントリ
+    expect(screen.queryByRole("link", { name: "カレンダー" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "未確定の調整" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "フォーム" })).toBeNull();
     expect(screen.getByText("Links Page")).toBeInTheDocument();
     expect(screen.getByTestId("user-button")).toBeInTheDocument();
   });
 
   it("renders different children based on path", () => {
-    renderAt("/calendar");
-    expect(screen.getByText("Calendar Page")).toBeInTheDocument();
+    renderAt("/confirmed-list");
+    expect(screen.getByText("Bookings Page")).toBeInTheDocument();
     expect(screen.queryByText("Links Page")).toBeNull();
   });
 

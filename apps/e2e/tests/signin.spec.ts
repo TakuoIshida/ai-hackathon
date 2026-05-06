@@ -43,11 +43,9 @@ test.describe("signin → dashboard", () => {
 
     // Top tab nav — brand (Logo, ISH-230 / ISH-236) + each tab is a link with exact label.
     await expect(page.getByRole("heading", { level: 1, name: "Rips" })).toBeVisible();
+    // ISH-259: Calendar / Forms / UnconfirmedList 画面は撤去済み。
     await expect(page.getByRole("link", { name: "空き時間リンク", exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "カレンダー", exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "未確定の調整", exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "確定済の予定", exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "フォーム", exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "チーム設定", exact: true })).toBeVisible();
 
     // Body — Links page H1. ISH-237 (L-04) renamed it from "リンク" to

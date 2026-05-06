@@ -159,10 +159,7 @@ const styles = stylex.create({
 
 const navItems: ReadonlyArray<{ to: string; label: string }> = [
   { to: "/availability-sharings", label: "空き時間リンク" },
-  { to: "/calendar", label: "カレンダー" },
-  { to: "/unconfirmed-list", label: "未確定の調整" },
   { to: "/confirmed-list", label: "確定済の予定" },
-  { to: "/forms", label: "フォーム" },
   { to: "/settings", label: "チーム設定" },
 ];
 
