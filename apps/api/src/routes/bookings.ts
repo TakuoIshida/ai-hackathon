@@ -1,6 +1,6 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { type CancelBookingPorts, cancelBookingByOwner } from "@/bookings/cancel";
-import { listOwnerBookings } from "@/bookings/usecase";
+import { getOwnerBooking, listOwnerBookings } from "@/bookings/usecase";
 import { config } from "@/config";
 import { db } from "@/db/client";
 import {
@@ -55,6 +55,15 @@ export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): H
     const dbUser = getDbUser(c);
     const list = await listOwnerBookings(db, dbUser.id);
     return c.json({ bookings: list });
+  });
+
+  // ISH-254: dedicated detail endpoint. Returns 404 for both missing and
+  // foreign booking ids — see `getOwnerBooking` for rationale.
+  route.get("/:id", async (c) => {
+    const dbUser = getDbUser(c);
+    const booking = await getOwnerBooking(db, dbUser.id, c.req.param("id"));
+    if (!booking) return c.json({ error: "not_found" }, 404);
+    return c.json({ booking });
   });
 
   // Owner-side cancel.

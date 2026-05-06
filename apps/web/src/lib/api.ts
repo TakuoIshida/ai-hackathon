@@ -111,6 +111,11 @@ export const api = {
   listBookings: (getToken: AuthTokenGetter) =>
     request<{ bookings: BookingSummary[] }>("/bookings", { getToken }),
 
+  // ISH-254: dedicated detail endpoint. The detail screen calls this instead
+  // of paging the entire booking list and filtering client-side.
+  getBooking: (id: string, getToken: AuthTokenGetter) =>
+    request<{ booking: BookingSummary }>(`/bookings/${id}`, { getToken }),
+
   cancelBooking: (id: string, getToken: AuthTokenGetter) =>
     request<{ ok: boolean; alreadyCanceled?: boolean }>(`/bookings/${id}`, {
       method: "DELETE",

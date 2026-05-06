@@ -235,6 +235,77 @@ describe("GET /bookings (owner list)", () => {
   });
 });
 
+describe("GET /bookings/:id (owner detail) — ISH-254", () => {
+  test("401 when no auth header is present", async () => {
+    const app = buildApp();
+    const res = await app.request("/bookings/some-id");
+    expect(res.status).toBe(401);
+  });
+
+  test("200 returns the authed user's own booking with link metadata", async () => {
+    const tenantId = await seedTenant();
+    const owner = await seedUser("owner");
+    const link = await seedLink(tenantId, owner.userId, "owner-link", "30 min meet");
+    const bookingId = await seedConfirmedBooking(tenantId, link.linkId, {
+      startAt: new Date("2026-12-14T05:00:00.000Z"),
+    });
+
+    const app = buildApp();
+    const res = await app.request(`/bookings/${bookingId}`, {
+      headers: { "x-test-clerk-id": owner.externalId },
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      booking: {
+        id: string;
+        linkId: string;
+        linkSlug: string;
+        linkTitle: string;
+        guestEmail: string;
+        status: string;
+      };
+    };
+    expect(json.booking.id).toBe(bookingId);
+    expect(json.booking.linkId).toBe(link.linkId);
+    expect(json.booking.linkSlug).toBe("owner-link");
+    expect(json.booking.linkTitle).toBe("30 min meet");
+    expect(json.booking.guestEmail).toBe("guest@example.com");
+    expect(json.booking.status).toBe("confirmed");
+  });
+
+  test("404 when the booking id does not exist", async () => {
+    const owner = await seedUser("owner");
+    const app = buildApp();
+    const res = await app.request(`/bookings/${randomUUID()}`, {
+      headers: { "x-test-clerk-id": owner.externalId },
+    });
+    expect(res.status).toBe(404);
+    const json = (await res.json()) as { error?: string };
+    expect(json.error).toBe("not_found");
+  });
+
+  test("authorization: cannot read another user's booking — responds 404 (no info leak)", async () => {
+    // Mirrors the DELETE /bookings/:id cross-owner test below: foreign owner
+    // bookings are collapsed to 404 to avoid leaking the existence of valid
+    // booking ids that belong to other users (cf. ISH-183 cross-tenant test).
+    const tenantId = await seedTenant();
+    const me = await seedUser("me");
+    const other = await seedUser("other");
+    const otherLink = await seedLink(tenantId, other.userId, "other-link");
+    const otherBookingId = await seedConfirmedBooking(tenantId, otherLink.linkId, {
+      guestEmail: "victim@example.com",
+    });
+
+    const app = buildApp();
+    const res = await app.request(`/bookings/${otherBookingId}`, {
+      headers: { "x-test-clerk-id": me.externalId },
+    });
+    expect(res.status).toBe(404);
+    const json = (await res.json()) as { error?: string };
+    expect(json.error).toBe("not_found");
+  });
+});
+
 describe("DELETE /bookings/:id (owner cancel)", () => {
   test("401 when no auth header is present", async () => {
     const app = buildApp();

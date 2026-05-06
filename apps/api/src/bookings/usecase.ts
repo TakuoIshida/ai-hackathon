@@ -1,5 +1,5 @@
 import type { db as DbClient } from "@/db/client";
-import { findBookingsByOwner } from "./repo";
+import { findBookingsByOwner, findOwnerBookingById } from "./repo";
 
 type Database = typeof DbClient;
 
@@ -61,4 +61,37 @@ export async function listOwnerBookings(
     canceledAt: b.canceledAt,
     createdAt: b.createdAt,
   }));
+}
+
+/**
+ * Returns a single owner-scoped booking view (same projection as
+ * `listOwnerBookings`) or null if no booking with `bookingId` exists OR the
+ * booking's parent link is not owned by `ownerId`. Collapsing "missing" and
+ * "foreign" into a single null is intentional — the route maps both to 404
+ * to avoid leaking the existence of foreign booking ids (ISH-183).
+ *
+ * RLS already filters by tenant; the explicit `availabilityLinks.userId`
+ * predicate inside the repo additionally restricts to the primary owner.
+ */
+export async function getOwnerBooking(
+  database: Database,
+  ownerId: string,
+  bookingId: string,
+): Promise<OwnerBookingView | null> {
+  const b = await findOwnerBookingById(database, ownerId, bookingId);
+  if (!b) return null;
+  return {
+    id: b.id,
+    linkId: b.linkId,
+    linkTitle: b.linkTitle,
+    linkSlug: b.linkSlug,
+    startAt: b.startAt,
+    endAt: b.endAt,
+    guestName: b.guestName,
+    guestEmail: b.guestEmail,
+    status: b.status,
+    meetUrl: b.meetUrl,
+    canceledAt: b.canceledAt,
+    createdAt: b.createdAt,
+  };
 }
