@@ -1,4 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
+import { Info } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { auth } from "@/auth";
@@ -8,7 +9,9 @@ import {
   type CandidateSlot,
 } from "@/components/availability-link/CalendarDragGrid";
 import { LinkCreateLayout, type LinkMode } from "@/components/availability-link/LinkCreateLayout";
+import { PublicationPeriodCard } from "@/components/availability-link/PublicationPeriodCard";
 import { type LocationKind, SettingsPanel } from "@/components/availability-link/SettingsPanel";
+import { WeekdayHoursEditor } from "@/components/availability-link/WeekdayHoursEditor";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -19,10 +22,8 @@ import {
   DEFAULT_RANGE_DAYS,
   type LinkInput,
   SLOT_INTERVAL_CHOICES,
-  WEEKDAY_LABELS,
-  type Weekday,
 } from "@/lib/types";
-import { colors, space, typography } from "@/styles/tokens.stylex";
+import { colors, radius, space, typography } from "@/styles/tokens.stylex";
 
 const browserTimeZone =
   typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "Asia/Tokyo";
@@ -87,34 +88,54 @@ const styles = stylex.create({
   fieldRow: { display: "flex", gap: space.md, flexWrap: "wrap" },
   fieldHalf: { flex: "1 1 12rem", display: "flex", flexDirection: "column", gap: space.xs },
   caption: { fontSize: "0.8125rem", color: colors.muted },
-  weekdayRow: {
-    display: "grid",
-    gridTemplateColumns: "3rem 1fr 1fr auto",
-    gap: space.sm,
-    alignItems: "center",
-  },
   excludeRow: { display: "flex", gap: space.sm, alignItems: "center" },
   toggle: { display: "flex", alignItems: "center", gap: space.sm },
   error: { color: colors.destructive, fontSize: "0.8125rem" },
+  hintBanner: {
+    display: "flex",
+    alignItems: "center",
+    gap: space.sm,
+    paddingBlock: "0.625rem",
+    paddingInline: "0.875rem",
+    backgroundColor: colors.blue50,
+    border: `1px dashed ${colors.blue200}`,
+    borderRadius: radius.lg,
+    fontSize: typography.fontSizeXs,
+    color: colors.blue800,
+  },
+  // ISH-245 (C-03): calendarPlaceholder は CalendarDragGrid に置き換わった
+  // ので削除済み。
 });
 
-const WEEKDAYS: Weekday[] = [0, 1, 2, 3, 4, 5, 6];
-
-function formatTime(minutes: number): string {
-  const h = Math.floor(minutes / 60)
-    .toString()
-    .padStart(2, "0");
-  const m = (minutes % 60).toString().padStart(2, "0");
-  return `${h}:${m}`;
+function todayLocal(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
-function parseTime(value: string): number | null {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(value);
-  if (!match) return null;
-  const h = Number(match[1]);
-  const m = Number(match[2]);
-  if (h < 0 || h > 24 || m < 0 || m > 59) return null;
-  return h * 60 + m;
+function addDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  if (!y || !m || !d) return dateStr;
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + days);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+function diffDays(fromStr: string, toStr: string): number | null {
+  const parse = (s: string) => {
+    const [y, m, d] = s.split("-").map(Number);
+    if (!y || !m || !d) return null;
+    return new Date(y, m - 1, d).getTime();
+  };
+  const a = parse(fromStr);
+  const b = parse(toStr);
+  if (a === null || b === null) return null;
+  return Math.round((b - a) / 86400000);
 }
 
 export default function LinkForm() {
@@ -132,11 +153,16 @@ export default function LinkForm() {
   // ISH-245 (C-03): mode === 'calendar' で <CalendarDragGrid /> を render する。
   const [mode, setMode] = useState<LinkMode>("form");
   const [location, setLocation] = useState<LocationKind>("meet");
-  // calendar mode 用 state — form mode の rules とは別管理 (永続化は後続 issue)。
+  // ISH-245 (C-03): calendar mode 用 state — form mode の rules とは別管理
+  // (永続化は後続 issue)。
   const [calendarCandidates, setCalendarCandidates] = useState<CandidateSlot[]>([]);
   const [calendarWeekStart, setCalendarWeekStart] = useState<Date>(() =>
     startOfWeekMonday(new Date()),
   );
+  // ISH-244 (C-02): 公開期間 (form mode の "公開期間" card) — `from` は今日固定の派生値、
+  // `to` は `from + form.rangeDays`。preset 押下で `rangeDays` を更新する。
+  // schema 側は `rangeDays` のみ持つので、from/to は UI 表示用の derived state。
+  const [periodFrom, setPeriodFrom] = useState<string>(() => todayLocal());
   const formRef = useRef<HTMLFormElement | null>(null);
 
   useEffect(() => {
@@ -192,30 +218,32 @@ export default function LinkForm() {
     return () => clearTimeout(handle);
   }, [form.slug, isEdit, getToken]);
 
-  const setRule = (
-    weekday: Weekday,
-    patch: Partial<{ startMinute: number; endMinute: number }>,
-  ) => {
-    setForm((f) => ({
-      ...f,
-      rules: f.rules.map((r) => (r.weekday === weekday ? { ...r, ...patch } : r)),
-    }));
-  };
-
-  const toggleWeekday = (weekday: Weekday) => {
-    setForm((f) => {
-      const has = f.rules.some((r) => r.weekday === weekday);
-      if (has) return { ...f, rules: f.rules.filter((r) => r.weekday !== weekday) };
-      return {
-        ...f,
-        rules: [...f.rules, { weekday, startMinute: 9 * 60, endMinute: 17 * 60 }].sort(
-          (a, b) => a.weekday - b.weekday,
-        ),
-      };
-    });
-  };
-
   const onPatchForm = (patch: Partial<LinkInput>) => setForm((f) => ({ ...f, ...patch }));
+
+  // 公開期間 derived: `to` = from + rangeDays。preset 押下で from/rangeDays を同時更新。
+  const periodTo = addDays(periodFrom, form.rangeDays);
+  const PERIOD_PRESETS = [7, 14, 30, 90];
+  const activePeriodDays = PERIOD_PRESETS.includes(form.rangeDays) ? form.rangeDays : null;
+
+  const onPeriodChange = ({
+    from,
+    to,
+    activeDays,
+  }: {
+    from: string;
+    to: string;
+    activeDays: number | null;
+  }) => {
+    setPeriodFrom(from);
+    if (activeDays !== null) {
+      setForm((f) => ({ ...f, rangeDays: activeDays }));
+    } else {
+      const d = diffDays(from, to);
+      if (d !== null && d >= 1 && d <= 365) {
+        setForm((f) => ({ ...f, rangeDays: d }));
+      }
+    }
+  };
 
   const submitNow = async () => {
     setError(null);
@@ -260,6 +288,7 @@ export default function LinkForm() {
       onChange={onPatchForm}
       location={location}
       onLocationChange={setLocation}
+      showAcceptanceSummary={mode === "form"}
     />
   );
 
@@ -337,55 +366,27 @@ export default function LinkForm() {
               曜日ごとに受付時間を設定します。既存予定との重なりは自動で除外されます。
             </p>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>営業時間</CardTitle>
-                <CardDescription>曜日ごとに受付時間帯を設定します。</CardDescription>
-              </CardHeader>
-              <CardBody>
-                {WEEKDAYS.map((wd) => {
-                  const rule = form.rules.find((r) => r.weekday === wd);
-                  return (
-                    <div key={wd} {...stylex.props(styles.weekdayRow)}>
-                      <label {...stylex.props(styles.toggle)}>
-                        <input
-                          type="checkbox"
-                          checked={Boolean(rule)}
-                          onChange={() => toggleWeekday(wd)}
-                        />
-                        {WEEKDAY_LABELS[wd]}
-                      </label>
-                      <Input
-                        type="time"
-                        disabled={!rule}
-                        value={rule ? formatTime(rule.startMinute) : "09:00"}
-                        onChange={(e) => {
-                          const m = parseTime(e.target.value);
-                          if (m !== null) setRule(wd, { startMinute: m });
-                        }}
-                      />
-                      <Input
-                        type="time"
-                        disabled={!rule}
-                        value={rule ? formatTime(rule.endMinute) : "17:00"}
-                        onChange={(e) => {
-                          const m = parseTime(e.target.value);
-                          if (m !== null) setRule(wd, { endMinute: m });
-                        }}
-                      />
-                      <span />
-                    </div>
-                  );
-                })}
-              </CardBody>
-            </Card>
+            <PublicationPeriodCard
+              from={periodFrom}
+              to={periodTo}
+              activeDays={activePeriodDays}
+              onChange={onPeriodChange}
+            />
+
+            <WeekdayHoursEditor
+              rules={form.rules}
+              onChange={(rules) => setForm((f) => ({ ...f, rules }))}
+            />
+
+            <div {...stylex.props(styles.hintBanner)}>
+              <Info size={15} aria-hidden="true" color={colors.blue600} />
+              連携カレンダーの予定を確認し、自動で衝突を除外します
+            </div>
 
             <Card>
               <CardHeader>
                 <CardTitle>スロット設定</CardTitle>
-                <CardDescription>
-                  前後バッファ・開始間隔・1日の上限・受付期間を設定できます。
-                </CardDescription>
+                <CardDescription>前後バッファ・開始間隔・1日の上限を設定できます。</CardDescription>
               </CardHeader>
               <CardBody>
                 <div {...stylex.props(styles.fieldRow)}>
@@ -470,17 +471,6 @@ export default function LinkForm() {
                       min={0}
                       value={form.leadTimeHours}
                       onChange={(e) => setForm({ ...form, leadTimeHours: Number(e.target.value) })}
-                    />
-                  </div>
-                  <div {...stylex.props(styles.fieldHalf)}>
-                    <Label htmlFor="range">受付期間 (日先)</Label>
-                    <Input
-                      id="range"
-                      type="number"
-                      min={1}
-                      max={365}
-                      value={form.rangeDays}
-                      onChange={(e) => setForm({ ...form, rangeDays: Number(e.target.value) })}
                     />
                   </div>
                 </div>
