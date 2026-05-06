@@ -28,3 +28,7 @@ pnpm-debug.log*
 !.vscode/settings.json
 .claude/
 worktrees/
+
+# Claude Design / Spir UI 参考用のローカル dump (lint や push 対象に
+# しない). 必要なら開発者が個別に取得する。
+spir/
