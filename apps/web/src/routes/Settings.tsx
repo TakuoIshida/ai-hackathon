@@ -55,7 +55,9 @@ import { colors, radius, space, typography } from "@/styles/tokens.stylex";
  *
  * - 基本情報 ... 既存の Google Workspace 連携 + プロフィール
  * - メンバー ... アクティブ/招待中/期限切れ stats + members table + 招待 button
- * - 招待 / 通知 / プラン ... 未実装 placeholder
+ *
+ * MVP では「基本情報」「メンバー」の 2 tab のみ提供する。招待 / 通知 /
+ * プラン は実装しないため tab を削除済 (ISH-257)。
  *
  * メンバー一覧は ISH-253 で `useTenantMembersQuery()` (`GET /tenant/members`)
  * に結線済。BE が active members + open invitations を joined view として
@@ -241,16 +243,6 @@ const styles = stylex.create({
   },
   empty: { fontSize: typography.fontSizeSm, color: colors.muted },
   error: { color: colors.destructive, fontSize: typography.fontSizeSm },
-  // Placeholder tabs
-  placeholder: {
-    padding: space.xl,
-    backgroundColor: colors.bgSoft,
-    borderRadius: radius.md,
-    border: `1px solid ${colors.ink200}`,
-    color: colors.ink500,
-    fontSize: typography.fontSizeSm,
-    textAlign: "center",
-  },
   // Organization info form
   orgForm: { display: "flex", flexDirection: "column", gap: space.md },
   orgFooter: { display: "flex", gap: space.sm },
@@ -356,12 +348,6 @@ export default function Settings() {
         <TabsList>
           <TabsTrigger value="basic">基本情報</TabsTrigger>
           <TabsTrigger value="members">メンバー</TabsTrigger>
-          <TabsTrigger value="invitations">
-            招待
-            {stats.pending > 0 ? ` (${stats.pending})` : ""}
-          </TabsTrigger>
-          <TabsTrigger value="notifications">通知</TabsTrigger>
-          <TabsTrigger value="plan">プラン</TabsTrigger>
         </TabsList>
 
         <TabsContent value="basic">
@@ -382,26 +368,6 @@ export default function Settings() {
               callerRole={callerRole}
               callerUserId={callerUserId}
             />
-          </div>
-        </TabsContent>
-
-        <TabsContent value="invitations">
-          <div {...stylex.props(styles.panel)}>
-            <p {...stylex.props(styles.placeholder)}>
-              招待タブは未実装です ({stats.pending}件の応答待ち / {stats.expired}件の期限切れ)。
-            </p>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="notifications">
-          <div {...stylex.props(styles.panel)}>
-            <p {...stylex.props(styles.placeholder)}>通知タブは未実装です。</p>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="plan">
-          <div {...stylex.props(styles.panel)}>
-            <p {...stylex.props(styles.placeholder)}>プランタブは未実装です。</p>
           </div>
         </TabsContent>
       </Tabs>

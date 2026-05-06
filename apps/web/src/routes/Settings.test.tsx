@@ -461,10 +461,10 @@ describe("<Settings /> Members tab (ISH-253)", () => {
 
     clickTab(/^メンバー$/);
 
-    // Wait for the query to settle by waiting on a derived count (Pending tab
-    // shows " (1)" only after the response lands). Then assert the StatCard
-    // active count = 2 (ownerMember + activeMember).
-    expect(await screen.findByRole("tab", { name: /招待 \(1\)/ })).toBeInTheDocument();
+    // Wait for the query to settle by waiting on a row that only renders
+    // after the response lands. Then assert the StatCard active count = 2
+    // (ownerMember + activeMember).
+    expect(await screen.findByText("Ishida T")).toBeInTheDocument();
     // StatCard splits value and total into separate spans.
     const totalSpan = screen.getByText("/ 10");
     expect(totalSpan).toBeInTheDocument();
@@ -567,5 +567,33 @@ describe("<MembersTab /> 削除ガード — row action menu visibility (ISH-251
     expect(screen.queryByTestId("member-row-actions-invitee@example.com")).toBeNull();
     // 再送 button still renders for pending rows.
     expect(screen.getByRole("button", { name: "再送" })).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ISH-257: placeholder tabs (招待 / 通知 / プラン) removed — regression guard
+// ---------------------------------------------------------------------------
+
+describe("<Settings /> tabs — MVP placeholder removal (ISH-257)", () => {
+  test("renders only 基本情報 / メンバー tabs; 招待 / 通知 / プラン are removed", async () => {
+    mockedApi.getGoogleConnection.mockResolvedValue(connected());
+    mockedApi.listTenantMembers.mockResolvedValue(membersResponse([ownerMember, pendingMember]));
+
+    renderSettings();
+
+    // Surviving tabs are present.
+    expect(screen.getByRole("tab", { name: /^基本情報$/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^メンバー$/ })).toBeInTheDocument();
+
+    // Removed tabs must not appear, even after the query settles (which used
+    // to surface "招待 (1)" via stats.pending). Wait on a row from the
+    // resolved members response so we know the query has landed before
+    // asserting absence.
+    clickTab(/^メンバー$/);
+    expect(await screen.findByText("Ishida T")).toBeInTheDocument();
+
+    expect(screen.queryByRole("tab", { name: /招待/ })).toBeNull();
+    expect(screen.queryByRole("tab", { name: /^通知$/ })).toBeNull();
+    expect(screen.queryByRole("tab", { name: /^プラン$/ })).toBeNull();
   });
 });
