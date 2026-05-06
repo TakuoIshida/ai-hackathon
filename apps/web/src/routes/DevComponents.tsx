@@ -48,6 +48,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { StatCard } from "@/components/ui/stat-card";
+import { Stepper } from "@/components/ui/stepper";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -624,6 +625,36 @@ export default function DevComponents() {
               <p>Members content</p>
             </TabsContent>
           </Tabs>
+          <div {...stylex.props(styles.panel)}>
+            <p {...stylex.props(styles.panelLabel)}>Stepper</p>
+            <Stepper
+              steps={[
+                { label: "招待を確認" },
+                { label: "Googleでログイン" },
+                { label: "カレンダー連携" },
+                { label: "完了" },
+              ]}
+              current={0}
+            />
+            <Stepper
+              steps={[
+                { label: "招待を確認" },
+                { label: "Googleでログイン" },
+                { label: "カレンダー連携" },
+                { label: "完了" },
+              ]}
+              current={2}
+            />
+            <Stepper
+              steps={[
+                { label: "招待を確認" },
+                { label: "Googleでログイン" },
+                { label: "カレンダー連携" },
+                { label: "完了" },
+              ]}
+              current={3}
+            />
+          </div>
         </section>
       </main>
     </TooltipProvider>
