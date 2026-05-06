@@ -2,6 +2,11 @@ import * as stylex from "@stylexjs/stylex";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { auth } from "@/auth";
+import {
+  type BusySlot,
+  CalendarDragGrid,
+  type CandidateSlot,
+} from "@/components/availability-link/CalendarDragGrid";
 import { LinkCreateLayout, type LinkMode } from "@/components/availability-link/LinkCreateLayout";
 import { type LocationKind, SettingsPanel } from "@/components/availability-link/SettingsPanel";
 import { Button } from "@/components/ui/button";
@@ -21,6 +26,25 @@ import { colors, space, typography } from "@/styles/tokens.stylex";
 
 const browserTimeZone =
   typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "Asia/Tokyo";
+
+/** Mock busy events for the calendar mode preview. ISH-245 では mock のみ。
+ *  実 freebusy 連携は別 issue で BE schema 拡張と合わせて行う。 */
+const MOCK_BUSY: BusySlot[] = [
+  { weekDay: 0, startMin: 9 * 60, endMin: 10 * 60, title: "朝会" },
+  { weekDay: 1, startMin: 13 * 60, endMin: 14 * 60, title: "1on1 / 田中" },
+  { weekDay: 2, startMin: 10 * 60, endMin: 11 * 60 + 30, title: "デザインレビュー" },
+  { weekDay: 3, startMin: 14 * 60, endMin: 15 * 60, title: "顧客MTG" },
+  { weekDay: 4, startMin: 11 * 60, endMin: 12 * 60, title: "ランチ" },
+  { weekDay: 4, startMin: 16 * 60, endMin: 17 * 60, title: "週次レビュー" },
+];
+
+function startOfWeekMonday(d: Date): Date {
+  const out = new Date(d);
+  out.setHours(0, 0, 0, 0);
+  const offset = (out.getDay() + 6) % 7;
+  out.setDate(out.getDate() - offset);
+  return out;
+}
 
 const emptyInput: LinkInput = {
   slug: "",
@@ -72,21 +96,6 @@ const styles = stylex.create({
   excludeRow: { display: "flex", gap: space.sm, alignItems: "center" },
   toggle: { display: "flex", alignItems: "center", gap: space.sm },
   error: { color: colors.destructive, fontSize: "0.8125rem" },
-  // Calendar mode placeholder — `calendar` UI 本体は ISH-239 (C-02) で実装。
-  calendarPlaceholder: {
-    display: "flex",
-    flexDirection: "column",
-    gap: space.sm,
-    padding: space.xl,
-    backgroundColor: colors.bg,
-    border: `1px dashed ${colors.blue200}`,
-    borderRadius: "0.625rem",
-    color: colors.blue800,
-    minHeight: "20rem",
-    alignItems: "center",
-    justifyContent: "center",
-    textAlign: "center",
-  },
 });
 
 const WEEKDAYS: Weekday[] = [0, 1, 2, 3, 4, 5, 6];
@@ -119,9 +128,15 @@ export default function LinkForm() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [slugStatus, setSlugStatus] = useState<"idle" | "checking" | "available" | "taken">("idle");
-  // ISH-238 scaffolding: mode 切替の UI のみ実装。calendar 本体は ISH-239 (C-02)。
+  // ISH-238 scaffolding: mode 切替の UI のみ実装。
+  // ISH-245 (C-03): mode === 'calendar' で <CalendarDragGrid /> を render する。
   const [mode, setMode] = useState<LinkMode>("form");
   const [location, setLocation] = useState<LocationKind>("meet");
+  // calendar mode 用 state — form mode の rules とは別管理 (永続化は後続 issue)。
+  const [calendarCandidates, setCalendarCandidates] = useState<CandidateSlot[]>([]);
+  const [calendarWeekStart, setCalendarWeekStart] = useState<Date>(() =>
+    startOfWeekMonday(new Date()),
+  );
   const formRef = useRef<HTMLFormElement | null>(null);
 
   useEffect(() => {
@@ -306,17 +321,15 @@ export default function LinkForm() {
         </Card>
 
         {mode === "calendar" ? (
-          // ISH-239 (C-02) で本実装予定。本 issue は scaffolding のみ。
-          <section
-            {...stylex.props(styles.calendarPlaceholder)}
-            aria-label="カレンダー mode placeholder"
-          >
-            <strong>カレンダーで選択 (準備中)</strong>
-            <span>
-              ドラッグで候補時間を作成する UI は ISH-239
-              で実装します。今は「曜日×時間帯」モードに切り替えてください。
-            </span>
-          </section>
+          // ISH-245 (C-03): カレンダードラッグ mode 本体。
+          // 永続化は後続 issue で対応 (BE schema 拡張が必要)。busy は mock。
+          <CalendarDragGrid
+            candidates={calendarCandidates}
+            busy={MOCK_BUSY}
+            onCandidatesChange={setCalendarCandidates}
+            weekStart={calendarWeekStart}
+            onWeekChange={setCalendarWeekStart}
+          />
         ) : (
           <>
             <h2 {...stylex.props(styles.heading)}>受付可能な時間帯を指定</h2>
