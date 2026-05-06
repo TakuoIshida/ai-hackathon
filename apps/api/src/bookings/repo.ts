@@ -119,6 +119,41 @@ export async function findBookingsByOwner(
   }));
 }
 
+/**
+ * Returns a single booking by id IFF its parent link is owned by `ownerId`,
+ * joined with the link's slug + title (same shape as `findBookingsByOwner`).
+ * Used by GET /bookings/:id (ISH-254) so the detail screen can fetch one row
+ * directly instead of paging the whole list and filtering client-side.
+ *
+ * The `availabilityLinks.userId === ownerId` predicate enforces ownership at
+ * the SQL layer — even with RLS already filtering by tenant, we must still
+ * gate by primary owner here (other co-owners under the same tenant must
+ * not see each other's bookings via this endpoint). Mirrors the explicit
+ * ownership check in `cancelBookingByOwner`.
+ */
+export async function findOwnerBookingById(
+  database: Database,
+  ownerId: string,
+  bookingId: string,
+): Promise<OwnerBooking | null> {
+  const [row] = await database
+    .select({
+      booking: bookings,
+      linkSlug: availabilityLinks.slug,
+      linkTitle: availabilityLinks.title,
+    })
+    .from(bookings)
+    .innerJoin(availabilityLinks, eq(bookings.linkId, availabilityLinks.id))
+    .where(and(eq(bookings.id, bookingId), eq(availabilityLinks.userId, ownerId)))
+    .limit(1);
+  if (!row) return null;
+  return {
+    ...toBookingDomain(row.booking),
+    linkSlug: row.linkSlug,
+    linkTitle: row.linkTitle,
+  };
+}
+
 export async function findBookingByCancellationToken(
   database: Database,
   token: string,

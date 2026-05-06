@@ -47,18 +47,22 @@ export default function BookingDetail() {
   const tz = browserTz();
 
   const load = useCallback(async () => {
+    if (!id) {
+      setState({ status: "not_found" });
+      return;
+    }
     setState({ status: "loading" });
     try {
-      // The dedicated GET /bookings/:id endpoint isn't built yet — list+filter
-      // is the cheapest path and avoids inventing extra API surface here.
-      const { bookings } = await api.listBookings(() => getToken());
-      const found = bookings.find((b) => b.id === id);
-      if (!found) {
-        setState({ status: "not_found" });
-      } else {
-        setState({ status: "ok", booking: found });
-      }
+      // ISH-254: dedicated endpoint replaces the previous list+filter approach.
+      const { booking } = await api.getBooking(id, () => getToken());
+      setState({ status: "ok", booking });
     } catch (err) {
+      // 404 (missing or foreign booking) → dedicated empty state. Other errors
+      // bubble into the generic error view.
+      if (err instanceof ApiError && err.status === 404) {
+        setState({ status: "not_found" });
+        return;
+      }
       const message = err instanceof ApiError ? `${err.status} ${err.code}` : "failed to load";
       setState({ status: "error", message });
     }

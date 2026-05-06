@@ -17,13 +17,13 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     api: {
-      listBookings: vi.fn(),
+      getBooking: vi.fn(),
       cancelBooking: vi.fn(),
     },
   };
 });
 
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import BookingDetail from "./BookingDetail";
 
 const mockedApi = vi.mocked(api);
@@ -67,10 +67,8 @@ afterEach(() => {
 });
 
 describe("<BookingDetail />", () => {
-  test("displays the booking detail for the matching id", async () => {
-    mockedApi.listBookings.mockResolvedValue({
-      bookings: [futureBooking({ id: "b1" }), futureBooking({ id: "b2" })],
-    });
+  test("displays the booking detail fetched via getBooking(id)", async () => {
+    mockedApi.getBooking.mockResolvedValue({ booking: futureBooking({ id: "b1" }) });
 
     renderAt("b1");
 
@@ -81,6 +79,15 @@ describe("<BookingDetail />", () => {
     expect(
       screen.getByRole("link", { name: "https://meet.google.com/abc-defg-hij" }),
     ).toBeInTheDocument();
+    expect(mockedApi.getBooking).toHaveBeenCalledWith("b1", expect.any(Function));
+  });
+
+  test("renders the not_found empty state when the API returns 404", async () => {
+    mockedApi.getBooking.mockRejectedValue(new ApiError(404, "not_found", "404 Not Found"));
+
+    renderAt("missing-id");
+
+    expect(await screen.findByText("予約が見つかりません")).toBeInTheDocument();
   });
 
   test("cancel flow: confirm → API call → reload reflects canceled state", async () => {
@@ -90,9 +97,9 @@ describe("<BookingDetail />", () => {
       status: "canceled",
       canceledAt: new Date().toISOString(),
     };
-    mockedApi.listBookings
-      .mockResolvedValueOnce({ bookings: [confirmed] })
-      .mockResolvedValueOnce({ bookings: [canceled] });
+    mockedApi.getBooking
+      .mockResolvedValueOnce({ booking: confirmed })
+      .mockResolvedValueOnce({ booking: canceled });
     mockedApi.cancelBooking.mockResolvedValue({ ok: true });
 
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
