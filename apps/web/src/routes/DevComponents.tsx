@@ -3,6 +3,7 @@ import { Mail, Search } from "lucide-react";
 import * as React from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AvatarStack } from "@/components/ui/avatar-stack";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -337,6 +338,30 @@ export default function DevComponents() {
                   <AvatarFallback>LG</AvatarFallback>
                 </Avatar>
               </div>
+            </div>
+            <div {...stylex.props(styles.panel)}>
+              <p {...stylex.props(styles.panelLabel)}>AvatarStack</p>
+              <p {...stylex.props(styles.panelLabel)}>1名</p>
+              <AvatarStack members={[{ name: "山田 太郎", color: colors.blue200 }]} />
+              <p {...stylex.props(styles.panelLabel)}>3名</p>
+              <AvatarStack
+                members={[
+                  { name: "山田 太郎", color: colors.blue200 },
+                  { name: "佐藤 花子", color: colors.mint100 },
+                  { name: "鈴木 一郎", color: colors.amber100 },
+                ]}
+              />
+              <p {...stylex.props(styles.panelLabel)}>5名 (max=3 → +2)</p>
+              <AvatarStack
+                max={3}
+                members={[
+                  { name: "山田 太郎", color: colors.blue200 },
+                  { name: "佐藤 花子", color: colors.mint100 },
+                  { name: "鈴木 一郎", color: colors.amber100 },
+                  { name: "高橋 次郎", color: colors.rose100 },
+                  { name: "田中 三郎", color: colors.lilac100 },
+                ]}
+              />
             </div>
             <div {...stylex.props(styles.panel)}>
               <p {...stylex.props(styles.panelLabel)}>Badge</p>
