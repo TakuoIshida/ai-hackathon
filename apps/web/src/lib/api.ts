@@ -228,6 +228,17 @@ export const api = {
       getToken,
     }),
 
+  // ISH-256: change a tenant member's role (owner ↔ member). Owner-only on the
+  // server. Returns `{ ok: true }` (or `{ ok: true, noop: true }` when the
+  // requested role equals the current role). 409 last_owner blocks demoting
+  // the only remaining owner.
+  changeTenantMemberRole: (userId: string, role: MembershipRole, getToken: AuthTokenGetter) =>
+    request<{ ok: true; noop?: boolean }>(`/tenant/members/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+      getToken,
+    }),
+
   // ISH-239: issue a tenant invitation (owner only). The API accepts one
   // email per request, so the modal POSTs each chip in parallel and
   // aggregates per-email results.
@@ -239,6 +250,15 @@ export const api = {
     request<{ invitationId: string; token: string; expiresAt: string }>("/tenant/invitations", {
       method: "POST",
       body: JSON.stringify(input),
+      getToken,
+    }),
+
+  // ISH-256: revoke a still-open tenant invitation (owner only). Once an
+  // invitation has been accepted the row is preserved and cannot be
+  // revoked through this endpoint. 200 ok | 401 | 403 | 404 | 409 already_accepted.
+  revokeTenantInvitation: (invitationId: string, getToken: AuthTokenGetter) =>
+    request<{ ok: true }>(`/tenant/invitations/${encodeURIComponent(invitationId)}`, {
+      method: "DELETE",
       getToken,
     }),
 };

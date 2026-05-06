@@ -1,5 +1,12 @@
 import type { db as DbClient } from "@/db/client";
-import { findActiveMembersForTenant, findOpenInvitationsForTenant } from "./repo";
+import type { TenantMemberRole } from "@/db/schema/common";
+import {
+  countOwnersForTenant,
+  findActiveMembersForTenant,
+  findOpenInvitationsForTenant,
+  findTenantMember,
+  updateTenantMemberRole,
+} from "./repo";
 
 type Database = typeof DbClient;
 
@@ -84,4 +91,51 @@ export async function listTenantMembers(
   });
 
   return [...activeViews, ...inviteViews];
+}
+
+// ---------------------------------------------------------------------------
+// ISH-256: tenant-scope role change
+// ---------------------------------------------------------------------------
+
+/**
+ * Mirror of `workspaces/usecase.ts::changeMemberRole` but tenant-scoped.
+ *
+ * Caller authorization (owner-only) is performed at the route layer via
+ * `getTenantRole(c) === 'owner'` since `attachTenantContext` already resolved
+ * the caller's role for THIS tenant. We still re-validate the target row
+ * exists in this tenant before flipping the role.
+ *
+ * Rules:
+ *   - Target must be a member of the tenant; else `not_found`.
+ *   - If current role equals new role, returns `noop` (idempotent — the FE
+ *     can fire this without checking the current value).
+ *   - Demoting the only remaining owner → `last_owner`. The same guard
+ *     applies whether the caller demotes another owner or themselves.
+ */
+export type ChangeTenantMemberRoleResult =
+  | { kind: "ok" }
+  | { kind: "not_found" }
+  | { kind: "last_owner" }
+  | { kind: "noop" };
+
+export async function changeTenantMemberRole(
+  database: Database,
+  _callerUserId: string,
+  tenantId: string,
+  targetUserId: string,
+  newRole: TenantMemberRole,
+): Promise<ChangeTenantMemberRoleResult> {
+  const target = await findTenantMember(database, tenantId, targetUserId);
+  if (!target) return { kind: "not_found" };
+
+  if (target.role === newRole) return { kind: "noop" };
+
+  if (target.role === "owner" && newRole === "member") {
+    const owners = await countOwnersForTenant(database, tenantId);
+    if (owners <= 1) return { kind: "last_owner" };
+  }
+
+  const updated = await updateTenantMemberRole(database, tenantId, targetUserId, newRole);
+  if (!updated) return { kind: "not_found" };
+  return { kind: "ok" };
 }

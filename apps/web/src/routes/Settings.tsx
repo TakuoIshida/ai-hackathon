@@ -23,6 +23,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -39,10 +40,16 @@ import { StatCard } from "@/components/ui/stat-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
 import { ApiError, api, googleConnectUrl } from "@/lib/api";
-import { useRemoveTenantMemberMutation, useTenantMembersQuery } from "@/lib/queries";
+import {
+  useChangeTenantMemberRoleMutation,
+  useRemoveTenantMemberMutation,
+  useRevokeTenantInvitationMutation,
+  useTenantMembersQuery,
+} from "@/lib/queries";
 import type {
   GoogleCalendarSummary,
   GoogleConnection,
+  MembershipRole,
   TenantMemberStatus,
   TenantMemberView,
   WorkspaceRole,
@@ -565,10 +572,12 @@ function MemberRowView({
   const initial = memberInitial(member);
   const displayName = memberDisplayName(member);
 
-  // ISH-251 ガード: BE は確実に弾くが UX として無駄なクリックを見せない。
+  // ISH-251 / ISH-256 ガード: BE は確実に弾くが UX として無駄なクリックを見せない。
   const canManage = callerRole === "owner";
   const isSelf = callerUserId !== undefined && member.userId === callerUserId;
   const showActiveMenu = canManage && !isSelf && member.status === "active";
+  const showInvitationMenu =
+    canManage && (member.status === "pending" || member.status === "expired");
 
   return (
     <div className={rowStyle.className} style={rowStyle.style}>
@@ -617,27 +626,34 @@ function MemberRowView({
         {member.status === "active" ? formatJoinedAt(member.joinedAt) : "—"}
       </div>
       <div {...stylex.props(styles.rowActions)}>
+        {/* 再送 button is a P3-2 placeholder; the real handler ships separately. */}
         {member.status !== "active" && (
           <Button variant="outline" size="sm">
             再送
           </Button>
         )}
         {showActiveMenu && <RowActionMenu member={member} />}
+        {showInvitationMenu && <InvitationRowActionMenu member={member} />}
       </div>
     </div>
   );
 }
 
 /**
- * ISH-251: row-level actions for an active member (owner caller, not self).
+ * ISH-251 / ISH-256: row-level actions for an active member (owner caller,
+ * not self).
  *
- * 「権限を変更」 は近日対応 (placeholder)。「メンバーを削除」 は対象が
- * owner の場合 disabled + tooltip で抑制 — owner 委譲フローは別 issue。
+ * - 「権限を変更」(オーナー ⇄ メンバー): ISH-256。最後のオーナー降格は BE が
+ *   409 last_owner で弾くので、FE は friendly toast で対応。
+ * - 「メンバーを削除」: ISH-251。対象が owner の場合 disabled + tooltip で
+ *   抑制 (owner 削除は委譲フローを通すべきため別 issue)。
+ *
  * BE が確実に弾くため UX 装飾としてのガード。
  */
 function RowActionMenu({ member }: { member: TenantMemberView }) {
   const { toast } = useToast();
   const removeMutation = useRemoveTenantMemberMutation();
+  const changeRoleMutation = useChangeTenantMemberRoleMutation();
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const isOwnerTarget = member.role === "owner";
@@ -660,6 +676,40 @@ function RowActionMenu({ member }: { member: TenantMemberView }) {
     });
   };
 
+  const onChangeRole = () => {
+    if (!member.userId) return;
+    const nextRole: MembershipRole = member.role === "owner" ? "member" : "owner";
+    changeRoleMutation.mutate(
+      { userId: member.userId, role: nextRole },
+      {
+        onSuccess: () => {
+          toast({
+            title:
+              nextRole === "owner"
+                ? `${targetName} をオーナーに変更しました`
+                : `${targetName} をメンバーに変更しました`,
+            variant: "success",
+          });
+        },
+        onError: (err) => {
+          if (err instanceof ApiError && err.code === "last_owner") {
+            toast({
+              title: "最後のオーナーは降格できません",
+              description: "別のオーナーを追加してから再度お試しください。",
+              variant: "destructive",
+            });
+            return;
+          }
+          toast({
+            title: "権限の変更に失敗しました",
+            description: err instanceof ApiError ? err.code : "unknown_error",
+            variant: "destructive",
+          });
+        },
+      },
+    );
+  };
+
   return (
     <>
       <DropdownMenu>
@@ -674,7 +724,10 @@ function RowActionMenu({ member }: { member: TenantMemberView }) {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem disabled>権限を変更 (近日対応)</DropdownMenuItem>
+          <DropdownMenuItem onSelect={onChangeRole}>
+            {member.role === "owner" ? "メンバーに変更" : "オーナーに変更"}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="danger"
             disabled={isOwnerTarget}
@@ -717,6 +770,94 @@ function RowActionMenu({ member }: { member: TenantMemberView }) {
               disabled={removeMutation.isPending}
             >
               {removeMutation.isPending ? "削除中..." : "削除する"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/**
+ * ISH-256: row action menu for pending / expired invitation rows. The only
+ * action right now is 「招待を取消」; 再送 is wired separately (P3-2). The
+ * `id` from the listing is `inv:<invitationId>` — strip the prefix before
+ * calling the API.
+ */
+function InvitationRowActionMenu({ member }: { member: TenantMemberView }) {
+  const { toast } = useToast();
+  const revokeMutation = useRevokeTenantInvitationMutation();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const invitationId = member.id.startsWith("inv:") ? member.id.slice(4) : member.id;
+
+  const onConfirmRevoke = () => {
+    revokeMutation.mutate(invitationId, {
+      onSuccess: () => {
+        toast({
+          title: `${member.email} の招待を取り消しました`,
+          variant: "success",
+        });
+        setConfirmOpen(false);
+      },
+      onError: (err) => {
+        toast({
+          title: "招待の取り消しに失敗しました",
+          description: err instanceof ApiError ? err.code : "unknown_error",
+          variant: "destructive",
+        });
+      },
+    });
+  };
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label={`${member.email} の招待操作`}
+            data-testid={`invitation-row-actions-${member.email}`}
+          >
+            <MoreHorizontal size={14} />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem
+            variant="danger"
+            onSelect={() => {
+              setTimeout(() => setConfirmOpen(true), 0);
+            }}
+          >
+            招待を取り消す
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => !revokeMutation.isPending && setConfirmOpen(open)}
+      >
+        <DialogContent aria-describedby="invitation-revoke-desc" style={{ maxWidth: "28rem" }}>
+          <DialogTitle>招待を取り消す</DialogTitle>
+          <DialogDescription id="invitation-revoke-desc">
+            {member.email} 宛ての招待を取り消します。元に戻せません。
+          </DialogDescription>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setConfirmOpen(false)}
+              disabled={revokeMutation.isPending}
+            >
+              キャンセル
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={onConfirmRevoke}
+              disabled={revokeMutation.isPending}
+            >
+              {revokeMutation.isPending ? "取り消し中..." : "取り消す"}
             </Button>
           </DialogFooter>
         </DialogContent>

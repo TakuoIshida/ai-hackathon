@@ -467,6 +467,97 @@ describe("POST /invitations/:token/accept — acceptance flow", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// DELETE /tenant/invitations/:invitationId — revoke open invitation (ISH-256)
+// ---------------------------------------------------------------------------
+
+describe("DELETE /tenant/invitations/:invitationId — auth gate (ISH-256)", () => {
+  test("401 when not authenticated", async () => {
+    const res = await app.request("/tenant/invitations/some-id", { method: "DELETE" });
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("DELETE /tenant/invitations/:invitationId (ISH-256)", () => {
+  test("403 when caller is a member, not owner", async () => {
+    const { owner, tenant } = await seedOwnerAndTenant();
+    const inv = await seedInvitation(tenant.id, owner.id, { email: "x@example.com" });
+    const member = await seedMember(tenant.id);
+
+    const testApp = new Hono();
+    testApp.route(
+      "/tenant/invitations",
+      createTenantInvitationsRoute({
+        authMiddlewares: [fakeAuthWithDbUser(member), fakeTenantContext(tenant.id, "member")],
+      }),
+    );
+
+    const res = await testApp.request(`/tenant/invitations/${inv.id}`, { method: "DELETE" });
+    expect(res.status).toBe(403);
+  });
+
+  test("200 owner revokes an open invitation; row is gone", async () => {
+    const { owner, tenant } = await seedOwnerAndTenant();
+    const inv = await seedInvitation(tenant.id, owner.id, { email: "revoke@example.com" });
+
+    const testApp = new Hono();
+    testApp.route(
+      "/tenant/invitations",
+      createTenantInvitationsRoute({
+        authMiddlewares: [fakeAuthWithDbUser(owner), fakeTenantContext(tenant.id, "owner")],
+      }),
+    );
+
+    const res = await testApp.request(`/tenant/invitations/${inv.id}`, { method: "DELETE" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+
+    const rows = await testDb.select().from(invitations).where(eq(invitations.id, inv.id));
+    expect(rows).toHaveLength(0);
+  });
+
+  test("404 when the invitation does not belong to the caller's tenant", async () => {
+    const { owner, tenant } = await seedOwnerAndTenant();
+
+    const testApp = new Hono();
+    testApp.route(
+      "/tenant/invitations",
+      createTenantInvitationsRoute({
+        authMiddlewares: [fakeAuthWithDbUser(owner), fakeTenantContext(tenant.id, "owner")],
+      }),
+    );
+
+    const res = await testApp.request(`/tenant/invitations/${randomUUID()}`, { method: "DELETE" });
+    expect(res.status).toBe(404);
+  });
+
+  test("409 already_accepted when invitation has been accepted", async () => {
+    const { owner, tenant } = await seedOwnerAndTenant();
+    const inv = await seedInvitation(tenant.id, owner.id, {
+      email: "accepted@example.com",
+      acceptedAt: new Date(),
+    });
+
+    const testApp = new Hono();
+    testApp.route(
+      "/tenant/invitations",
+      createTenantInvitationsRoute({
+        authMiddlewares: [fakeAuthWithDbUser(owner), fakeTenantContext(tenant.id, "owner")],
+      }),
+    );
+
+    const res = await testApp.request(`/tenant/invitations/${inv.id}`, { method: "DELETE" });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("already_accepted");
+
+    // Row preserved for audit.
+    const rows = await testDb.select().from(invitations).where(eq(invitations.id, inv.id));
+    expect(rows).toHaveLength(1);
+  });
+});
+
 describe("GET /invitations/:token — public preview (ISH-208)", () => {
   test("200 returns workspace name + expired flag, but does NOT echo the invited email (anti-enumeration)", async () => {
     const { owner, tenant } = await seedOwnerAndTenant();
