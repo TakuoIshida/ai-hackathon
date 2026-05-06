@@ -29,6 +29,13 @@
       "when": 1777398000000,
       "tag": "0003_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1778457600000,
+      "tag": "0004_invitations-role",
+      "breakpoints": true
     }
   ]
 }

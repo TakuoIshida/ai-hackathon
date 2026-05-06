@@ -155,6 +155,44 @@ describe("invitations/usecase: createInvitation (ISH-176)", () => {
       .limit(1);
     expect(row[0]?.email).toBe("mixed@case.com");
   });
+
+  test("ISH-252: persists role='member' on the invitation row", async () => {
+    const owner = await seedUser();
+    const tenant = await seedTenant(owner.id);
+
+    const result = await createInvitation(db, tenant.id, owner.id, {
+      email: "member-invite@example.com",
+      role: "member",
+    });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+
+    const row = await testDb
+      .select({ role: invitations.role })
+      .from(invitations)
+      .where(eq(invitations.id, result.invitationId))
+      .limit(1);
+    expect(row[0]?.role).toBe("member");
+  });
+
+  test("ISH-252: persists role='owner' on the invitation row", async () => {
+    const owner = await seedUser();
+    const tenant = await seedTenant(owner.id);
+
+    const result = await createInvitation(db, tenant.id, owner.id, {
+      email: "owner-invite@example.com",
+      role: "owner",
+    });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+
+    const row = await testDb
+      .select({ role: invitations.role })
+      .from(invitations)
+      .where(eq(invitations.id, result.invitationId))
+      .limit(1);
+    expect(row[0]?.role).toBe("owner");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -166,6 +204,7 @@ describe("invitations/usecase: acceptInvitation (ISH-176)", () => {
     email?: string;
     expiresAt?: Date;
     acceptedAt?: Date | null;
+    role?: "owner" | "member";
   }) {
     const owner = await seedUser();
     const tenant = await seedTenant(owner.id);
@@ -177,6 +216,7 @@ describe("invitations/usecase: acceptInvitation (ISH-176)", () => {
         invitedByUserId: owner.id,
         expiresAt: opts?.expiresAt ?? new Date(Date.now() + 7 * 24 * 60 * 60_000),
         acceptedAt: opts?.acceptedAt ?? null,
+        role: opts?.role ?? "member",
       })
       .returning();
     if (!inv) throw new Error("seed: invitation insert failed");
@@ -207,6 +247,27 @@ describe("invitations/usecase: acceptInvitation (ISH-176)", () => {
     // Verify invitation is marked accepted
     const [inv] = await testDb.select().from(invitations).where(eq(invitations.id, invitation.id));
     expect(inv?.acceptedAt).not.toBeNull();
+  });
+
+  test("ISH-252: owner-role invitation creates an owner tenant_members row on accept", async () => {
+    const inviteeEmail = "new-owner@example.com";
+    const { invitation, tenant } = await seedInvitation({
+      email: inviteeEmail,
+      role: "owner",
+    });
+    const invitee = await seedUser(inviteeEmail);
+
+    const result = await acceptInvitation(db, invitee.id, invitee.email, invitation.token);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.tenantId).toBe(tenant.id);
+    expect(result.role).toBe("owner");
+
+    const [member] = await testDb
+      .select()
+      .from(tenantMembers)
+      .where(eq(tenantMembers.userId, invitee.id));
+    expect(member?.role).toBe("owner");
   });
 
   test("not_found: returns not_found for an unknown token", async () => {

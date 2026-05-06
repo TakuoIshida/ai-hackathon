@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { Hono, type MiddlewareHandler } from "hono";
 
 process.env.CLERK_SECRET_KEY ??= "sk_test_unit_test_stub";
@@ -219,6 +220,79 @@ describe("POST /tenant/invitations — validation and business logic", () => {
     expect(typeof body.invitationId).toBe("string");
     expect(body.token).toMatch(/^[0-9a-f-]{36}$/);
     expect(typeof body.expiresAt).toBe("string");
+  });
+
+  test("ISH-252: 201 persists role='owner' from request body to tenant.invitations.role", async () => {
+    const { owner, tenant } = await seedOwnerAndTenant();
+
+    const testApp = new Hono();
+    testApp.route(
+      "/tenant/invitations",
+      createTenantInvitationsRoute({
+        authMiddlewares: [fakeAuthWithDbUser(owner), fakeTenantContext(tenant.id)],
+      }),
+    );
+
+    const res = await testApp.request("/tenant/invitations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "new-owner@example.com", role: "owner" }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { invitationId: string };
+
+    const row = await testDb
+      .select({ role: invitations.role })
+      .from(invitations)
+      .where(eq(invitations.id, body.invitationId))
+      .limit(1);
+    expect(row[0]?.role).toBe("owner");
+  });
+
+  test("ISH-252: 201 defaults role to 'member' when omitted from request body", async () => {
+    const { owner, tenant } = await seedOwnerAndTenant();
+
+    const testApp = new Hono();
+    testApp.route(
+      "/tenant/invitations",
+      createTenantInvitationsRoute({
+        authMiddlewares: [fakeAuthWithDbUser(owner), fakeTenantContext(tenant.id)],
+      }),
+    );
+
+    const res = await testApp.request("/tenant/invitations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "default-role@example.com" }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { invitationId: string };
+
+    const row = await testDb
+      .select({ role: invitations.role })
+      .from(invitations)
+      .where(eq(invitations.id, body.invitationId))
+      .limit(1);
+    expect(row[0]?.role).toBe("member");
+  });
+
+  test("ISH-252: 400 when role is not in the allowed enum", async () => {
+    const { owner, tenant } = await seedOwnerAndTenant();
+
+    const testApp = new Hono();
+    testApp.route(
+      "/tenant/invitations",
+      createTenantInvitationsRoute({
+        authMiddlewares: [fakeAuthWithDbUser(owner), fakeTenantContext(tenant.id)],
+      }),
+    );
+
+    const res = await testApp.request("/tenant/invitations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "bad@example.com", role: "admin" }),
+    });
+    expect(res.status).toBe(400);
   });
 
   test("409 already_invited when open invitation exists for email", async () => {

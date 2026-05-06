@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
-import { tenantMembers, users } from "@/db/schema/common";
+import { type TenantMemberRole, tenantMembers, users } from "@/db/schema/common";
 import {
   findOpenInvitationByEmail,
   findOpenInvitationByToken,
@@ -20,13 +20,11 @@ const INVITE_TTL_MS = INVITE_TTL_DAYS * 24 * 60 * 60_000;
 export type CreateInvitationInput = {
   email: string;
   /**
-   * The requested role for the invitee.
-   * Note: the current tenant.invitations schema does not persist role, so this
-   * field is accepted for API compatibility and used as the default when
-   * accepting. The route stores the role in-memory and passes it to
-   * acceptInvitation. For now, role defaults to "member" at acceptance time.
+   * The requested role for the invitee. Persisted on tenant.invitations.role
+   * (ISH-252) and read back when the invitation is accepted, so an "owner"
+   * invite actually creates an owner tenant_members row.
    */
-  role: "owner" | "member";
+  role: TenantMemberRole;
 };
 
 export type CreateInvitationResult =
@@ -84,6 +82,7 @@ export async function createInvitation(
     email,
     invitedByUserId: inviterUserId,
     expiresAt,
+    role: input.role,
   });
 
   return { kind: "ok", invitationId: invitation.id, token: invitation.token, expiresAt };
@@ -94,7 +93,7 @@ export async function createInvitation(
 // ---------------------------------------------------------------------------
 
 export type AcceptInvitationResult =
-  | { kind: "ok"; tenantId: string; role: "owner" | "member" }
+  | { kind: "ok"; tenantId: string; role: TenantMemberRole }
   | { kind: "not_found" }
   | { kind: "expired" }
   | { kind: "already_accepted" }
@@ -165,9 +164,10 @@ export async function acceptInvitation(
     return { kind: "not_found" };
   }
 
-  // Since the tenant.invitations schema does not store role, all accepted
-  // invitations use "member" as the role. This is the expected default.
-  const role: "owner" | "member" = "member";
+  // ISH-252: read the persisted role from the invitation row. The DB-level
+  // CHECK constraint matches TENANT_MEMBER_ROLES (and the column has a
+  // default of 'member'), so this cast is safe.
+  const role = invitation.role as TenantMemberRole;
 
   await markInvitationAccepted(database, {
     invitationId: invitation.id,
