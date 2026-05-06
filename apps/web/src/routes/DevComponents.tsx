@@ -30,6 +30,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { EmailChipsInput } from "@/components/ui/email-chips-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -195,6 +196,17 @@ export default function DevComponents() {
   const [agreed, setAgreed] = React.useState(false);
   const [notify, setNotify] = React.useState(true);
   const [radio, setRadio] = React.useState("a");
+  const [emailsEmpty, setEmailsEmpty] = React.useState<string[]>([]);
+  const [emailsFilled, setEmailsFilled] = React.useState<string[]>([
+    "yamada@example.com",
+    "suzuki@example.com",
+    "tanaka@example.com",
+  ]);
+  const [emailsMixed, setEmailsMixed] = React.useState<string[]>([
+    "valid@example.com",
+    "broken-email",
+    "another@ok.com",
+  ]);
 
   return (
     <TooltipProvider>
@@ -277,6 +289,30 @@ export default function DevComponents() {
             <div {...stylex.props(styles.panel)}>
               <p {...stylex.props(styles.panelLabel)}>Textarea</p>
               <Textarea placeholder="メモ" />
+            </div>
+            <div {...stylex.props(styles.panel)}>
+              <p {...stylex.props(styles.panelLabel)}>EmailChipsInput — empty</p>
+              <EmailChipsInput
+                aria-label="emails-empty"
+                value={emailsEmpty}
+                onChange={setEmailsEmpty}
+              />
+            </div>
+            <div {...stylex.props(styles.panel)}>
+              <p {...stylex.props(styles.panelLabel)}>EmailChipsInput — filled</p>
+              <EmailChipsInput
+                aria-label="emails-filled"
+                value={emailsFilled}
+                onChange={setEmailsFilled}
+              />
+            </div>
+            <div {...stylex.props(styles.panel)}>
+              <p {...stylex.props(styles.panelLabel)}>EmailChipsInput — invalid 含む</p>
+              <EmailChipsInput
+                aria-label="emails-mixed"
+                value={emailsMixed}
+                onChange={setEmailsMixed}
+              />
             </div>
             <div {...stylex.props(styles.panel)}>
               <p {...stylex.props(styles.panelLabel)}>Select</p>
