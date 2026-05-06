@@ -1,14 +1,23 @@
 /**
- * /invite/:token/setup-calendar — Setup-complete 画面 (ISH-242 / O-03)
+ * /invite/:token/setup-calendar — Setup-complete 画面 (ISH-242 / ISH-255 / O-03)
  *
  * 招待受諾 → Google OAuth 完了後に表示される最終ステップ。
  * Spir 既存仕様の Artboard 9 (`/tmp/spir-design/artboards/setup-complete.jsx`)
  * を踏襲した 2-column layout (左: stepper + radio + callout + CTA / 右:
  * gradient + mini calendar preview)。
  *
- * 実装方針:
- *  - Google Calendar list API は実装フェーズ未着手。本 route は **mock データ**
- *    のみで動作させる (3 件固定: メイン / 仕事用 / 個人イベント)。
+ * ISH-255: mock の calendar 一覧を実 API (`api.getGoogleConnection`) に置換
+ * し、「セットアップを完了」 で選択した calendar の `usedForWrites=true` を
+ * `api.updateCalendarFlags` で永続化する。
+ *
+ * 動線確認 (BE 修正なし):
+ *   /google/callback (`apps/api/src/routes/google.ts`) は `attachTenantContext`
+ *   mount 配下なので tenant_members 行が存在する必要がある。AcceptInvite →
+ *   /onboarding/google flow では、Google OAuth リダイレクトに進む直前に
+ *   `apps/api/src/invitations/usecase.ts::acceptInvitation` が tenant_members
+ *   を INSERT 済み (本ファイル参照)。よって本画面が読み込まれる時点で
+ *   `/google/calendars` GET は 200 を返せる。
+ *
  *  - `<auth.SignedIn>` ガード越しに描画する (未サインインは /sign-in へ送る)。
  *  - 「セットアップを完了」ボタンで /availability-sharings へ遷移。AcceptInvite
  *    の成功遷移先と一致させ、O-02 → O-03 経由でも結局同じランディングに
@@ -19,14 +28,17 @@
  * 何もしない (artboard と同じ)。
  */
 import * as stylex from "@stylexjs/stylex";
-import { CheckCircle2, ChevronLeft, ChevronRight, Clock } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Clock } from "lucide-react";
 import * as React from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/ui/logo";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Stepper } from "@/components/ui/stepper";
+import { ApiError, api, googleConnectUrl } from "@/lib/api";
+import type { GoogleCalendarSummary, GoogleConnection } from "@/lib/types";
 import { colors, radius, shadow, space, typography } from "@/styles/tokens.stylex";
 
 // ---------------------------------------------------------------------------
@@ -41,27 +53,37 @@ const STEPS = [
 ] as const;
 
 // ---------------------------------------------------------------------------
-// Calendar list — 実 API 未連携のため mock。Google Calendar list の typical な
-// レスポンス形 (id / summary / backgroundColor / primary) を踏襲した形にして
-// おくと、後続 issue で API 差し替えが楽になる。
+// Calendar palette — 元 mock (青 / 緑 / 赤) を踏襲した固定パレット。API から
+// 帰ってきた calendar に index 順で割り当てる。Google 側の backgroundColor は
+// `getGoogleConnection` のレスポンスに含めていないので、安定した視覚識別の
+// ためのローカル割当で十分。
 // ---------------------------------------------------------------------------
-type CalendarOption = {
-  id: string;
-  name: string;
-  label: string;
-  color: string;
-};
+const CALENDAR_COLOR_PALETTE = [
+  "#1A73E8",
+  "#33B679",
+  "#D9695F",
+  "#8B7AB8",
+  "#D9A040",
+  "#4FB287",
+] as const;
+function calendarColorFor(index: number): string {
+  return CALENDAR_COLOR_PALETTE[index % CALENDAR_COLOR_PALETTE.length] ?? "#1A73E8";
+}
 
-const MOCK_CALENDARS: ReadonlyArray<CalendarOption> = [
-  {
-    id: "primary",
-    name: "suzuki@team.example.com",
-    label: "メイン (Google Calendar)",
-    color: "#1A73E8",
-  },
-  { id: "work", name: "仕事用カレンダー", label: "Google Calendar", color: "#33B679" },
-  { id: "personal", name: "個人イベント", label: "Google Calendar", color: "#D9695F" },
-];
+// ---------------------------------------------------------------------------
+// 初期選択 ロジック — usedForWrites=true の calendar があればそれを優先、
+// 無ければ isPrimary=true、それも無ければ最初の 1 件。calendars が空配列
+// なら null。
+// ---------------------------------------------------------------------------
+function pickInitialSelection(calendars: ReadonlyArray<GoogleCalendarSummary>): string | null {
+  if (calendars.length === 0) return null;
+  const writes = calendars.find((c) => c.usedForWrites);
+  if (writes) return writes.id;
+  const primary = calendars.find((c) => c.isPrimary);
+  if (primary) return primary.id;
+  // 上の 2 段がヒットしなければ calendars[0] が必ず存在する (上の length チェック)。
+  return calendars[0]?.id ?? null;
+}
 
 // ---------------------------------------------------------------------------
 // Mini calendar — 今日を含む週 (Mon〜Sun) の 7 日を返す。月初をまたぐと番号が
@@ -255,9 +277,47 @@ const styles = stylex.create({
   calloutSub: {
     fontSize: typography.fontSizeXs,
   },
+  // Error / not-connected callouts — failure 系は rose を使い、視覚的に
+  // 区別する。submit error は CTA 直上に出す。
+  errorCallout: {
+    backgroundColor: "#FCEBE8",
+    border: `1px solid ${colors.rose500}`,
+    borderRadius: "0.625rem",
+    padding: "0.875rem 1rem",
+    display: "flex",
+    gap: "0.75rem",
+    alignItems: "flex-start",
+    marginBottom: space.md,
+  },
+  errorCalloutText: {
+    fontSize: "0.8125rem",
+    color: colors.rose500,
+    lineHeight: 1.6,
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.125rem",
+  },
+  errorCalloutTitle: {
+    fontWeight: typography.fontWeightBold,
+  },
   // CTA は alignSelf: flex-start で artboard と揃える。
   ctaRow: {
     display: "flex",
+    alignItems: "center",
+    gap: space.sm,
+  },
+  retryButton: {
+    // Outline-like inline button to retry getGoogleConnection.
+  },
+  skeletonList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.625rem",
+    marginBottom: space.lg,
+  },
+  skeletonRow: {
+    height: "3.25rem",
+    borderRadius: "0.625rem",
   },
   // 右ペイン: blue gradient + dot pattern + 中央に white card。
   rightColumn: {
@@ -360,22 +420,32 @@ const styles = stylex.create({
 
 // ---------------------------------------------------------------------------
 // Sub-component: 1 つの calendar 行 (radio + color chip + label + badge)。
+// `name` は Google calendar の summary、無ければ google calendar id を使う。
 // ---------------------------------------------------------------------------
-function CalendarRow({ calendar, selected }: { calendar: CalendarOption; selected: boolean }) {
+function CalendarRow({
+  calendar,
+  color,
+  selected,
+}: {
+  calendar: GoogleCalendarSummary;
+  color: string;
+  selected: boolean;
+}) {
+  const name = calendar.summary ?? calendar.googleCalendarId;
   return (
     <label
       htmlFor={`cal-${calendar.id}`}
       {...stylex.props(styles.radioRow, selected && styles.radioRowSelected)}
     >
-      <RadioGroupItem id={`cal-${calendar.id}`} value={calendar.id} aria-label={calendar.name} />
+      <RadioGroupItem id={`cal-${calendar.id}`} value={calendar.id} aria-label={name} />
       <span
         aria-hidden="true"
         {...stylex.props(styles.colorChip)}
-        style={{ backgroundColor: calendar.color }}
+        style={{ backgroundColor: color }}
       />
       <div {...stylex.props(styles.rowMeta)}>
-        <div {...stylex.props(styles.rowName)}>{calendar.name}</div>
-        <div {...stylex.props(styles.rowLabel)}>{calendar.label}</div>
+        <div {...stylex.props(styles.rowName)}>{name}</div>
+        <div {...stylex.props(styles.rowLabel)}>Google Calendar</div>
       </div>
       {selected && (
         <span aria-hidden="true" {...stylex.props(styles.selectedBadge)}>
@@ -387,18 +457,63 @@ function CalendarRow({ calendar, selected }: { calendar: CalendarOption; selecte
 }
 
 // ---------------------------------------------------------------------------
+// Load state — 連携状態の取得 (loading / connected / not-connected / error)
+// に分かれた discriminated union。`connected` 時は calendars が必ず付く。
+// ---------------------------------------------------------------------------
+type LoadState =
+  | { kind: "loading" }
+  | { kind: "connected"; data: GoogleConnection }
+  | { kind: "not-connected" }
+  | { kind: "error"; message: string };
+
+// ---------------------------------------------------------------------------
 // Inner component (assumes signed-in)。
 // ---------------------------------------------------------------------------
 function SetupCompleteForm() {
   const navigate = useNavigate();
-  // primary をデフォルト選択。RadioGroup は controlled で持つ (テストで切替を
-  // 観察するため)。
-  const [selected, setSelected] = React.useState<string>(MOCK_CALENDARS[0].id);
+  const { getToken } = auth.useAuth();
+  const [loadState, setLoadState] = React.useState<LoadState>({ kind: "loading" });
+  const [selected, setSelected] = React.useState<string>("");
+  const [submitting, setSubmitting] = React.useState(false);
+  const [submitError, setSubmitError] = React.useState<string | null>(null);
   // `new Date()` を毎 render 呼ぶと無駄な再計算になるので memo。
   const week = React.useMemo(() => buildWeek(new Date()), []);
 
-  function onComplete() {
-    navigate("/availability-sharings", { replace: true });
+  const load = React.useCallback(async () => {
+    setLoadState({ kind: "loading" });
+    try {
+      const data = await api.getGoogleConnection(() => getToken());
+      if (!data.connected || data.calendars.length === 0) {
+        setLoadState({ kind: "not-connected" });
+        return;
+      }
+      const initial = pickInitialSelection(data.calendars);
+      // calendars.length > 0 を上で確認済みなので initial は必ず string。
+      // 念のため fallback で空文字を入れない (radio が controlled でなくなるため)。
+      setSelected(initial ?? data.calendars[0]?.id ?? "");
+      setLoadState({ kind: "connected", data });
+    } catch (err) {
+      const message = err instanceof ApiError ? `${err.status} ${err.code}` : "failed to load";
+      setLoadState({ kind: "error", message });
+    }
+  }, [getToken]);
+
+  React.useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function onComplete() {
+    if (!selected || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      await api.updateCalendarFlags(selected, { usedForWrites: true }, () => getToken());
+      navigate("/availability-sharings", { replace: true });
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "予期しないエラーが発生しました";
+      setSubmitError(message);
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -415,41 +530,129 @@ function SetupCompleteForm() {
           <p {...stylex.props(styles.description)}>
             Ripsで確定した予定の登録先となるカレンダーを選んでください。あとから変更できます。
           </p>
-          <RadioGroup
-            value={selected}
-            onValueChange={setSelected}
-            aria-label="登録先カレンダー"
-            {...stylex.props(styles.radioList)}
-          >
-            {MOCK_CALENDARS.map((c) => (
-              <CalendarRow key={c.id} calendar={c} selected={c.id === selected} />
-            ))}
-          </RadioGroup>
-          <div role="status" {...stylex.props(styles.callout)}>
-            <CheckCircle2
-              size={18}
-              color={colors.mint500}
-              style={{ marginTop: 1, flexShrink: 0 }}
-            />
-            <div {...stylex.props(styles.calloutText)}>
-              <span {...stylex.props(styles.calloutTitle)}>
-                Googleカレンダーの連携が完了しました
-              </span>
-              <span {...stylex.props(styles.calloutSub)}>
-                {MOCK_CALENDARS.length}件のカレンダーから空き時間を自動検出します
-              </span>
-            </div>
-          </div>
-          <div {...stylex.props(styles.ctaRow)}>
-            <Button
-              type="button"
-              size="lg"
-              onClick={onComplete}
-              rightIcon={<ChevronRight size={16} />}
+
+          {loadState.kind === "loading" && (
+            <div
+              {...stylex.props(styles.skeletonList)}
+              role="status"
+              aria-label="読み込み中"
+              aria-busy="true"
             >
-              セットアップを完了
-            </Button>
-          </div>
+              {[0, 1, 2].map((i) => (
+                <Skeleton key={i} {...stylex.props(styles.skeletonRow)} />
+              ))}
+            </div>
+          )}
+
+          {loadState.kind === "error" && (
+            <>
+              <div role="alert" {...stylex.props(styles.errorCallout)}>
+                <AlertTriangle
+                  size={18}
+                  color={colors.rose500}
+                  style={{ marginTop: 1, flexShrink: 0 }}
+                />
+                <div {...stylex.props(styles.errorCalloutText)}>
+                  <span {...stylex.props(styles.errorCalloutTitle)}>
+                    カレンダー一覧の読み込みに失敗しました
+                  </span>
+                  <span>{loadState.message}</span>
+                </div>
+              </div>
+              <div {...stylex.props(styles.ctaRow)}>
+                <Button type="button" variant="outline" onClick={() => void load()}>
+                  再試行
+                </Button>
+              </div>
+            </>
+          )}
+
+          {loadState.kind === "not-connected" && (
+            <>
+              <div role="alert" {...stylex.props(styles.errorCallout)}>
+                <AlertTriangle
+                  size={18}
+                  color={colors.rose500}
+                  style={{ marginTop: 1, flexShrink: 0 }}
+                />
+                <div {...stylex.props(styles.errorCalloutText)}>
+                  <span {...stylex.props(styles.errorCalloutTitle)}>
+                    Google アカウントが連携されていません
+                  </span>
+                  <span>
+                    続行するには Google
+                    アカウントを連携し、カレンダーへのアクセスを許可してください。
+                  </span>
+                </div>
+              </div>
+              <div {...stylex.props(styles.ctaRow)}>
+                <Button asChild size="lg" rightIcon={<ChevronRight size={16} />}>
+                  <a href={googleConnectUrl}>Google アカウントを連携</a>
+                </Button>
+              </div>
+            </>
+          )}
+
+          {loadState.kind === "connected" && (
+            <>
+              <RadioGroup
+                value={selected}
+                onValueChange={setSelected}
+                aria-label="登録先カレンダー"
+                {...stylex.props(styles.radioList)}
+              >
+                {loadState.data.calendars.map((c, i) => (
+                  <CalendarRow
+                    key={c.id}
+                    calendar={c}
+                    color={calendarColorFor(i)}
+                    selected={c.id === selected}
+                  />
+                ))}
+              </RadioGroup>
+              <div role="status" {...stylex.props(styles.callout)}>
+                <CheckCircle2
+                  size={18}
+                  color={colors.mint500}
+                  style={{ marginTop: 1, flexShrink: 0 }}
+                />
+                <div {...stylex.props(styles.calloutText)}>
+                  <span {...stylex.props(styles.calloutTitle)}>
+                    Googleカレンダーの連携が完了しました
+                  </span>
+                  <span {...stylex.props(styles.calloutSub)}>
+                    {loadState.data.calendars.length}件のカレンダーから空き時間を自動検出します
+                  </span>
+                </div>
+              </div>
+              {submitError && (
+                <div role="alert" {...stylex.props(styles.errorCallout)}>
+                  <AlertTriangle
+                    size={18}
+                    color={colors.rose500}
+                    style={{ marginTop: 1, flexShrink: 0 }}
+                  />
+                  <div {...stylex.props(styles.errorCalloutText)}>
+                    <span {...stylex.props(styles.errorCalloutTitle)}>
+                      セットアップに失敗しました
+                    </span>
+                    <span>{submitError}</span>
+                  </div>
+                </div>
+              )}
+              <div {...stylex.props(styles.ctaRow)}>
+                <Button
+                  type="button"
+                  size="lg"
+                  onClick={() => void onComplete()}
+                  loading={submitting}
+                  rightIcon={<ChevronRight size={16} />}
+                >
+                  セットアップを完了
+                </Button>
+              </div>
+            </>
+          )}
         </div>
 
         <div {...stylex.props(styles.rightColumn)} aria-hidden="true">
