@@ -96,6 +96,10 @@ export default function App() {
         />
       )}
 
+      {/* ISH-241: AcceptInvite はフルスクリーン Welcome layout を内包するので
+          PublicLayout の中央寄せ shell には乗せず、ルート直下に置く。 */}
+      <Route path="invite/:token" element={<AcceptInvite />} />
+
       {/* ISH-242 (O-03): Setup-complete 画面。AcceptInvite (O-02) → Google
           OAuth 完了後の遷移先。full-bleed の 2-column layout なので
           PublicLayout の中央寄せラッパーは経由させない。 */}
@@ -103,7 +107,6 @@ export default function App() {
 
       <Route element={<PublicLayout />}>
         <Route path="cancel/:token" element={<CancelBooking />} />
-        <Route path="invite/:token" element={<AcceptInvite />} />
         <Route path=":slug" element={<PublicLink />} />
       </Route>
 

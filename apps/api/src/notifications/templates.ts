@@ -212,33 +212,174 @@ export function guestReminderEmail(ctx: BookingNotificationContext): EmailMessag
   };
 }
 
-// ISH-108: workspace invitation email.
+// ISH-108 / ISH-243: workspace invitation email.
+//
+// The HTML body follows Artboard 6 (`/tmp/spir-design/artboards/invite-email.jsx`):
+// gradient circle with the Rips logo, headline, CTA button, expiry callout, and
+// "このあとの流れ" 3-step list. The layout uses tables + inline styles for
+// broad email-client compatibility (Gmail, Outlook, Apple Mail).
 export type WorkspaceInviteContext = {
   to: string;
   workspaceName: string;
   acceptUrl: string;
   expiresAt: Date;
+  /** Display name of the inviter (e.g. "Ishida T"). Optional — falls back to
+   * a generic line when omitted so older callers stay valid. */
+  inviterName?: string | null;
 };
+
+const INVITE_NEXT_STEPS: ReadonlyArray<readonly [string, string]> = [
+  ["Googleアカウントでログイン", "招待されたメールアドレスでログインしてください"],
+  ["Googleカレンダーへのアクセスを許可", "予定の表示と編集権限が必要です"],
+  ["セットアップ完了", "ワークスペースのメンバーとして空き時間調整を始められます"],
+] as const;
+
+/**
+ * Inline SVG for the Rips wordmark used inside the gradient circle.
+ * Mail clients vary in SVG support, so we only rely on it as a decorative
+ * accent on top of the gradient — the heading + body copy carry the actual
+ * branding when SVG is stripped.
+ */
+function inviteLogoSvg(): string {
+  // 38px tall mark — fits inside the 84px gradient circle with comfortable padding.
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="60" height="38" viewBox="0 0 60 38" role="img" aria-label="Rips" style="display:block">
+  <text x="0" y="30" font-family="Times New Roman, Hiragino Mincho ProN, serif" font-style="italic" font-weight="700" font-size="32" fill="#FFFFFF">Rips</text>
+</svg>`;
+}
 
 export function workspaceInviteEmail(ctx: WorkspaceInviteContext): EmailMessage {
   const expires = fmt(ctx.expiresAt, "Asia/Tokyo");
+  const inviter = ctx.inviterName?.trim() || null;
+  const lead = inviter
+    ? `${inviter} 様から、${ctx.workspaceName} に招待されました。下のボタンから招待を受諾し、Ripsの利用を開始してください。`
+    : `${ctx.workspaceName} に招待されました。下のボタンから招待を受諾し、Ripsの利用を開始してください。`;
+
   const text = [
-    `${ctx.workspaceName} へ招待されました`,
+    `【Rips】${ctx.workspaceName} に招待されました`,
     "",
-    `下記のリンクから参加してください:`,
+    lead,
+    "",
+    `招待を受諾する: ${ctx.acceptUrl}`,
+    "",
+    `この招待リンクは 24時間有効です (${expires} JST まで)。`,
+    "期限切れの場合は、招待元の方に再送をご依頼ください。",
+    "",
+    "このあとの流れ:",
+    ...INVITE_NEXT_STEPS.map(([t, d], i) => `  ${i + 1}. ${t} — ${d}`),
+    "",
+    "ボタンが反応しない場合は、こちらの URL をブラウザに貼り付けてください:",
     ctx.acceptUrl,
     "",
-    `有効期限: ${expires} (JST)`,
+    "このメールアドレスは送信専用のため、返信できませんのでご了承ください。",
   ].join("\n");
-  const html = `<!doctype html><html><body style="font-family:sans-serif">
-<h1 style="font-size:1.25rem">${escapeHtml(ctx.workspaceName)} へ招待されました</h1>
-<p>下記のリンクから参加してください:</p>
-<p><a href="${escapeHtml(ctx.acceptUrl)}">${escapeHtml(ctx.acceptUrl)}</a></p>
-<p style="font-size:0.875rem;color:#666">有効期限: ${escapeHtml(expires)} (JST)</p>
-</body></html>`;
+
+  const stepRows = INVITE_NEXT_STEPS.map(
+    ([t, d], i) => `
+              <tr>
+                <td valign="top" width="34" style="padding-bottom:10px">
+                  <div style="width:22px;height:22px;border-radius:50%;background:#2A6FA8;color:#FFFFFF;font:700 11px/22px sans-serif;text-align:center">${i + 1}</div>
+                </td>
+                <td valign="top" style="padding:0 0 10px 0">
+                  <div style="font:700 13px/1.4 sans-serif;color:#0E2F4D">${escapeHtml(t)}</div>
+                  <div style="font:400 12px/1.5 sans-serif;color:#5C7388;margin-top:2px">${escapeHtml(d)}</div>
+                </td>
+              </tr>`,
+  ).join("");
+
+  const html = `<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>${escapeHtml(ctx.workspaceName)} に招待されました</title>
+  </head>
+  <body style="margin:0;padding:0;background:#F5F5F4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Sans JP',sans-serif;color:#3C4043">
+    <div style="display:none;max-height:0;overflow:hidden;font-size:1px;line-height:1px;color:#F5F5F4">
+      ${escapeHtml(ctx.workspaceName)} に招待されました — 招待を受諾して Rips を始めましょう。
+    </div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F5F5F4">
+      <tr>
+        <td align="center" style="padding:24px 12px">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#FFFFFF;border-radius:12px;box-shadow:0 6px 20px rgba(42,111,168,0.08);overflow:hidden">
+            <tr>
+              <td style="padding:32px 40px 40px 40px">
+                <!-- Logo gradient circle -->
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td align="center" style="padding-bottom:24px">
+                      <div style="display:inline-block;width:84px;height:84px;border-radius:50%;background:linear-gradient(135deg,#C7DCEF 0%,#4F92BE 60%,#D9695F 130%);text-align:center;line-height:84px;box-shadow:0 6px 20px rgba(42,111,168,0.25)">
+                        <span style="display:inline-block;vertical-align:middle;line-height:1">${inviteLogoSvg()}</span>
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Headline -->
+                <h1 style="margin:0 0 8px 0;font:700 22px/1.4 sans-serif;color:#0E2F4D;text-align:center">
+                  ${escapeHtml(ctx.workspaceName)} に招待されました
+                </h1>
+                <p style="margin:0 0 28px 0;font:400 14px/1.7 sans-serif;color:#2C4258;text-align:center">
+                  ${
+                    inviter
+                      ? `<strong>${escapeHtml(inviter)}</strong> 様から、<strong>${escapeHtml(ctx.workspaceName)}</strong> に招待されました。<br/>下のボタンから招待を受諾し、Ripsの利用を開始してください。`
+                      : `<strong>${escapeHtml(ctx.workspaceName)}</strong> に招待されました。<br/>下のボタンから招待を受諾し、Ripsの利用を開始してください。`
+                  }
+                </p>
+
+                <!-- CTA -->
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td align="center" style="padding-bottom:24px">
+                      <a href="${escapeHtml(ctx.acceptUrl)}" style="display:inline-block;padding:14px 36px;border-radius:10px;background:#2A6FA8;color:#FFFFFF;font:700 15px/1 sans-serif;text-decoration:none;box-shadow:0 6px 20px rgba(42,111,168,0.35)">
+                        招待を受諾する
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Expiry callout -->
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F4F8FC;border:1px solid #DCE9F6;border-radius:10px;margin-bottom:20px">
+                  <tr>
+                    <td style="padding:14px 18px;font:400 13px/1.6 sans-serif;color:#0E2F4D">
+                      この招待リンクは <strong>24時間有効</strong> です (${escapeHtml(expires)} JST まで)。<br/>
+                      <span style="color:#2C4258;font-size:12px">期限切れの場合は、招待元の方に再送をご依頼ください。</span>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Next steps -->
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FAFBFD;border:1px solid #DDE4EC;border-radius:10px;margin-bottom:20px">
+                  <tr>
+                    <td style="padding:16px 20px">
+                      <div style="font:700 12px/1 sans-serif;color:#2C4258;margin-bottom:12px">このあとの流れ</div>
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${stepRows}
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Fallback URL -->
+                <p style="margin:0 0 20px 0;font:400 12px/1.6 sans-serif;color:#5C7388;text-align:center">
+                  ボタンが反応しない場合は、こちらの URL をブラウザに貼り付けてください<br/>
+                  <span style="color:#2A6FA8;word-break:break-all">${escapeHtml(ctx.acceptUrl)}</span>
+                </p>
+
+                <!-- Footer -->
+                <div style="border-top:1px solid #ECF1F6;padding-top:16px;font:400 11px/1.6 sans-serif;color:#8294A8;text-align:center">
+                  Rips · このメールアドレスは送信専用のため、返信できませんのでご了承ください。
+                </div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+
   return {
     to: ctx.to,
-    subject: `${ctx.workspaceName} への招待`,
+    subject: `【Rips】${ctx.workspaceName} に招待されました`,
     text,
     html,
   };
