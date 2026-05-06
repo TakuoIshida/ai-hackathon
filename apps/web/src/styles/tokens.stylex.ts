@@ -23,6 +23,42 @@ export const colors = stylex.defineVars({
   successFg: "#fafafa",
   warning: "#d97706",
   warningFg: "#fafafa",
+
+  // Pastel Blue palette (ISH-229) — Spir 系デザインの基調色。
+  // 既存の primary / accent / border 等は本 issue では値を維持する
+  // (後続 issue で意味マッピングを切替予定)。
+  blue50: "#F4F8FC",
+  blue100: "#E8F1FB",
+  blue150: "#DCE9F6",
+  blue200: "#C7DCEF",
+  blue300: "#A8C9E0",
+  blue400: "#7FB0D1",
+  blue500: "#4F92BE",
+  blue600: "#2A6FA8",
+  blue700: "#1F5A8E",
+  blue800: "#164772",
+  blue900: "#0E2F4D",
+  // Soft accents
+  mint100: "#E6F4EE",
+  mint500: "#4FB287",
+  rose100: "#FCEAE8",
+  rose500: "#D9695F",
+  amber100: "#FCF1DA",
+  amber500: "#D9A040",
+  lilac100: "#EFE9F7",
+  lilac500: "#8B7AB8",
+  // Ink scale (cool gray for text and borders)
+  ink50: "#F6F9FC",
+  ink100: "#ECF1F6",
+  ink200: "#DDE4EC",
+  ink300: "#B5C2D1",
+  ink400: "#8294A8",
+  ink500: "#5C7388",
+  ink700: "#2C4258",
+  ink900: "#0F2238",
+  // Surfaces
+  bgPage: "#F4F7FB",
+  bgSoft: "#EDF3FA",
 });
 
 // ---------------------------------------------------------------------------
@@ -82,6 +118,8 @@ export const shadow = stylex.defineVars({
   sm: "0 1px 2px rgba(0, 0, 0, 0.05)",
   md: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1)",
   lg: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1)",
+  // ISH-229: Pastel Blue 系の primary CTA に当てるソフトグロー。
+  blueGlow: "0 6px 20px rgba(42, 111, 168, 0.18)",
 });
 
 // ---------------------------------------------------------------------------
