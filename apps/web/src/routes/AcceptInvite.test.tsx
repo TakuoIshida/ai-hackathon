@@ -97,8 +97,43 @@ describe("<AcceptInvite />", () => {
       expired: false,
     });
     renderAt("good-token");
-    expect(await screen.findByRole("button", { name: "サインインして承認" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "テナントに参加" })).toBeNull();
+    expect(await screen.findByRole("button", { name: /サインインして承認/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /テナントに参加/ })).toBeNull();
+  });
+
+  test("welcome shell renders Logo, Stepper, team card, h1, and CTA (ISH-241)", async () => {
+    authMockState.isSignedIn = true;
+    mockedApi.getInvitation.mockResolvedValueOnce({
+      workspace: { name: "Acme" },
+      expired: false,
+    });
+    renderAt("good-token");
+
+    // h1 + welcome copy
+    expect(await screen.findByRole("heading", { name: "Ripsへようこそ" })).toBeInTheDocument();
+
+    // Logo (top bar + center hero) — Logo component renders [data-testid="logo"]
+    const logos = screen.getAllByTestId("logo");
+    expect(logos.length).toBeGreaterThanOrEqual(1);
+
+    // Stepper at current=0 → "招待を確認" is active
+    const activeItem = screen.getByText("招待を確認").closest("li");
+    expect(activeItem).toHaveAttribute("aria-current", "step");
+
+    // Team card with workspace name
+    const teamCard = screen.getByTestId("team-card");
+    expect(teamCard).toHaveTextContent("Acme");
+    expect(teamCard).toHaveTextContent("招待中");
+
+    // Expires line
+    expect(screen.getByTestId("expires-line")).toHaveTextContent(/残り/);
+
+    // Primary CTA (auth-side: テナントに参加)
+    expect(screen.getByRole("button", { name: /テナントに参加/ })).toBeInTheDocument();
+
+    // Legal links
+    expect(screen.getByRole("link", { name: "利用規約" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "プライバシーポリシー" })).toBeInTheDocument();
   });
 
   test("auth + accept: calls API and navigates to /dashboard", async () => {
@@ -119,7 +154,7 @@ describe("<AcceptInvite />", () => {
       },
     ]);
 
-    const joinBtn = await screen.findByRole("button", { name: "テナントに参加" });
+    const joinBtn = await screen.findByRole("button", { name: /テナントに参加/ });
     fireEvent.click(joinBtn);
 
     await waitFor(() =>
@@ -148,7 +183,7 @@ describe("<AcceptInvite />", () => {
       },
     ]);
 
-    const joinBtn = await screen.findByRole("button", { name: "テナントに参加" });
+    const joinBtn = await screen.findByRole("button", { name: /テナントに参加/ });
     fireEvent.click(joinBtn);
 
     await waitFor(() => expect(mockedApi.acceptTenantInvitation).toHaveBeenCalled());
@@ -170,7 +205,7 @@ describe("<AcceptInvite />", () => {
     );
 
     renderAt("good-token");
-    const joinBtn = await screen.findByRole("button", { name: "テナントに参加" });
+    const joinBtn = await screen.findByRole("button", { name: /テナントに参加/ });
     fireEvent.click(joinBtn);
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/404 not_found/));
@@ -187,7 +222,7 @@ describe("<AcceptInvite />", () => {
     );
 
     renderAt("good-token");
-    const joinBtn = await screen.findByRole("button", { name: "テナントに参加" });
+    const joinBtn = await screen.findByRole("button", { name: /テナントに参加/ });
     fireEvent.click(joinBtn);
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/410 expired/));

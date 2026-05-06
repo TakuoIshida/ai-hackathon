@@ -95,9 +95,12 @@ export default function App() {
         />
       )}
 
+      {/* ISH-241: AcceptInvite はフルスクリーン Welcome layout を内包するので
+          PublicLayout の中央寄せ shell には乗せず、ルート直下に置く。 */}
+      <Route path="invite/:token" element={<AcceptInvite />} />
+
       <Route element={<PublicLayout />}>
         <Route path="cancel/:token" element={<CancelBooking />} />
-        <Route path="invite/:token" element={<AcceptInvite />} />
         <Route path=":slug" element={<PublicLink />} />
       </Route>
 
