@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Logo } from "@/components/ui/logo";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Select,
@@ -238,6 +239,21 @@ export default function DevComponents() {
                 <div {...stylex.props(styles.shadowChip, styles.shadowSm)} />
                 <div {...stylex.props(styles.shadowChip, styles.shadowMd)} />
                 <div {...stylex.props(styles.shadowChip, styles.shadowLg)} />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Brand */}
+        <section {...stylex.props(styles.section)}>
+          <h2 {...stylex.props(styles.sectionTitle)}>Brand</h2>
+          <div {...stylex.props(styles.grid)}>
+            <div {...stylex.props(styles.panel)}>
+              <p {...stylex.props(styles.panelLabel)}>Logo — size</p>
+              <div {...stylex.props(styles.panelRow)}>
+                <Logo size="sm" />
+                <Logo size="md" />
+                <Logo size="lg" />
               </div>
             </div>
           </div>
