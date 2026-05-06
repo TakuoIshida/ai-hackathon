@@ -2,15 +2,20 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { ToastProvider } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api";
-import type { GoogleConnection } from "@/lib/types";
+import type { GoogleConnection, TenantMemberView } from "@/lib/types";
+import { TestQueryProvider } from "@/test/query-test-utils";
 
-// ISH-240: Settings now mounts <InviteMembersModal>, which calls useToast() at
-// the top of its body — every render must therefore be inside a ToastProvider.
+// ISH-240: Settings mounts <InviteMembersModal> (uses useToast). ISH-253:
+// Settings root mounts useTenantMembersQuery(), so we also need a
+// QueryClientProvider — TestQueryProvider gives a fresh client per render
+// with retry disabled.
 function renderSettings() {
   return render(
-    <ToastProvider>
-      <Settings />
-    </ToastProvider>,
+    <TestQueryProvider>
+      <ToastProvider>
+        <Settings />
+      </ToastProvider>
+    </TestQueryProvider>,
   );
 }
 
@@ -35,6 +40,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getGoogleConnection: vi.fn(),
       disconnectGoogle: vi.fn(),
       updateCalendarFlags: vi.fn(),
+      listTenantMembers: vi.fn(),
     },
   };
 });
@@ -43,6 +49,18 @@ import { api } from "@/lib/api";
 import Settings from "./Settings";
 
 const mockedApi = vi.mocked(api);
+
+// ISH-253: shared default for tests that don't care about the members
+// listing (basic info / Google connection tests). Resolves with an empty
+// list so useTenantMembersQuery() settles cleanly even when the assertion
+// targets another concern.
+function emptyMembers() {
+  return {
+    members: [] as TenantMemberView[],
+    callerRole: "owner" as const,
+    callerUserId: "u-self",
+  };
+}
 
 const calA = {
   id: "cal-A",
@@ -72,6 +90,11 @@ const connected = (overrides: Partial<GoogleConnection> = {}): GoogleConnection 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: members list is empty unless a specific test queues data.
+  // Without this, the query stays pending forever and re-renders triggered
+  // by other UI assertions (e.g. checkbox toggles) interleave with a
+  // never-resolving fetch.
+  mockedApi.listTenantMembers.mockResolvedValue(emptyMembers());
 });
 
 describe("<Settings /> calendar flag toggles (pessimistic)", () => {
@@ -257,5 +280,192 @@ describe("<Settings /> Google connection display", () => {
     const connectLink = await screen.findByRole("link", { name: /Google アカウントを連携/ });
     expect(connectLink).toBeInTheDocument();
     expect(connectLink.getAttribute("href")).toContain("/google/connect");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ISH-253: Members tab — useTenantMembersQuery() wired to api.listTenantMembers
+// ---------------------------------------------------------------------------
+
+const ownerMember: TenantMemberView = {
+  id: "u-owner",
+  userId: "u-owner",
+  email: "ishida@team.example.com",
+  name: "Ishida T",
+  role: "owner",
+  status: "active",
+  joinedAt: "2025-12-01T00:00:00.000Z",
+};
+
+const activeMember: TenantMemberView = {
+  id: "u-yamada",
+  userId: "u-yamada",
+  email: "yamada@team.example.com",
+  name: "山田 太郎",
+  role: "member",
+  status: "active",
+  joinedAt: "2026-02-03T00:00:00.000Z",
+};
+
+const pendingMember: TenantMemberView = {
+  id: "inv:abc123",
+  userId: null,
+  email: "suzuki@team.example.com",
+  name: null,
+  role: "member",
+  status: "pending",
+  joinedAt: "2026-05-01T00:00:00.000Z",
+  expiresIn: "残り 18 時間",
+};
+
+const expiredMember: TenantMemberView = {
+  id: "inv:def456",
+  userId: null,
+  email: "tanaka@team.example.com",
+  name: null,
+  role: "member",
+  status: "expired",
+  joinedAt: "2026-04-20T00:00:00.000Z",
+};
+
+function membersResponse(members: TenantMemberView[]) {
+  return { members, callerRole: "owner" as const, callerUserId: "u-owner" };
+}
+
+// Radix Tabs uses pointer events; happy-dom doesn't fire pointerDown from a
+// click. Drive mouseDown directly — same workaround as
+// `apps/web/src/components/ui/tabs.test.tsx`.
+function clickTab(name: RegExp | string) {
+  fireEvent.mouseDown(screen.getByRole("tab", { name }));
+}
+
+describe("<Settings /> Members tab (ISH-253)", () => {
+  test("renders rows from GET /tenant/members on the members tab", async () => {
+    mockedApi.getGoogleConnection.mockResolvedValue(connected());
+    mockedApi.listTenantMembers.mockResolvedValue(
+      membersResponse([ownerMember, activeMember, pendingMember, expiredMember]),
+    );
+
+    renderSettings();
+
+    clickTab(/^メンバー$/);
+
+    expect(await screen.findByText("Ishida T")).toBeInTheDocument();
+    expect(screen.getByText("山田 太郎")).toBeInTheDocument();
+    // Pending: name null → falls back to email as the display name. This makes
+    // the email appear twice (once as title, once in the email subtext), so
+    // we assert getAllByText finds two and look up the row via the unique
+    // expiresIn label below.
+    expect(screen.getAllByText("suzuki@team.example.com").length).toBe(2);
+    expect(screen.getAllByText("tanaka@team.example.com").length).toBe(2);
+    // Owner badge label.
+    expect(screen.getByText("オーナー")).toBeInTheDocument();
+    // expiresIn rendered for pending.
+    expect(screen.getByText("残り 18 時間")).toBeInTheDocument();
+    // Active member's joinedAt formatted YYYY/MM/DD; pending/expired show "—".
+    expect(screen.getByText("2026/02/03")).toBeInTheDocument();
+  });
+
+  test("shows skeleton placeholders while the query is in flight", async () => {
+    mockedApi.getGoogleConnection.mockResolvedValue(connected());
+    // Never-resolving promise — query stays in loading state for the assertion.
+    mockedApi.listTenantMembers.mockReturnValue(new Promise(() => {}));
+
+    renderSettings();
+
+    clickTab(/^メンバー$/);
+
+    // 3 skeleton rows are rendered with aria-hidden; the toolbar/table header
+    // is still visible. We assert no real member name has surfaced yet.
+    expect(screen.queryByText("Ishida T")).toBeNull();
+    expect(screen.queryByText("メンバーがいません")).toBeNull();
+    expect(screen.queryByText("該当するメンバーがいません")).toBeNull();
+  });
+
+  test("shows error card with retry when the query fails", async () => {
+    mockedApi.getGoogleConnection.mockResolvedValue(connected());
+    mockedApi.listTenantMembers.mockRejectedValue(
+      new ApiError(500, "internal_error", "500 internal_error"),
+    );
+
+    renderSettings();
+
+    clickTab(/^メンバー$/);
+
+    expect(await screen.findByText(/メンバーの読み込みに失敗しました/)).toBeInTheDocument();
+    expect(screen.getByText(/500 internal_error/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /再試行/ })).toBeInTheDocument();
+  });
+
+  test("search filter narrows by name or email substring", async () => {
+    mockedApi.getGoogleConnection.mockResolvedValue(connected());
+    mockedApi.listTenantMembers.mockResolvedValue(
+      membersResponse([ownerMember, activeMember, pendingMember]),
+    );
+
+    renderSettings();
+
+    clickTab(/^メンバー$/);
+
+    expect(await screen.findByText("Ishida T")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("メンバーを検索"), {
+      target: { value: "yamada" },
+    });
+
+    expect(screen.getByText("山田 太郎")).toBeInTheDocument();
+    expect(screen.queryByText("Ishida T")).toBeNull();
+    expect(screen.queryByText("suzuki@team.example.com")).toBeNull();
+  });
+
+  test("status filter narrows by active/pending/expired", async () => {
+    mockedApi.getGoogleConnection.mockResolvedValue(connected());
+    mockedApi.listTenantMembers.mockResolvedValue(
+      membersResponse([ownerMember, pendingMember, expiredMember]),
+    );
+
+    renderSettings();
+
+    clickTab(/^メンバー$/);
+
+    expect(await screen.findByText("Ishida T")).toBeInTheDocument();
+
+    // Click the status filter trigger and pick "招待中".
+    const triggers = screen.getAllByRole("combobox");
+    // First combobox is the members status filter (only one in MembersTab).
+    const statusFilter = triggers[triggers.length - 1];
+    if (!statusFilter) throw new Error("status filter not found");
+    fireEvent.click(statusFilter);
+
+    const pendingOption = await screen.findByRole("option", { name: /^招待中$/ });
+    fireEvent.click(pendingOption);
+
+    await waitFor(() => {
+      expect(screen.queryByText("Ishida T")).toBeNull();
+    });
+    // Pending row visible (email appears twice — display name fallback + sub).
+    expect(screen.getAllByText("suzuki@team.example.com").length).toBe(2);
+    // Expired row hidden by the filter.
+    expect(screen.queryByText("tanaka@team.example.com")).toBeNull();
+  });
+
+  test("stats cards reflect counts derived from the response", async () => {
+    mockedApi.getGoogleConnection.mockResolvedValue(connected());
+    mockedApi.listTenantMembers.mockResolvedValue(
+      membersResponse([ownerMember, activeMember, pendingMember, expiredMember]),
+    );
+
+    renderSettings();
+
+    clickTab(/^メンバー$/);
+
+    // Wait for the query to settle by waiting on a derived count (Pending tab
+    // shows " (1)" only after the response lands). Then assert the StatCard
+    // active count = 2 (ownerMember + activeMember).
+    expect(await screen.findByRole("tab", { name: /招待 \(1\)/ })).toBeInTheDocument();
+    // StatCard splits value and total into separate spans.
+    const totalSpan = screen.getByText("/ 10");
+    expect(totalSpan).toBeInTheDocument();
+    expect(totalSpan.previousElementSibling?.textContent).toBe("2");
   });
 });

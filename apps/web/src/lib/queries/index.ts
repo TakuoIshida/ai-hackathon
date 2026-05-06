@@ -7,3 +7,4 @@ export {
 } from "./links";
 export { queryClient } from "./queryClient";
 export { queryKeys } from "./queryKeys";
+export { useTenantMembersQuery } from "./tenantMembers";
