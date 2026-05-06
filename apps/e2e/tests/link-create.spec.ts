@@ -104,14 +104,18 @@ test.describe("link create → public URL renders slots", () => {
 
     // Drive the form.
     await page.goto("/availability-sharings/new");
-    await expect(page.getByRole("heading", { name: "新規リンク" })).toBeVisible();
+    // ISH-238: <h1>新規リンク</h1> was replaced by the LinkCreateLayout
+    // breadcrumb ("空き時間リンク › 新規作成"); assert the breadcrumb tail
+    // text instead. The submit button moved into the subnav and was renamed
+    // to "リンクを発行".
+    await expect(page.getByText("新規作成", { exact: true })).toBeVisible();
     await page.getByLabel("スラッグ (URL)").fill(SLUG);
     await page.getByLabel("タイトル").fill(TITLE);
     // Wait for slug availability check to settle so the submit isn't blocked.
     await expect(page.getByText("✓ 利用可能")).toBeVisible();
     // Make sure the link is published so the public URL doesn't 404.
     await page.getByLabel("このリンクを公開する").check();
-    await page.getByRole("button", { name: "作成" }).click();
+    await page.getByRole("button", { name: "リンクを発行" }).click();
 
     // After create the form navigates to /availability-sharings — the row we just
     // POSTed should be visible in the list.
