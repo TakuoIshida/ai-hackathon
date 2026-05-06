@@ -546,7 +546,7 @@ export default function AcceptInvite() {
     return (
       <ErrorShell
         title="招待の有効期限が切れています"
-        description="管理者に、新しい招待リンクの発行を依頼してください。"
+        description="オーナーに、新しい招待リンクの発行を依頼してください。"
       />
     );
   }
