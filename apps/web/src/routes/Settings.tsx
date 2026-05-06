@@ -1,5 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
-import { AlertTriangle, Mail, Search, UserPlus, Users } from "lucide-react";
+import { AlertTriangle, Mail, MoreHorizontal, Search, UserPlus, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { auth } from "@/auth";
 import { InviteMembersModal } from "@/components/team/InviteMembersModal";
@@ -12,6 +12,19 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -26,12 +39,13 @@ import { StatCard } from "@/components/ui/stat-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
 import { ApiError, api, googleConnectUrl } from "@/lib/api";
-import { useTenantMembersQuery } from "@/lib/queries";
+import { useRemoveTenantMemberMutation, useTenantMembersQuery } from "@/lib/queries";
 import type {
   GoogleCalendarSummary,
   GoogleConnection,
   TenantMemberStatus,
   TenantMemberView,
+  WorkspaceRole,
 } from "@/lib/types";
 import { colors, radius, space, typography } from "@/styles/tokens.stylex";
 
@@ -316,6 +330,8 @@ export default function Settings() {
   // pending count visible across tabs).
   const { data, isLoading, isError, error, refetch } = useTenantMembersQuery();
   const members = data?.members ?? [];
+  const callerRole = data?.callerRole;
+  const callerUserId = data?.callerUserId;
 
   const stats = useMemo(() => {
     const active = members.filter((m) => m.status === "active").length;
@@ -363,6 +379,8 @@ export default function Settings() {
               isError={isError}
               error={error}
               onRetry={() => refetch()}
+              callerRole={callerRole}
+              callerUserId={callerUserId}
             />
           </div>
         </TabsContent>
@@ -397,13 +415,15 @@ export default function Settings() {
 // Members tab
 // ---------------------------------------------------------------------------
 
-function MembersTab({
+export function MembersTab({
   members,
   stats,
   isLoading,
   isError,
   error,
   onRetry,
+  callerRole,
+  callerUserId,
 }: {
   members: TenantMemberView[];
   stats: { active: number; pending: number; expired: number };
@@ -411,6 +431,10 @@ function MembersTab({
   isError: boolean;
   error: unknown;
   onRetry: () => void;
+  /** From `GET /tenant/members` response. Undefined while loading. */
+  callerRole?: WorkspaceRole;
+  /** From `GET /tenant/members` response. Undefined while loading. */
+  callerUserId?: string;
 }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | TenantMemberStatus>("all");
@@ -515,7 +539,15 @@ function MembersTab({
 
           {isLoading && <MembersTableSkeleton />}
 
-          {!isLoading && filteredMembers.map((m) => <MemberRowView key={m.id} member={m} />)}
+          {!isLoading &&
+            filteredMembers.map((m) => (
+              <MemberRowView
+                key={m.id}
+                member={m}
+                callerRole={callerRole}
+                callerUserId={callerUserId}
+              />
+            ))}
 
           {!isLoading && filteredMembers.length === 0 && (
             <div {...stylex.props(styles.membersEmpty)}>
@@ -550,7 +582,15 @@ function MembersTableSkeleton() {
   );
 }
 
-function MemberRowView({ member }: { member: TenantMemberView }) {
+function MemberRowView({
+  member,
+  callerRole,
+  callerUserId,
+}: {
+  member: TenantMemberView;
+  callerRole?: WorkspaceRole;
+  callerUserId?: string;
+}) {
   const rowStyle = stylex.props(
     styles.membersTableRow,
     member.status === "expired" && styles.memberRowExpired,
@@ -558,6 +598,12 @@ function MemberRowView({ member }: { member: TenantMemberView }) {
   const color = memberColor(member.id);
   const initial = memberInitial(member);
   const displayName = memberDisplayName(member);
+
+  // ISH-251 ガード: BE は確実に弾くが UX として無駄なクリックを見せない。
+  const canManage = callerRole === "owner";
+  const isSelf = callerUserId !== undefined && member.userId === callerUserId;
+  const showActiveMenu = canManage && !isSelf && member.status === "active";
+
   return (
     <div className={rowStyle.className} style={rowStyle.style}>
       <div {...stylex.props(styles.memberMeta)}>
@@ -610,8 +656,106 @@ function MemberRowView({ member }: { member: TenantMemberView }) {
             再送
           </Button>
         )}
+        {showActiveMenu && <RowActionMenu member={member} />}
       </div>
     </div>
+  );
+}
+
+/**
+ * ISH-251: row-level actions for an active member (owner caller, not self).
+ *
+ * 「権限を変更」 は近日対応 (placeholder)。「メンバーを削除」 は対象が
+ * owner の場合 disabled + tooltip で抑制 — owner 委譲フローは別 issue。
+ * BE が確実に弾くため UX 装飾としてのガード。
+ */
+function RowActionMenu({ member }: { member: TenantMemberView }) {
+  const { toast } = useToast();
+  const removeMutation = useRemoveTenantMemberMutation();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const isOwnerTarget = member.role === "owner";
+  const removeDisabledReason = isOwnerTarget ? "オーナーを削除するには委譲が必要です" : undefined;
+
+  const targetName = member.name ?? member.email;
+
+  const onConfirmDelete = () => {
+    if (!member.userId) return;
+    removeMutation.mutate(member.userId, {
+      onSuccess: () => {
+        toast({ title: "削除しました", variant: "success" });
+        setConfirmOpen(false);
+      },
+      onError: (err) => {
+        const message =
+          err instanceof ApiError ? `${err.status} ${err.code}` : "削除に失敗しました";
+        toast({ title: "削除に失敗しました", description: message, variant: "destructive" });
+      },
+    });
+  };
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label={`${targetName} のアクション`}
+            data-testid={`member-row-actions-${member.email}`}
+          >
+            <MoreHorizontal size={14} />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem disabled>権限を変更 (近日対応)</DropdownMenuItem>
+          <DropdownMenuItem
+            variant="danger"
+            disabled={isOwnerTarget}
+            title={removeDisabledReason}
+            onSelect={(e) => {
+              if (isOwnerTarget) {
+                e.preventDefault();
+                return;
+              }
+              // Defer dialog open so the menu's close transition completes
+              // first; otherwise focus management collides.
+              setTimeout(() => setConfirmOpen(true), 0);
+            }}
+          >
+            メンバーを削除
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => !removeMutation.isPending && setConfirmOpen(open)}
+      >
+        <DialogContent aria-describedby="member-remove-desc" style={{ maxWidth: "28rem" }}>
+          <DialogTitle>メンバーを削除</DialogTitle>
+          <DialogDescription id="member-remove-desc">
+            {targetName} をワークスペースから削除します。元に戻せません。
+          </DialogDescription>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setConfirmOpen(false)}
+              disabled={removeMutation.isPending}
+            >
+              キャンセル
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={onConfirmDelete}
+              disabled={removeMutation.isPending}
+            >
+              {removeMutation.isPending ? "削除中..." : "削除する"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

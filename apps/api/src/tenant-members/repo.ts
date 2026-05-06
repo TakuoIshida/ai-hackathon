@@ -66,3 +66,41 @@ export async function findOpenInvitationsForTenant(
     .orderBy(asc(invitations.createdAt));
   return rows;
 }
+
+/**
+ * Single tenant_members row by (tenantId, userId). Used by ISH-251 削除 path
+ * to inspect the target's role before deleting (owner はガードで弾く)。
+ *
+ * common schema には RLS が無いので tenantId を必ず明示する。
+ */
+export async function findTenantMember(
+  database: Database,
+  tenantId: string,
+  userId: string,
+): Promise<{ userId: string; role: "owner" | "member" } | null> {
+  const [row] = await database
+    .select({ userId: tenantMembers.userId, role: tenantMembers.role })
+    .from(tenantMembers)
+    .where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.userId, userId)))
+    .limit(1);
+  if (!row) return null;
+  return { userId: row.userId, role: row.role as "owner" | "member" };
+}
+
+/**
+ * Deletes a (tenantId, userId) tenant_members row. Returns true if a row was
+ * deleted; false if no matching row existed (caller maps that to 404).
+ *
+ * common.users 行は別 tenant にも所属し得るのでそのまま残す (削除しない)。
+ */
+export async function removeTenantMember(
+  database: Database,
+  tenantId: string,
+  userId: string,
+): Promise<boolean> {
+  const deleted = await database
+    .delete(tenantMembers)
+    .where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.userId, userId)))
+    .returning({ id: tenantMembers.id });
+  return deleted.length > 0;
+}
