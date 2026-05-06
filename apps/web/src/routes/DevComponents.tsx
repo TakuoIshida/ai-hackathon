@@ -1,8 +1,9 @@
 import * as stylex from "@stylexjs/stylex";
-import { Mail, Search } from "lucide-react";
+import { AlertTriangle, Calendar, Clock, Globe, Link2, Mail, Search, Users } from "lucide-react";
 import * as React from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AvatarStack } from "@/components/ui/avatar-stack";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,10 +31,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { DurationPicker } from "@/components/ui/duration-picker";
+import { EmailChipsInput } from "@/components/ui/email-chips-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/ui/logo";
+import { PromoBanner } from "@/components/ui/promo-banner";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   Select,
   SelectContent,
@@ -44,6 +49,8 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { StatCard } from "@/components/ui/stat-card";
+import { Stepper } from "@/components/ui/stepper";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -93,6 +100,11 @@ const styles = stylex.create({
   grid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fill, minmax(14rem, 1fr))",
+    gap: space.md,
+  },
+  statGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(16rem, 1fr))",
     gap: space.md,
   },
   panel: {
@@ -196,6 +208,19 @@ export default function DevComponents() {
   const [agreed, setAgreed] = React.useState(false);
   const [notify, setNotify] = React.useState(true);
   const [radio, setRadio] = React.useState("a");
+  const [segMode, setSegMode] = React.useState<"calendar" | "form">("calendar");
+  const [duration, setDuration] = React.useState(30);
+  const [emailsEmpty, setEmailsEmpty] = React.useState<string[]>([]);
+  const [emailsFilled, setEmailsFilled] = React.useState<string[]>([
+    "yamada@example.com",
+    "suzuki@example.com",
+    "tanaka@example.com",
+  ]);
+  const [emailsMixed, setEmailsMixed] = React.useState<string[]>([
+    "valid@example.com",
+    "broken-email",
+    "another@ok.com",
+  ]);
 
   return (
     <TooltipProvider>
@@ -295,6 +320,30 @@ export default function DevComponents() {
               <Textarea placeholder="メモ" />
             </div>
             <div {...stylex.props(styles.panel)}>
+              <p {...stylex.props(styles.panelLabel)}>EmailChipsInput — empty</p>
+              <EmailChipsInput
+                aria-label="emails-empty"
+                value={emailsEmpty}
+                onChange={setEmailsEmpty}
+              />
+            </div>
+            <div {...stylex.props(styles.panel)}>
+              <p {...stylex.props(styles.panelLabel)}>EmailChipsInput — filled</p>
+              <EmailChipsInput
+                aria-label="emails-filled"
+                value={emailsFilled}
+                onChange={setEmailsFilled}
+              />
+            </div>
+            <div {...stylex.props(styles.panel)}>
+              <p {...stylex.props(styles.panelLabel)}>EmailChipsInput — invalid 含む</p>
+              <EmailChipsInput
+                aria-label="emails-mixed"
+                value={emailsMixed}
+                onChange={setEmailsMixed}
+              />
+            </div>
+            <div {...stylex.props(styles.panel)}>
               <p {...stylex.props(styles.panelLabel)}>Select</p>
               <Select defaultValue="tokyo">
                 <SelectTrigger>
@@ -333,6 +382,26 @@ export default function DevComponents() {
                 </div>
               </RadioGroup>
             </div>
+            <div {...stylex.props(styles.panel)}>
+              <p {...stylex.props(styles.panelLabel)}>SegmentedControl (ISH-238)</p>
+              <SegmentedControl
+                value={segMode}
+                onChange={setSegMode}
+                aria-label="入力モード"
+                options={[
+                  { value: "calendar", label: "カレンダーで選択" },
+                  { value: "form", label: "曜日×時間帯" },
+                ]}
+              />
+            </div>
+            <div {...stylex.props(styles.panel)}>
+              <p {...stylex.props(styles.panelLabel)}>DurationPicker (ISH-238)</p>
+              <DurationPicker
+                value={duration}
+                onChange={setDuration}
+                aria-label="所要時間 (sample)"
+              />
+            </div>
           </div>
         </section>
 
@@ -353,6 +422,30 @@ export default function DevComponents() {
                   <AvatarFallback>LG</AvatarFallback>
                 </Avatar>
               </div>
+            </div>
+            <div {...stylex.props(styles.panel)}>
+              <p {...stylex.props(styles.panelLabel)}>AvatarStack</p>
+              <p {...stylex.props(styles.panelLabel)}>1名</p>
+              <AvatarStack members={[{ name: "山田 太郎", color: colors.blue200 }]} />
+              <p {...stylex.props(styles.panelLabel)}>3名</p>
+              <AvatarStack
+                members={[
+                  { name: "山田 太郎", color: colors.blue200 },
+                  { name: "佐藤 花子", color: colors.mint100 },
+                  { name: "鈴木 一郎", color: colors.amber100 },
+                ]}
+              />
+              <p {...stylex.props(styles.panelLabel)}>5名 (max=3 → +2)</p>
+              <AvatarStack
+                max={3}
+                members={[
+                  { name: "山田 太郎", color: colors.blue200 },
+                  { name: "佐藤 花子", color: colors.mint100 },
+                  { name: "鈴木 一郎", color: colors.amber100 },
+                  { name: "高橋 次郎", color: colors.rose100 },
+                  { name: "田中 三郎", color: colors.lilac100 },
+                ]}
+              />
             </div>
             <div {...stylex.props(styles.panel)}>
               <p {...stylex.props(styles.panelLabel)}>Badge</p>
@@ -386,6 +479,17 @@ export default function DevComponents() {
               </CardFooter>
             </Card>
           </div>
+        </section>
+
+        {/* Marketing */}
+        <section {...stylex.props(styles.section)}>
+          <h2 {...stylex.props(styles.sectionTitle)}>Marketing</h2>
+          <PromoBanner
+            title="お試し期間中は空き時間リンクを無制限にご利用いただけます"
+            description="2026/05/25まで · チームメンバーを招待して、共催リンクも作成できます"
+            primaryAction={{ label: "プランについて" }}
+            secondaryAction={{ label: "詳細を見る" }}
+          />
         </section>
 
         {/* Feedback */}
@@ -476,6 +580,56 @@ export default function DevComponents() {
           </div>
         </section>
 
+        {/* Data */}
+        <section {...stylex.props(styles.section)}>
+          <h2 {...stylex.props(styles.sectionTitle)}>Data</h2>
+          <div {...stylex.props(styles.statGrid)}>
+            <StatCard
+              label="アクティブなリンク"
+              value={4}
+              sub="+1 今月"
+              icon={<Link2 size={18} />}
+              tone="blue"
+            />
+            <StatCard
+              label="今週のアクセス数"
+              value={270}
+              sub="+18% 先週比"
+              icon={<Globe size={18} />}
+              tone="mint"
+            />
+            <StatCard
+              label="予約済の予定"
+              value={29}
+              sub="今月"
+              icon={<Calendar size={18} />}
+              tone="lilac"
+            />
+            <StatCard
+              label="平均応答時間"
+              value="2.4h"
+              sub="リンク作成→予約"
+              icon={<Clock size={18} />}
+              tone="amber"
+            />
+            <StatCard
+              label="期限切れ招待"
+              value={1}
+              sub="再送が可能です"
+              icon={<AlertTriangle size={18} />}
+              tone="rose"
+            />
+            <StatCard
+              label="アクティブメンバー"
+              value={3}
+              total={10}
+              sub="プランの上限まであと 7名"
+              icon={<Users size={18} />}
+              tone="mint"
+            />
+          </div>
+        </section>
+
         {/* Navigation */}
         <section {...stylex.props(styles.section)}>
           <h2 {...stylex.props(styles.sectionTitle)}>Navigation</h2>
@@ -495,6 +649,36 @@ export default function DevComponents() {
               <p>Members content</p>
             </TabsContent>
           </Tabs>
+          <div {...stylex.props(styles.panel)}>
+            <p {...stylex.props(styles.panelLabel)}>Stepper</p>
+            <Stepper
+              steps={[
+                { label: "招待を確認" },
+                { label: "Googleでログイン" },
+                { label: "カレンダー連携" },
+                { label: "完了" },
+              ]}
+              current={0}
+            />
+            <Stepper
+              steps={[
+                { label: "招待を確認" },
+                { label: "Googleでログイン" },
+                { label: "カレンダー連携" },
+                { label: "完了" },
+              ]}
+              current={2}
+            />
+            <Stepper
+              steps={[
+                { label: "招待を確認" },
+                { label: "Googleでログイン" },
+                { label: "カレンダー連携" },
+                { label: "完了" },
+              ]}
+              current={3}
+            />
+          </div>
         </section>
       </main>
     </TooltipProvider>
