@@ -1,12 +1,19 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
+import { ToastProvider } from "@/components/ui/toast";
 
 vi.mock("@clerk/clerk-react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@clerk/clerk-react")>();
   return {
     ...actual,
     UserButton: () => <div data-testid="user-button" />,
+    useAuth: () => ({
+      isLoaded: true,
+      isSignedIn: true,
+      userId: "user_test",
+      getToken: async () => "test-token",
+    }),
   };
 });
 
@@ -15,14 +22,16 @@ import { DashboardLayout } from "./DashboardLayout";
 describe("<DashboardLayout />", () => {
   function renderAt(path: string) {
     return render(
-      <MemoryRouter initialEntries={[path]}>
-        <Routes>
-          <Route element={<DashboardLayout />}>
-            <Route path="/availability-sharings" element={<div>Links Page</div>} />
-            <Route path="/calendar" element={<div>Calendar Page</div>} />
-          </Route>
-        </Routes>
-      </MemoryRouter>,
+      <ToastProvider>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route element={<DashboardLayout />}>
+              <Route path="/availability-sharings" element={<div>Links Page</div>} />
+              <Route path="/calendar" element={<div>Calendar Page</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>,
     );
   }
 
@@ -68,12 +77,11 @@ describe("<DashboardLayout />", () => {
     expect(teamPicker).toHaveTextContent("チームアカウント");
   });
 
-  it("opens the invite modal placeholder when 招待 is clicked", () => {
+  it("opens the invite members modal when 招待 is clicked (ISH-239)", () => {
     renderAt("/availability-sharings");
-    expect(screen.queryByTestId("invite-modal-placeholder")).toBeNull();
+    expect(screen.queryByTestId("invite-members-modal")).toBeNull();
     fireEvent.click(screen.getByTestId("topnav-invite"));
-    const modal = screen.getByTestId("invite-modal-placeholder");
-    expect(modal).toBeInTheDocument();
-    expect(modal).toHaveTextContent(/TODO/);
+    expect(screen.getByTestId("invite-members-modal")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "メンバーを招待" })).toBeInTheDocument();
   });
 });

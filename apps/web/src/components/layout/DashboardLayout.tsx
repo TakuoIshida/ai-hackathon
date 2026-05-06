@@ -2,6 +2,7 @@ import * as stylex from "@stylexjs/stylex";
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { auth } from "@/auth";
+import { InviteMembersModal } from "@/components/team/InviteMembersModal";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -149,50 +150,6 @@ const styles = stylex.create({
     fontSize: "0.625rem",
     color: colors.ink500,
   },
-  inviteModalBackdrop: {
-    position: "fixed",
-    inset: 0,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(15, 34, 56, 0.4)",
-    zIndex: 1300,
-  },
-  inviteModal: {
-    minWidth: "20rem",
-    padding: space.xl,
-    backgroundColor: colors.bg,
-    borderRadius: radius.lg,
-    border: `1px solid ${colors.border}`,
-    fontFamily: typography.fontFamilySans,
-  },
-  inviteModalTitle: {
-    margin: 0,
-    fontSize: typography.fontSizeLg,
-    fontWeight: typography.fontWeightSemibold,
-    color: colors.fg,
-  },
-  inviteModalBody: {
-    marginTop: space.md,
-    fontSize: typography.fontSizeSm,
-    color: colors.muted,
-  },
-  inviteModalActions: {
-    marginTop: space.lg,
-    display: "flex",
-    justifyContent: "flex-end",
-  },
-  inviteModalClose: {
-    paddingInline: space.md,
-    paddingBlock: space.xs,
-    fontSize: typography.fontSizeSm,
-    fontWeight: typography.fontWeightMedium,
-    color: colors.fg,
-    backgroundColor: { default: colors.ink100, ":hover": colors.ink200 },
-    border: `1px solid ${colors.ink200}`,
-    borderRadius: radius.md,
-    cursor: "pointer",
-  },
   main: {
     flex: 1,
     padding: space.xl,
@@ -293,8 +250,7 @@ function ChevronDownIcon() {
 }
 
 export function DashboardLayout() {
-  // 招待モーダル開閉。実体は M-02 (ISH-239) で実装する。本 issue では
-  // trigger の wire up と placeholder のみ。
+  // 招待モーダル開閉。実体は InviteMembersModal (ISH-239) で実装済み。
   const [inviteOpen, setInviteOpen] = useState(false);
   const activeTeam = mockTeams[0];
 
@@ -351,7 +307,6 @@ export function DashboardLayout() {
             <button
               type="button"
               data-testid="topnav-invite"
-              // TODO(ISH-239 / M-02): wire up to invite modal.
               onClick={() => setInviteOpen(true)}
               {...stylex.props(styles.inviteButton)}
             >
@@ -390,33 +345,11 @@ export function DashboardLayout() {
         <main {...stylex.props(styles.main)}>
           <Outlet />
         </main>
-        {inviteOpen ? (
-          <div
-            data-testid="invite-modal-placeholder"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="invite-modal-title"
-            {...stylex.props(styles.inviteModalBackdrop)}
-          >
-            <div {...stylex.props(styles.inviteModal)}>
-              <h2 id="invite-modal-title" {...stylex.props(styles.inviteModalTitle)}>
-                招待モーダル (TODO: ISH-239)
-              </h2>
-              <p {...stylex.props(styles.inviteModalBody)}>
-                M-02 で本実装予定。今は trigger の wire up のみ。
-              </p>
-              <div {...stylex.props(styles.inviteModalActions)}>
-                <button
-                  type="button"
-                  onClick={() => setInviteOpen(false)}
-                  {...stylex.props(styles.inviteModalClose)}
-                >
-                  閉じる
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
+        <InviteMembersModal
+          open={inviteOpen}
+          onOpenChange={setInviteOpen}
+          teamName={activeTeam?.name ?? ""}
+        />
       </div>
     </TooltipProvider>
   );
