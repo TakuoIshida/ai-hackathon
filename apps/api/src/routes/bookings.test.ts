@@ -11,7 +11,7 @@ import { type BookingsRouteDeps, createBookingsRoute } from "@/routes/bookings";
 import { buildTestGooglePort } from "@/test/booking-ports";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { ensureUserByClerkId } from "@/users/usecase";
-import { buildLinkLookupPort, buildUserLookupPort } from "@/wiring";
+import { buildLinkAvailabilityPort, buildLinkLookupPort, buildUserLookupPort } from "@/wiring";
 
 const TZ = "Asia/Tokyo";
 
@@ -33,6 +33,8 @@ function buildNoGoogleDeps(): Omit<BookingsRouteDeps, "authMiddlewares"> {
   return {
     google: null,
     links: buildLinkLookupPort(db),
+    // ISH-270: reschedule re-check uses the rules grid only (no busy merge).
+    availability: buildLinkAvailabilityPort(db, null),
     users: buildUserLookupPort(db),
     notifier: captureNotifier(),
   };
@@ -760,5 +762,164 @@ describe("DELETE /bookings/:id (owner cancel)", () => {
     const [row] = await testDb.select().from(bookings).where(eq(bookings.id, bookingId));
     expect(row?.status).toBe("canceled");
     expect(row?.canceledAt).not.toBeNull();
+  });
+});
+
+describe("POST /bookings/:id/reschedule (ISH-270)", () => {
+  // Far-future Monday so the slot is always in the future regardless of when
+  // the suite runs. Both ORIGINAL and NEW fall inside Mon-Fri 9-17 JST.
+  const ORIGINAL_START_ISO = "2026-12-14T05:00:00.000Z"; // Mon 14:00 JST
+  const NEW_START_ISO = "2026-12-14T06:00:00.000Z"; // Mon 15:00 JST
+  const NEW_END_ISO = "2026-12-14T06:30:00.000Z";
+
+  async function seedRules(tenantId: string, linkId: string): Promise<void> {
+    const { availabilityRules } = await import("@/db/schema");
+    await testDb.insert(availabilityRules).values(
+      [1, 2, 3, 4, 5].map((weekday) => ({
+        tenantId,
+        linkId,
+        weekday,
+        startMinute: 9 * 60,
+        endMinute: 17 * 60,
+      })),
+    );
+  }
+
+  // Bump rangeDays so the far-future test slot stays inside the link's
+  // booking horizon — `seedLink` uses the schema default of 60 days, which
+  // is far closer than our fixed 2026-12-14 anchor.
+  async function seedLinkWithFarHorizon(
+    tenantId: string,
+    userId: string,
+    slug: string,
+  ): Promise<SeededLink> {
+    const link = await seedLink(tenantId, userId, slug);
+    await testDb
+      .update(availabilityLinks)
+      .set({ rangeDays: 3650 })
+      .where(eq(availabilityLinks.id, link.linkId));
+    return link;
+  }
+
+  test("401 when no auth header is present", async () => {
+    const app = buildApp();
+    const res = await app.request("/bookings/some-id/reschedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ startAt: NEW_START_ISO, endAt: NEW_END_ISO }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("200 reschedules the authed user's own booking and returns updated booking", async () => {
+    const tenantId = await seedTenant();
+    const owner = await seedUser("owner");
+    const link = await seedLinkWithFarHorizon(tenantId, owner.userId, "owner-link");
+    await seedRules(tenantId, link.linkId);
+    const bookingId = await seedConfirmedBooking(tenantId, link.linkId, {
+      startAt: new Date(ORIGINAL_START_ISO),
+    });
+
+    const app = buildApp();
+    const res = await app.request(`/bookings/${bookingId}/reschedule`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-clerk-id": owner.externalId,
+      },
+      body: JSON.stringify({ startAt: NEW_START_ISO, endAt: NEW_END_ISO }),
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { booking: { startAt: string; endAt: string } };
+    expect(json.booking.startAt).toBe(NEW_START_ISO);
+    expect(json.booking.endAt).toBe(NEW_END_ISO);
+
+    const [row] = await testDb.select().from(bookings).where(eq(bookings.id, bookingId));
+    expect(row?.startAt.toISOString()).toBe(NEW_START_ISO);
+    expect(row?.endAt.toISOString()).toBe(NEW_END_ISO);
+    expect(sentEmails.length).toBe(2);
+    for (const e of sentEmails) expect(e.subject).toContain("予約変更");
+  });
+
+  test("404 when booking belongs to another user (no info-leak)", async () => {
+    const tenantId = await seedTenant();
+    const me = await seedUser("me");
+    const other = await seedUser("other");
+    const otherLink = await seedLinkWithFarHorizon(tenantId, other.userId, "other-link");
+    await seedRules(tenantId, otherLink.linkId);
+    const bookingId = await seedConfirmedBooking(tenantId, otherLink.linkId, {
+      startAt: new Date(ORIGINAL_START_ISO),
+    });
+
+    const app = buildApp();
+    const res = await app.request(`/bookings/${bookingId}/reschedule`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-clerk-id": me.externalId },
+      body: JSON.stringify({ startAt: NEW_START_ISO, endAt: NEW_END_ISO }),
+    });
+    expect(res.status).toBe(404);
+    const [row] = await testDb.select().from(bookings).where(eq(bookings.id, bookingId));
+    expect(row?.startAt.toISOString()).toBe(ORIGINAL_START_ISO);
+    expect(sentEmails.length).toBe(0);
+  });
+
+  test("422 availability_violation when new slot falls outside the link rules", async () => {
+    const tenantId = await seedTenant();
+    const owner = await seedUser("owner");
+    const link = await seedLinkWithFarHorizon(tenantId, owner.userId, "owner-link");
+    await seedRules(tenantId, link.linkId);
+    const bookingId = await seedConfirmedBooking(tenantId, link.linkId, {
+      startAt: new Date(ORIGINAL_START_ISO),
+    });
+
+    const app = buildApp();
+    const res = await app.request(`/bookings/${bookingId}/reschedule`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-clerk-id": owner.externalId },
+      body: JSON.stringify({
+        // Sunday 2026-12-13 — outside the Mon-Fri windows.
+        startAt: "2026-12-13T05:00:00.000Z",
+        endAt: "2026-12-13T05:30:00.000Z",
+      }),
+    });
+    expect(res.status).toBe(422);
+    const json = (await res.json()) as { error?: string };
+    expect(json.error).toBe("availability_violation");
+  });
+
+  test("422 not_reschedulable when booking is already canceled", async () => {
+    const tenantId = await seedTenant();
+    const owner = await seedUser("owner");
+    const link = await seedLinkWithFarHorizon(tenantId, owner.userId, "owner-link");
+    await seedRules(tenantId, link.linkId);
+    const bookingId = await seedConfirmedBooking(tenantId, link.linkId, {
+      startAt: new Date(ORIGINAL_START_ISO),
+    });
+    await testDb
+      .update(bookings)
+      .set({ status: "canceled", canceledAt: new Date() })
+      .where(eq(bookings.id, bookingId));
+
+    const app = buildApp();
+    const res = await app.request(`/bookings/${bookingId}/reschedule`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-clerk-id": owner.externalId },
+      body: JSON.stringify({ startAt: NEW_START_ISO, endAt: NEW_END_ISO }),
+    });
+    expect(res.status).toBe(422);
+    const json = (await res.json()) as { error?: string };
+    expect(json.error).toBe("not_reschedulable");
+  });
+
+  test("400 when body is missing or malformed", async () => {
+    const owner = await seedUser("owner");
+    const app = buildApp();
+    // missing endAt
+    const res = await app.request("/bookings/abc/reschedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-clerk-id": owner.externalId },
+      body: JSON.stringify({ startAt: NEW_START_ISO }),
+    });
+    expect(res.status).toBe(400);
   });
 });

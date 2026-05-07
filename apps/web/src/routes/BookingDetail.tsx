@@ -14,6 +14,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { auth } from "@/auth";
+import { RescheduleModal } from "@/components/booking/RescheduleModal";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,7 +26,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useToast } from "@/components/ui/toast";
 import { ApiError, api } from "@/lib/api";
 import { formatLocalDate, formatLocalTime } from "@/lib/local-date";
 import type { BookingSummary } from "@/lib/types";
@@ -163,9 +164,11 @@ type LoadState =
 export default function BookingDetail() {
   const { getToken } = auth.useAuth();
   const { id } = useParams<{ id: string }>();
+  const { toast } = useToast();
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [canceling, setCanceling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
   const tz = browserTz();
 
   const load = useCallback(async () => {
@@ -428,25 +431,67 @@ export default function BookingDetail() {
       {cancelable && (
         <Card>
           <CardFooter>
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  {/* span ラッパで disabled button にも tooltip を出せる */}
-                  <span style={{ display: "inline-block" }}>
-                    <Button variant="outline" disabled>
-                      リスケ
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>近日対応</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <Button variant="outline" onClick={() => setRescheduleOpen(true)}>
+              リスケ
+            </Button>
             <Button variant="destructive" onClick={onCancel} disabled={canceling}>
               {canceling ? "キャンセル中..." : "予約をキャンセル"}
             </Button>
           </CardFooter>
         </Card>
       )}
+
+      {cancelable && (
+        <RescheduleModal
+          open={rescheduleOpen}
+          onOpenChange={setRescheduleOpen}
+          linkSlug={b.linkSlug}
+          currentStartAt={b.startAt}
+          currentEndAt={b.endAt}
+          onConfirm={async ({ startAt, endAt }) => {
+            try {
+              await api.rescheduleBooking(b.id, { startAt, endAt }, () => getToken());
+              toast({
+                title: "予約をリスケジュールしました",
+                description: `${formatLocalDate(startAt, tz)} ${formatLocalTime(startAt, tz)} に変更しました。`,
+                variant: "success",
+              });
+              await load();
+            } catch (err) {
+              const message =
+                err instanceof ApiError
+                  ? mapRescheduleError(err)
+                  : "リスケジュールに失敗しました。";
+              // Re-throw so the modal surfaces the error inline. Toast is the
+              // success-side channel; failures stay attached to the picker so
+              // the user can pick a different slot without re-opening.
+              throw new Error(message);
+            }
+          }}
+        />
+      )}
     </div>
   );
+}
+
+/**
+ * Translate the BE's error codes into user-facing copy. Mirrors the cancel
+ * route's policy of surfacing typed codes for the cases the FE can act on
+ * (slot conflict, availability) and falling back to a generic message
+ * otherwise.
+ */
+function mapRescheduleError(err: ApiError): string {
+  if (err.status === 409 && err.code === "slot_already_booked") {
+    return "この時間枠は既に予約されています。別の時間を選んでください。";
+  }
+  if (err.status === 422 && err.code === "availability_violation") {
+    return "選択した時間はこのリンクの公開時間外です。";
+  }
+  if (err.status === 422 && err.code === "not_reschedulable") {
+    return "この予約は現在の状態ではリスケできません。";
+  }
+  if (err.status === 404) {
+    return "予約が見つかりませんでした。";
+  }
+  return `${err.status} ${err.code}`;
 }

@@ -51,6 +51,21 @@ export type EventDeleteInput = {
   eventId: string;
 };
 
+// ISH-270: reschedule patches start/end on an existing Calendar event.
+export type EventPatchInput = {
+  accessToken: string;
+  calendarId: string;
+  eventId: string;
+  startMs: number;
+  endMs: number;
+  timeZone: string;
+};
+
+export type PatchedEvent = {
+  id: string;
+  htmlLink?: string;
+};
+
 /**
  * Single port for the Google integration surface used by feature usecases.
  *
@@ -78,4 +93,10 @@ export type GooglePort = {
   createEvent(input: EventCreateInput): Promise<CreatedEvent>;
   /** Delete an event. Adapters treat 404/410 as success. */
   deleteEvent(input: EventDeleteInput): Promise<void>;
+  /**
+   * Patch an event's start/end (ISH-270 reschedule). Only the time fields are
+   * sent so any edits the host made to summary / attendees stay intact. The
+   * adapter throws on non-2xx; usecases wrap the call in try/catch (best-effort).
+   */
+  patchEvent(input: EventPatchInput): Promise<PatchedEvent>;
 };

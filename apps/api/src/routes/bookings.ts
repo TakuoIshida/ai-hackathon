@@ -3,6 +3,8 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import { type CancelBookingPorts, cancelBookingByOwner } from "@/bookings/cancel";
 import { buildBookingsCsvFilename, formatBookingsCsv } from "@/bookings/csv";
+import { type RescheduleBookingPorts, rescheduleBooking } from "@/bookings/reschedule";
+import { rescheduleInputSchema, toRescheduleBookingCommand } from "@/bookings/schemas";
 import {
   getOwnerBooking,
   listOwnerBookingsForExport,
@@ -20,12 +22,27 @@ import {
 import { createBookingNotifier } from "@/notifications/booking-notifier";
 import { createResendSender } from "@/notifications/sender";
 import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
-import type { GooglePort, LinkLookupPort, NotificationPort, UserLookupPort } from "@/ports";
-import { buildGooglePort, buildLinkLookupPort, buildUserLookupPort } from "@/wiring";
+import type {
+  GooglePort,
+  LinkAvailabilityPort,
+  LinkLookupPort,
+  NotificationPort,
+  UserLookupPort,
+} from "@/ports";
+import {
+  buildGooglePort,
+  buildLinkAvailabilityPort,
+  buildLinkLookupPort,
+  buildUserLookupPort,
+} from "@/wiring";
 
 export type BookingsRouteDeps = {
   google: GooglePort | null;
   links: LinkLookupPort;
+  // ISH-270: reschedule re-checks the link's slot grid before applying the
+  // UPDATE. The port is passed through here so the bookings route can hand
+  // it to `rescheduleBooking` without wiring DB calls in the route layer.
+  availability: LinkAvailabilityPort;
   users: UserLookupPort;
   notifier: NotificationPort;
   // Test escape hatch: integration tests can supply fake auth middleware to
@@ -41,6 +58,10 @@ const productionSendEmail: SendEmailFn = config.resend
 const productionDeps: BookingsRouteDeps = {
   google: buildGooglePort(db, config.google),
   links: buildLinkLookupPort(db),
+  // ISH-270: reschedule re-check uses the rules grid only (busy intervals are
+  // not merged here — same posture as confirmBooking's revalidation in
+  // routes/public.ts). Pass `null` so the port mirrors that policy.
+  availability: buildLinkAvailabilityPort(db, null),
   users: buildUserLookupPort(db),
   notifier: createBookingNotifier({
     sendEmail: productionSendEmail,
@@ -125,6 +146,39 @@ export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): H
   route.get("/:id", async (c) => {
     const dbUser = getDbUser(c);
     const booking = await getOwnerBooking(db, dbUser.id, c.req.param("id"));
+    if (!booking) return c.json({ error: "not_found" }, 404);
+    return c.json({ booking });
+  });
+
+  // ISH-270: owner-side reschedule. Same auth + ownership semantics as
+  // DELETE /:id; the response shape mirrors GET /:id (returns the updated
+  // BookingSummary projection so the FE can refresh state without a re-fetch).
+  route.post("/:id/reschedule", zValidator("json", rescheduleInputSchema), async (c) => {
+    const dbUser = getDbUser(c);
+    const command = toRescheduleBookingCommand(c.req.valid("json"));
+    if (!command) return c.json({ error: "invalid_range" }, 400);
+    const ports: RescheduleBookingPorts = {
+      google: deps.google,
+      links: deps.links,
+      availability: deps.availability,
+      users: deps.users,
+      notifier: deps.notifier,
+    };
+    const result = await rescheduleBooking(db, c.req.param("id"), dbUser.id, command, ports);
+    if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
+    if (result.kind === "not_reschedulable") {
+      return c.json({ error: "not_reschedulable" }, 422);
+    }
+    if (result.kind === "availability_violation") {
+      return c.json({ error: "availability_violation" }, 422);
+    }
+    if (result.kind === "slot_already_booked") {
+      return c.json({ error: "slot_already_booked" }, 409);
+    }
+    // ISH-270: re-fetch the OwnerBooking projection so the response carries
+    // host info + link metadata identical to GET /bookings/:id. Cheaper than
+    // synthesizing the projection in the usecase.
+    const booking = await getOwnerBooking(db, dbUser.id, result.booking.id);
     if (!booking) return c.json({ error: "not_found" }, 404);
     return c.json({ booking });
   });

@@ -1,14 +1,17 @@
 import {
   guestCancelEmail,
   guestConfirmEmail,
+  guestRescheduleEmail,
   ownerCancelEmail,
   ownerConfirmEmail,
+  ownerRescheduleEmail,
 } from "./templates";
 import type {
   BookingCanceledEvent,
   BookingConfirmedEvent,
   BookingEvent,
   BookingNotifier,
+  BookingRescheduledEvent,
   SendEmailFn,
 } from "./types";
 
@@ -35,6 +38,9 @@ export function createBookingNotifier(deps: BookingNotifierDeps): BookingNotifie
           return;
         case "booking_canceled":
           await dispatchCanceled(event, sendEmail, appBaseUrl);
+          return;
+        case "booking_rescheduled":
+          await dispatchRescheduled(event, sendEmail, appBaseUrl);
           return;
       }
     },
@@ -86,4 +92,29 @@ async function dispatchCanceled(
     canceledBy: event.canceledBy,
   };
   await Promise.all([sendEmail(ownerCancelEmail(ctx)), sendEmail(guestCancelEmail(ctx))]);
+}
+
+async function dispatchRescheduled(
+  event: BookingRescheduledEvent,
+  sendEmail: SendEmailFn,
+  appBaseUrl: string,
+): Promise<void> {
+  const ctx = {
+    linkTitle: event.link.title,
+    linkDescription: event.link.description,
+    startAt: event.booking.startAt,
+    endAt: event.booking.endAt,
+    ownerEmail: event.owner.email,
+    ownerName: event.owner.name,
+    guestEmail: event.booking.guestEmail,
+    guestName: event.booking.guestName,
+    guestNote: event.booking.guestNote,
+    guestTimeZone: event.booking.guestTimeZone,
+    ownerTimeZone: event.link.timeZone,
+    meetUrl: event.booking.meetUrl,
+    cancelUrl: `${appBaseUrl}/cancel/${event.cancellationToken}`,
+    previousStartAt: event.previousStartAt,
+    previousEndAt: event.previousEndAt,
+  };
+  await Promise.all([sendEmail(ownerRescheduleEmail(ctx)), sendEmail(guestRescheduleEmail(ctx))]);
 }

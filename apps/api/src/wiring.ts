@@ -1,6 +1,6 @@
 import type { db as DbClient } from "@/db/client";
 import { getValidAccessToken } from "@/google/access-token";
-import { createEvent, deleteEvent, queryFreeBusy } from "@/google/calendar";
+import { createEvent, deleteEvent, patchEvent, queryFreeBusy } from "@/google/calendar";
 import type { GoogleConfig } from "@/google/config";
 import { getOauthAccountByUser, listUserCalendars } from "@/google/repo";
 import { buildClerkIdentityProvider } from "@/identity/clerk-identity-provider";
@@ -51,6 +51,7 @@ export function buildGooglePort(database: Database, cfg: GoogleConfig | null): G
     getFreeBusy: (input) => queryFreeBusy(input),
     createEvent: (input) => createEvent(input),
     deleteEvent: (input) => deleteEvent(input),
+    patchEvent: (input) => patchEvent(input),
   };
 }
 
