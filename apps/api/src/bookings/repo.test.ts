@@ -8,6 +8,7 @@ import {
   attachGoogleEvent,
   findActiveBookingsForLink,
   findBookingById,
+  findBookingsByOwnerPaged,
   findBookingsDueForReminder,
   markBookingCanceled,
   markReminderSent,
@@ -399,6 +400,154 @@ describe("bookings/repo", () => {
 
       const afterSecond = await findBookingById(db, created.id);
       expect(afterSecond?.reminderSentAt?.toISOString()).toBe(NOW.toISOString());
+    });
+  });
+
+  // ---------- ISH-268: server-side search / status / pagination ----------
+
+  describe("findBookingsByOwnerPaged", () => {
+    /**
+     * Helper: insert N confirmed bookings spaced 1 hour apart starting from
+     * `firstStart`. Returns the bookings in the order they were created
+     * (chronological), so callers can build expected lists by mapping fields.
+     *
+     * We insert via the repo's own helper so cancellationToken / status flow
+     * matches production. Per-row guest fields are made distinct via the
+     * `overridesByIndex` callback to support the search-match assertions.
+     */
+    async function seedManyBookings(
+      seed: { tenantId: string; linkId: string; userId: string },
+      n: number,
+      overridesByIndex: (i: number) => Partial<NewBookingRow> = () => ({}),
+    ): Promise<void> {
+      const base = SLOT_START.getTime();
+      for (let i = 0; i < n; i++) {
+        const startAt = new Date(base + i * 60 * 60 * 1000);
+        const endAt = new Date(startAt.getTime() + 30 * 60 * 1000);
+        const created = await tryInsertConfirmedBooking(db, {
+          tenantId: seed.tenantId,
+          linkId: seed.linkId,
+          // ISH-267: host_user_id NOT NULL — reuse the link's owner as host.
+          hostUserId: seed.userId,
+          startAt,
+          endAt,
+          guestName: `Guest ${i}`,
+          guestEmail: `guest${i}@example.com`,
+          guestNote: null,
+          guestTimeZone: null,
+          ...overridesByIndex(i),
+        } as Omit<NewBookingRow, "id" | "status" | "createdAt"> & { status?: never });
+        if (!created) throw new Error(`seed booking #${i} failed`);
+      }
+    }
+
+    test("returns the page slice + total of unfiltered owner rows", async () => {
+      const seed = await seedLink();
+      await seedManyBookings(seed, 30);
+
+      const page1 = await findBookingsByOwnerPaged(db, seed.userId, {
+        offset: 0,
+        limit: 25,
+      });
+      expect(page1.total).toBe(30);
+      expect(page1.bookings.length).toBe(25);
+      // ordered by startAt desc — first row is the latest seeded.
+      expect(page1.bookings[0]?.guestEmail).toBe("guest29@example.com");
+      expect(page1.bookings[24]?.guestEmail).toBe("guest5@example.com");
+
+      const page2 = await findBookingsByOwnerPaged(db, seed.userId, {
+        offset: 25,
+        limit: 25,
+      });
+      expect(page2.total).toBe(30);
+      expect(page2.bookings.length).toBe(5);
+      expect(page2.bookings[0]?.guestEmail).toBe("guest4@example.com");
+      expect(page2.bookings[4]?.guestEmail).toBe("guest0@example.com");
+    });
+
+    test("status filter narrows to confirmed / canceled and total reflects the filter", async () => {
+      const seed = await seedLink();
+      await seedManyBookings(seed, 4);
+      // Cancel half of them — index 0 and 2.
+      const all = await findBookingsByOwnerPaged(db, seed.userId, { offset: 0, limit: 50 });
+      const ids = all.bookings.map((b) => b.id);
+      await markBookingCanceled(db, ids[0] ?? "");
+      await markBookingCanceled(db, ids[2] ?? "");
+
+      const confirmedOnly = await findBookingsByOwnerPaged(db, seed.userId, {
+        status: "confirmed",
+        offset: 0,
+        limit: 50,
+      });
+      expect(confirmedOnly.total).toBe(2);
+      expect(confirmedOnly.bookings.every((b) => b.status === "confirmed")).toBe(true);
+
+      const canceledOnly = await findBookingsByOwnerPaged(db, seed.userId, {
+        status: "canceled",
+        offset: 0,
+        limit: 50,
+      });
+      expect(canceledOnly.total).toBe(2);
+      expect(canceledOnly.bookings.every((b) => b.status === "canceled")).toBe(true);
+    });
+
+    test("q matches case-insensitively against guestName / guestEmail / linkTitle", async () => {
+      const seed = await seedLink();
+      await seedManyBookings(seed, 3, (i) => {
+        if (i === 0) return { guestName: "Alice Anderson", guestEmail: "a@example.com" };
+        if (i === 1) return { guestName: "Bob Brown", guestEmail: "bob@acme.com" };
+        return { guestName: "Charlie", guestEmail: "charlie@example.com" };
+      });
+
+      // guestName partial — case-insensitive ("ALICE" → "Alice Anderson").
+      const byName = await findBookingsByOwnerPaged(db, seed.userId, {
+        q: "ALICE",
+        offset: 0,
+        limit: 50,
+      });
+      expect(byName.total).toBe(1);
+      expect(byName.bookings[0]?.guestName).toBe("Alice Anderson");
+
+      // guestEmail partial — domain match.
+      const byEmail = await findBookingsByOwnerPaged(db, seed.userId, {
+        q: "acme",
+        offset: 0,
+        limit: 50,
+      });
+      expect(byEmail.total).toBe(1);
+      expect(byEmail.bookings[0]?.guestEmail).toBe("bob@acme.com");
+
+      // linkTitle partial — link title was set to "30 min meeting" in seedLink.
+      const byTitle = await findBookingsByOwnerPaged(db, seed.userId, {
+        q: "30 min",
+        offset: 0,
+        limit: 50,
+      });
+      expect(byTitle.total).toBe(3);
+    });
+
+    test("scopes to ownerId — bookings under another owner's link are excluded", async () => {
+      const me = await seedLink();
+      const other = await seedLink();
+      await seedManyBookings(me, 2);
+      await seedManyBookings(other, 5);
+
+      const mine = await findBookingsByOwnerPaged(db, me.userId, { offset: 0, limit: 50 });
+      expect(mine.total).toBe(2);
+      const theirs = await findBookingsByOwnerPaged(db, other.userId, { offset: 0, limit: 50 });
+      expect(theirs.total).toBe(5);
+    });
+
+    test("returns empty + total=0 when no rows match", async () => {
+      const seed = await seedLink();
+      await seedManyBookings(seed, 2);
+      const result = await findBookingsByOwnerPaged(db, seed.userId, {
+        q: "no-such-needle-zzzz",
+        offset: 0,
+        limit: 50,
+      });
+      expect(result.total).toBe(0);
+      expect(result.bookings).toEqual([]);
     });
   });
 });

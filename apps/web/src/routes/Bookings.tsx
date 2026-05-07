@@ -8,7 +8,7 @@ import {
   Download,
   Search,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { auth } from "@/auth";
 import type { AvatarStackMember } from "@/components/ui/avatar-stack";
@@ -26,7 +26,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatCard } from "@/components/ui/stat-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ApiError, api } from "@/lib/api";
+import { ApiError, api, type ListBookingsParams } from "@/lib/api";
 import { formatLocalDate, formatLocalTime } from "@/lib/local-date";
 import type { BookingSummary } from "@/lib/types";
 import { colors, radius, space, typography } from "@/styles/tokens.stylex";
@@ -255,10 +255,43 @@ const styles = stylex.create({
 type Tab = "upcoming" | "past" | "canceled";
 type StatusFilter = "all" | "confirmed" | "canceled";
 
+// ISH-268: page state pulls four counters from the server. `total` is the
+// matching count BEFORE limit/offset, used to render「全 N 件中 a–b 件」 and
+// gate the next/prev buttons.
 type LoadState =
   | { status: "loading" }
-  | { status: "ok"; bookings: BookingSummary[] }
+  | {
+      status: "ok";
+      bookings: BookingSummary[];
+      total: number;
+      page: number;
+      pageSize: number;
+    }
   | { status: "error"; message: string };
+
+// Debounce window for search/status changes. 300ms is the de-facto sweet
+// spot — short enough to feel reactive, long enough that mid-word typing
+// doesn't pummel the API.
+const QUERY_DEBOUNCE_MS = 300;
+
+/**
+ * Translate the (tab, statusFilter) UI pair into the server's `status` query
+ * param. ISH-268: time-based "upcoming" vs "past" filtering used to live on
+ * the FE; the server has no calendar awareness yet, so for now both
+ * upcoming and past tabs show all confirmed bookings (sorted desc by
+ * startAt). This is a temporary UX regression — a date-range filter is
+ * tracked separately.
+ */
+function deriveServerStatus(tab: Tab, statusFilter: StatusFilter): StatusFilter {
+  if (tab === "canceled") return "canceled";
+  // upcoming / past tabs: respect the status filter, but never widen to
+  // "canceled" rows — the dedicated tab handles that.
+  if (statusFilter === "canceled") return "confirmed";
+  if (statusFilter === "confirmed") return "confirmed";
+  // statusFilter === "all" inside upcoming/past → only show confirmed (the
+  // canceled rows live under the canceled tab).
+  return "confirmed";
+}
 
 function browserTz(): string {
   if (typeof Intl === "undefined") return "Asia/Tokyo";
@@ -302,17 +335,6 @@ function isCurrentMonth(iso: string, now: Date): boolean {
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
 }
 
-function matchesSearch(b: BookingSummary, q: string): boolean {
-  if (!q) return true;
-  const needle = q.trim().toLowerCase();
-  if (!needle) return true;
-  return (
-    b.guestName.toLowerCase().includes(needle) ||
-    b.guestEmail.toLowerCase().includes(needle) ||
-    b.linkTitle.toLowerCase().includes(needle)
-  );
-}
-
 export default function Bookings() {
   const { getToken } = auth.useAuth();
   const [tab, setTab] = useState<Tab>("upcoming");
@@ -322,24 +344,65 @@ export default function Bookings() {
   const [page, setPage] = useState(1);
   const tz = browserTz();
 
+  // Debounced query state — search input changes settle here after 300ms
+  // so we don't pummel the API mid-typing. status/tab/page changes feed
+  // through directly (no debounce) since they originate from discrete
+  // user actions.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const handle = setTimeout(() => setDebouncedSearch(search), QUERY_DEBOUNCE_MS);
+    return () => clearTimeout(handle);
+  }, [search]);
+
+  // Reset to page 1 whenever the user changes a filter that would
+  // invalidate the current pagination. Use a ref-trip pattern so the
+  // first render doesn't reset (page=1 already) and so we ONLY reset
+  // when the inputs actually changed — not on every re-render.
+  const isFirstRenderRef = useRef(true);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setPage is stable
+  useEffect(() => {
+    if (isFirstRenderRef.current) {
+      isFirstRenderRef.current = false;
+      return;
+    }
+    setPage(1);
+  }, [tab, debouncedSearch, statusFilter]);
+
+  const serverStatus = deriveServerStatus(tab, statusFilter);
   const reload = useCallback(async () => {
     setState({ status: "loading" });
+    const params: ListBookingsParams = {
+      q: debouncedSearch.trim() || undefined,
+      status: serverStatus,
+      page,
+      pageSize: PAGE_SIZE,
+    };
     try {
-      const { bookings } = await api.listBookings(() => getToken());
-      setState({ status: "ok", bookings });
+      const res = await api.listBookings(params, () => getToken());
+      setState({
+        status: "ok",
+        bookings: res.bookings,
+        total: res.total,
+        page: res.page,
+        pageSize: res.pageSize,
+      });
     } catch (err) {
       const message = err instanceof ApiError ? `${err.status} ${err.code}` : "failed to load";
       setState({ status: "error", message });
     }
-  }, [getToken]);
+  }, [getToken, debouncedSearch, serverStatus, page]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
   // Stats — 3 値: 今後の予定 / 今月の確定 / キャンセル (今月)。
-  // BookingSummary に createdAt はあるので「今月の確定」は createdAt 当月で集計
-  // し、キャンセルは startAt で当月扱い (canceledAt は status filter のため使用)。
+  //
+  // ISH-268 explicitly leaves stats out of scope ("stats は client-side で
+  // 集計したまま OK (本 issue 範囲外)"). With server-side pagination,
+  // `state.bookings` only holds the current page slice, so this aggregate
+  // is best-effort over what's loaded — not an authoritative count. A
+  // dedicated stats endpoint will replace this in a follow-up issue.
   const stats = useMemo(() => {
     if (state.status !== "ok") return { upcoming: 0, thisMonthConfirmed: 0, canceled: 0 };
     const now = new Date();
@@ -355,43 +418,16 @@ export default function Bookings() {
     return { upcoming, thisMonthConfirmed, canceled };
   }, [state]);
 
-  // Tab で絞り込んだ行 (search/filter 適用前)。これが空なら「データ無し」相当。
-  const tabBookings = useMemo(() => {
-    if (state.status !== "ok") return [];
-    const now = Date.now();
-    return state.bookings.filter((b) => {
-      if (tab === "canceled") return b.status === "canceled";
-      const isFuture = Date.parse(b.startAt) >= now && b.status === "confirmed";
-      if (tab === "upcoming") return isFuture;
-      // past: confirmed but already started
-      return b.status === "confirmed" && Date.parse(b.startAt) < now;
-    });
-  }, [state, tab]);
+  const pageRows = state.status === "ok" ? state.bookings : [];
+  const total = state.status === "ok" ? state.total : 0;
+  const serverPage = state.status === "ok" ? state.page : 1;
+  const pageSize = state.status === "ok" ? state.pageSize : PAGE_SIZE;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const pageStart = total === 0 ? 0 : (serverPage - 1) * pageSize;
+  const pageEnd = Math.min(pageStart + pageRows.length, total);
+  const showPagination = total > pageSize;
 
-  // search + status filter 適用後の行。
-  const filtered = useMemo(() => {
-    return tabBookings.filter((b) => {
-      if (statusFilter !== "all" && b.status !== statusFilter) return false;
-      return matchesSearch(b, search);
-    });
-  }, [tabBookings, search, statusFilter]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const safePage = Math.min(page, totalPages);
-  const pageStart = (safePage - 1) * PAGE_SIZE;
-  const pageEnd = Math.min(pageStart + PAGE_SIZE, filtered.length);
-  const pageRows = filtered.slice(pageStart, pageEnd);
-  const showPagination = filtered.length > PAGE_SIZE;
-
-  // tab / search / filter が変わったら page を 1 に戻す。
-  // (state.status が ok に切り替わった瞬間も該当するため state.status を依存に
-  // 含めると無限ループになる — 値依存だけに抑える)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: page reset trigger
-  useEffect(() => {
-    setPage(1);
-  }, [tab, search, statusFilter]);
-
-  const isSearchActive = search.trim().length > 0 || statusFilter !== "all";
+  const isSearchActive = debouncedSearch.trim().length > 0 || statusFilter !== "all";
 
   return (
     <div {...stylex.props(styles.page)}>
@@ -470,15 +506,9 @@ export default function Bookings() {
                     onStatusFilterChange={setStatusFilter}
                   />
 
-                  {filtered.length === 0 ? (
+                  {total === 0 ? (
                     <BookingsEmptyState
-                      mode={
-                        tabBookings.length === 0
-                          ? "no-data"
-                          : isSearchActive
-                            ? "search-miss"
-                            : "no-data"
-                      }
+                      mode={isSearchActive ? "search-miss" : "no-data"}
                       tab={tab}
                     />
                   ) : (
@@ -489,11 +519,11 @@ export default function Bookings() {
                       ))}
                       {showPagination && (
                         <PaginationBar
-                          page={safePage}
+                          page={serverPage}
                           totalPages={totalPages}
                           pageStart={pageStart}
                           pageEnd={pageEnd}
-                          total={filtered.length}
+                          total={total}
                           onPrev={() => setPage((p) => Math.max(1, p - 1))}
                           onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
                         />

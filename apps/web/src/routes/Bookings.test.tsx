@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import type { ListBookingsResponse } from "@/lib/api";
 import type { BookingSummary } from "@/lib/types";
 
 vi.mock("@clerk/clerk-react", async (importOriginal) => {
@@ -39,8 +40,23 @@ function renderBookings() {
   );
 }
 
-// Build a booking far enough in the future to land in the "upcoming" tab
-// regardless of when this test happens to run.
+// ISH-268: server-side pagination + filter. Helpers below build the new
+// `ListBookingsResponse` shape `{ bookings, total, page, pageSize }`. Tests
+// that previously asserted client-side filter behavior now drive the mock
+// directly to simulate what the server would return.
+function pagedResponse(
+  bookings: BookingSummary[],
+  overrides: Partial<ListBookingsResponse> = {},
+): ListBookingsResponse {
+  return {
+    bookings,
+    total: overrides.total ?? bookings.length,
+    page: overrides.page ?? 1,
+    pageSize: overrides.pageSize ?? 25,
+    ...overrides,
+  };
+}
+
 function futureBooking(overrides: Partial<BookingSummary> = {}): BookingSummary {
   const start = new Date(Date.now() + 7 * 86_400_000);
   const end = new Date(start.getTime() + 30 * 60_000);
@@ -62,31 +78,6 @@ function futureBooking(overrides: Partial<BookingSummary> = {}): BookingSummary 
     googleHtmlLink: null,
     canceledAt: null,
     createdAt: new Date().toISOString(),
-    ...overrides,
-  };
-}
-
-function pastBooking(overrides: Partial<BookingSummary> = {}): BookingSummary {
-  const start = new Date(Date.now() - 7 * 86_400_000);
-  const end = new Date(start.getTime() + 30 * 60_000);
-  return {
-    id: "p1",
-    linkId: "l1",
-    linkSlug: "intro-30",
-    linkTitle: "Past meeting",
-    hostUserId: "u-host-1",
-    hostName: "Host One",
-    hostEmail: "host1@example.com",
-    startAt: start.toISOString(),
-    endAt: end.toISOString(),
-    guestName: "Charlie",
-    guestEmail: "charlie@example.com",
-    status: "confirmed",
-    meetUrl: null,
-    googleEventId: null,
-    googleHtmlLink: null,
-    canceledAt: null,
-    createdAt: new Date(Date.now() - 7 * 86_400_000).toISOString(),
     ...overrides,
   };
 }
@@ -118,7 +109,7 @@ function canceledBooking(overrides: Partial<BookingSummary> = {}): BookingSummar
 
 describe("<Bookings />", () => {
   test("renders the page header (H1 + sub + CSV エクスポート button)", async () => {
-    mockedApi.listBookings.mockResolvedValue({ bookings: [futureBooking()] });
+    mockedApi.listBookings.mockResolvedValue(pagedResponse([futureBooking()]));
 
     renderBookings();
 
@@ -130,13 +121,12 @@ describe("<Bookings />", () => {
   });
 
   test("renders 3 stat cards with mint / blue / rose tones", async () => {
-    mockedApi.listBookings.mockResolvedValue({
-      bookings: [
+    mockedApi.listBookings.mockResolvedValue(
+      pagedResponse([
         futureBooking(),
         futureBooking({ id: "b2", linkTitle: "Deep dive", guestName: "Bob" }),
-        canceledBooking(),
-      ],
-    });
+      ]),
+    );
 
     renderBookings();
 
@@ -153,7 +143,7 @@ describe("<Bookings />", () => {
   });
 
   test("renders the 3 tabs and defaults to 今後の予定", async () => {
-    mockedApi.listBookings.mockResolvedValue({ bookings: [futureBooking()] });
+    mockedApi.listBookings.mockResolvedValue(pagedResponse([futureBooking()]));
 
     renderBookings();
 
@@ -166,12 +156,12 @@ describe("<Bookings />", () => {
   });
 
   test("renders the table with 5 columns + an action column on rows", async () => {
-    mockedApi.listBookings.mockResolvedValue({
-      bookings: [
+    mockedApi.listBookings.mockResolvedValue(
+      pagedResponse([
         futureBooking(),
         futureBooking({ id: "b2", linkTitle: "Deep dive", guestName: "Bob" }),
-      ],
-    });
+      ]),
+    );
 
     renderBookings();
 
@@ -198,35 +188,31 @@ describe("<Bookings />", () => {
     expect(confirmedBadges).toHaveLength(2);
   });
 
-  test("switching tabs filters the rows (upcoming → past → canceled)", async () => {
-    mockedApi.listBookings.mockResolvedValue({
-      bookings: [futureBooking(), pastBooking(), canceledBooking()],
-    });
+  test("switching to the canceled tab calls the API with status=canceled", async () => {
+    // ISH-268: tab → server status mapping. upcoming/past tabs → confirmed,
+    // canceled tab → canceled. Time-based "upcoming vs past" filtering moved
+    // out of this issue's scope.
+    mockedApi.listBookings.mockResolvedValue(pagedResponse([canceledBooking()]));
 
     renderBookings();
 
-    // Default: upcoming → only the future booking is visible.
-    expect(await screen.findByText("30 minute intro")).toBeInTheDocument();
-    expect(screen.queryByText("Past meeting")).not.toBeInTheDocument();
-    expect(screen.queryByText("Canceled meeting")).not.toBeInTheDocument();
+    // First fetch on mount: status=confirmed (default upcoming tab).
+    await waitFor(() => expect(mockedApi.listBookings).toHaveBeenCalled());
+    const firstCall = mockedApi.listBookings.mock.calls[0]?.[0];
+    expect(firstCall?.status).toBe("confirmed");
 
-    // 過去 tab — Radix Tabs uses pointer events; happy-dom doesn't fire
-    // pointerDown from a synthetic click(), so use mouseDown directly.
-    fireEvent.mouseDown(screen.getByRole("tab", { name: "過去" }));
-    await waitFor(() => expect(screen.getByText("Past meeting")).toBeInTheDocument());
-    expect(screen.queryByText("30 minute intro")).not.toBeInTheDocument();
-    expect(screen.queryByText("Canceled meeting")).not.toBeInTheDocument();
-
-    // キャンセル済 tab
+    // Switch to canceled tab — Radix Tabs needs mouseDown (not click) under happy-dom.
     fireEvent.mouseDown(screen.getByRole("tab", { name: "キャンセル済" }));
-    await waitFor(() => expect(screen.getByText("Canceled meeting")).toBeInTheDocument());
-    expect(screen.queryByText("30 minute intro")).not.toBeInTheDocument();
-    expect(screen.queryByText("Past meeting")).not.toBeInTheDocument();
-    expect(screen.getByText("キャンセル済", { selector: "span" })).toBeInTheDocument();
+
+    await waitFor(() => {
+      const lastCall =
+        mockedApi.listBookings.mock.calls[mockedApi.listBookings.mock.calls.length - 1]?.[0];
+      expect(lastCall?.status).toBe("canceled");
+    });
   });
 
-  test("shows the empty state when no bookings match the active tab", async () => {
-    mockedApi.listBookings.mockResolvedValue({ bookings: [] });
+  test("shows the empty state when the server returns total=0", async () => {
+    mockedApi.listBookings.mockResolvedValue(pagedResponse([], { total: 0 }));
 
     renderBookings();
 
@@ -246,16 +232,13 @@ describe("<Bookings />", () => {
     expect(screen.getByRole("button", { name: "再試行" })).toBeInTheDocument();
   });
 
-  test("filters stats by status: 今後の予定 counts only future confirmed", async () => {
-    mockedApi.listBookings.mockResolvedValue({
-      bookings: [futureBooking(), futureBooking({ id: "b2" }), pastBooking(), canceledBooking()],
-    });
+  test("stats reflect the page slice (best-effort) — upcoming counter increments per future-confirmed row", async () => {
+    mockedApi.listBookings.mockResolvedValue(
+      pagedResponse([futureBooking(), futureBooking({ id: "b2" })]),
+    );
 
     renderBookings();
 
-    // The mint-toned StatCard is the 今後の予定 counter (3 stat cards in
-    // mint/blue/rose order). Within it the value should be 2 (only future +
-    // confirmed bookings count).
     const tiles = await screen.findAllByTestId("stat-card-icon-tile");
     const mintCard = tiles[0]?.parentElement;
     expect(mintCard?.getAttribute("data-tone")).toBe("mint");
@@ -265,107 +248,91 @@ describe("<Bookings />", () => {
     }
   });
 
-  test("toolbar search filters rows by guest name / email / link title", async () => {
-    mockedApi.listBookings.mockResolvedValue({
-      bookings: [
-        futureBooking({ id: "b1", linkTitle: "30 minute intro", guestName: "Alice" }),
-        futureBooking({
-          id: "b2",
-          linkTitle: "Deep dive session",
-          guestName: "Bob",
-          guestEmail: "bob@example.com",
-        }),
-        futureBooking({
-          id: "b3",
-          linkTitle: "Quick chat",
-          guestName: "Charlie",
-          guestEmail: "charlie@example.com",
-        }),
-      ],
-    });
+  test("typing in search debounces and re-fetches with q=<value>", async () => {
+    // ISH-268: search input is debounced (300ms) before hitting the API.
+    // The test asserts the last call carries `q` matching the input value.
+    mockedApi.listBookings.mockResolvedValue(pagedResponse([futureBooking()]));
 
     renderBookings();
 
-    expect(await screen.findByText("30 minute intro")).toBeInTheDocument();
-    const input = screen.getByLabelText("予約を検索");
-    fireEvent.change(input, { target: { value: "deep" } });
-    await waitFor(() => expect(screen.getByText("Deep dive session")).toBeInTheDocument());
-    expect(screen.queryByText("30 minute intro")).not.toBeInTheDocument();
-    expect(screen.queryByText("Quick chat")).not.toBeInTheDocument();
+    // Initial mount fetch.
+    await waitFor(() => expect(mockedApi.listBookings).toHaveBeenCalledTimes(1));
+    const firstCall = mockedApi.listBookings.mock.calls[0]?.[0];
+    expect(firstCall?.q).toBeUndefined();
 
-    // メール部分一致
-    fireEvent.change(input, { target: { value: "charlie@" } });
-    await waitFor(() => expect(screen.getByText("Quick chat")).toBeInTheDocument());
-    expect(screen.queryByText("Deep dive session")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("予約を検索"), { target: { value: "deep" } });
+
+    // Debounced — wait until the second call materializes.
+    await waitFor(
+      () => {
+        const calls = mockedApi.listBookings.mock.calls;
+        const last = calls[calls.length - 1]?.[0];
+        expect(last?.q).toBe("deep");
+      },
+      { timeout: 1500 },
+    );
   });
 
-  test("status filter narrows rows to canceled-only when 「キャンセル済」 is picked", async () => {
-    // Mix of confirmed + canceled rows on the canceled tab is impossible
-    // (the tab itself filters by canceled), so the cleanest assertion is:
-    // upcoming tab + status filter = canceled → 0 rows → search-miss empty
-    // state. (Settings.tsx uses the same fireEvent.click pattern on Radix
-    // Select trigger + option.)
-    mockedApi.listBookings.mockResolvedValue({
-      bookings: [
-        futureBooking({ id: "b1", linkTitle: "Confirmed A", guestName: "Alice" }),
-        futureBooking({ id: "b2", linkTitle: "Confirmed B", guestName: "Bob" }),
-      ],
-    });
+  test("canceled tab triggers a refetch with status=canceled", async () => {
+    // ISH-268: tab → server status mapping. The (tab, statusFilter) pair
+    // resolves to a server-side status: canceled tab → "canceled"; other
+    // tabs always send "confirmed" regardless of statusFilter (the canceled
+    // rows live exclusively under the canceled tab). The cleanest assertion
+    // is therefore on tab change, where serverStatus actually flips.
+    mockedApi.listBookings.mockResolvedValue(pagedResponse([futureBooking()]));
 
     renderBookings();
 
-    expect(await screen.findByText("Confirmed A")).toBeInTheDocument();
+    await waitFor(() => expect(mockedApi.listBookings).toHaveBeenCalled());
+    const firstCall = mockedApi.listBookings.mock.calls[0]?.[0];
+    expect(firstCall?.status).toBe("confirmed");
 
-    // Click the status filter trigger and pick 「キャンセル済」.
-    const trigger = screen.getByLabelText("ステータスで絞り込み");
-    fireEvent.click(trigger);
-    const canceledOption = await screen.findByRole("option", { name: /^キャンセル済$/ });
-    fireEvent.click(canceledOption);
+    // Switch to the canceled tab (Radix needs mouseDown under happy-dom).
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "キャンセル済" }));
 
-    // Upcoming tab has no canceled rows → search-miss empty state.
-    await waitFor(() => expect(screen.getByTestId("bookings-empty-search")).toBeInTheDocument());
-    expect(screen.queryByText("Confirmed A")).not.toBeInTheDocument();
+    await waitFor(() => {
+      const calls = mockedApi.listBookings.mock.calls;
+      const last = calls[calls.length - 1]?.[0];
+      expect(last?.status).toBe("canceled");
+    });
   });
 
-  test("pagination shows controls when rows > 25 and next moves to page 2", async () => {
-    const many: BookingSummary[] = Array.from({ length: 30 }, (_, i) => {
-      const start = new Date(Date.now() + (i + 1) * 86_400_000);
-      const end = new Date(start.getTime() + 30 * 60_000);
-      return {
+  test("pagination shows when total > pageSize and next moves to page 2", async () => {
+    // First call: page 1 with 25 rows + total 30.
+    const page1 = Array.from({ length: 25 }, (_, i) =>
+      futureBooking({
         id: `b${i}`,
-        linkId: "l1",
-        linkSlug: "intro",
         linkTitle: `Booking ${i.toString().padStart(2, "0")}`,
-        hostUserId: "u-host-1",
-        hostName: "Host One",
-        hostEmail: "host1@example.com",
-        startAt: start.toISOString(),
-        endAt: end.toISOString(),
         guestName: `Guest ${i}`,
         guestEmail: `g${i}@example.com`,
-        status: "confirmed" as const,
-        meetUrl: null,
-        googleEventId: null,
-        googleHtmlLink: null,
-        canceledAt: null,
-        createdAt: new Date().toISOString(),
-      };
-    });
-    mockedApi.listBookings.mockResolvedValue({ bookings: many });
+        startAt: new Date(Date.now() + (i + 1) * 86_400_000).toISOString(),
+        endAt: new Date(Date.now() + (i + 1) * 86_400_000 + 30 * 60_000).toISOString(),
+      }),
+    );
+    const page2 = Array.from({ length: 5 }, (_, i) =>
+      futureBooking({
+        id: `b${i + 25}`,
+        linkTitle: `Booking ${(i + 25).toString().padStart(2, "0")}`,
+        guestName: `Guest ${i + 25}`,
+        guestEmail: `g${i + 25}@example.com`,
+        startAt: new Date(Date.now() + (i + 26) * 86_400_000).toISOString(),
+        endAt: new Date(Date.now() + (i + 26) * 86_400_000 + 30 * 60_000).toISOString(),
+      }),
+    );
+    mockedApi.listBookings
+      .mockResolvedValueOnce(pagedResponse(page1, { total: 30, page: 1, pageSize: 25 }))
+      .mockResolvedValueOnce(pagedResponse(page2, { total: 30, page: 2, pageSize: 25 }));
 
     renderBookings();
 
-    // First page: rows 00..24 visible, row 25 not yet.
     expect(await screen.findByText("Booking 00")).toBeInTheDocument();
     expect(screen.getByText("Booking 24")).toBeInTheDocument();
     expect(screen.queryByText("Booking 25")).not.toBeInTheDocument();
 
-    // Pagination controls visible.
     expect(screen.getByTestId("bookings-pagination")).toBeInTheDocument();
     expect(screen.getByText("全 30 件中 1–25 件")).toBeInTheDocument();
 
-    const next = screen.getByRole("button", { name: "次のページ" });
-    fireEvent.click(next);
+    fireEvent.click(screen.getByRole("button", { name: "次のページ" }));
 
     await waitFor(() => expect(screen.getByText("Booking 25")).toBeInTheDocument());
     expect(screen.getByText("Booking 29")).toBeInTheDocument();
@@ -373,19 +340,22 @@ describe("<Bookings />", () => {
     expect(screen.getByText("全 30 件中 26–30 件")).toBeInTheDocument();
   });
 
-  test("pagination is hidden when rows <= 25", async () => {
-    mockedApi.listBookings.mockResolvedValue({
-      bookings: Array.from({ length: 5 }, (_, i) =>
-        futureBooking({
-          id: `b${i}`,
-          linkTitle: `Booking ${i}`,
-          guestName: `Guest ${i}`,
-          guestEmail: `g${i}@example.com`,
-          startAt: new Date(Date.now() + (i + 1) * 86_400_000).toISOString(),
-          endAt: new Date(Date.now() + (i + 1) * 86_400_000 + 30 * 60_000).toISOString(),
-        }),
+  test("pagination is hidden when total <= pageSize", async () => {
+    mockedApi.listBookings.mockResolvedValue(
+      pagedResponse(
+        Array.from({ length: 5 }, (_, i) =>
+          futureBooking({
+            id: `b${i}`,
+            linkTitle: `Booking ${i}`,
+            guestName: `Guest ${i}`,
+            guestEmail: `g${i}@example.com`,
+            startAt: new Date(Date.now() + (i + 1) * 86_400_000).toISOString(),
+            endAt: new Date(Date.now() + (i + 1) * 86_400_000 + 30 * 60_000).toISOString(),
+          }),
+        ),
+        { total: 5 },
       ),
-    });
+    );
 
     renderBookings();
 
@@ -394,9 +364,12 @@ describe("<Bookings />", () => {
   });
 
   test("empty state wording differs between no-data and search-miss", async () => {
-    mockedApi.listBookings.mockResolvedValue({
-      bookings: [futureBooking({ id: "b1", linkTitle: "Alpha", guestName: "Alice" })],
-    });
+    // First call: 1 row visible. Second (after typing) returns total=0.
+    mockedApi.listBookings
+      .mockResolvedValueOnce(
+        pagedResponse([futureBooking({ id: "b1", linkTitle: "Alpha", guestName: "Alice" })]),
+      )
+      .mockResolvedValue(pagedResponse([], { total: 0 }));
 
     renderBookings();
 
@@ -407,16 +380,18 @@ describe("<Bookings />", () => {
     fireEvent.change(screen.getByLabelText("予約を検索"), {
       target: { value: "zzznomatch" },
     });
-    await waitFor(() => expect(screen.getByTestId("bookings-empty-search")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("bookings-empty-search")).toBeInTheDocument(), {
+      timeout: 1500,
+    });
     expect(screen.getByText("該当する予約がありません")).toBeInTheDocument();
     expect(screen.queryByTestId("bookings-empty-no-data")).not.toBeInTheDocument();
   });
 
   test("loading state renders a skeleton (role=status) instead of plain text", async () => {
-    let resolveFn: ((v: { bookings: BookingSummary[] }) => void) | undefined;
+    let resolveFn: ((v: ListBookingsResponse) => void) | undefined;
     mockedApi.listBookings.mockImplementation(
       () =>
-        new Promise((resolve) => {
+        new Promise<ListBookingsResponse>((resolve) => {
           resolveFn = resolve;
         }),
     );
@@ -430,7 +405,7 @@ describe("<Bookings />", () => {
     expect(screen.queryByText("読み込み中...")).not.toBeInTheDocument();
 
     // Resolve so the test doesn't leak a pending promise.
-    resolveFn?.({ bookings: [] });
+    resolveFn?.(pagedResponse([], { total: 0 }));
     await waitFor(() => expect(screen.getByText("予約はまだありません")).toBeInTheDocument());
   });
 });

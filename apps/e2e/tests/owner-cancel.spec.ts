@@ -63,12 +63,16 @@ test.describe("owner-side booking cancel", () => {
     // Two route handlers — Playwright matches in REVERSE registration order, so
     // the narrower `**/bookings/*` (registered second) is checked first when both
     // could match. The list endpoint is kept for any incidental callers.
-    await page.route("**/bookings", async (route, req) => {
+    // ISH-268: GET /bookings now serves a paged shape `{ bookings, total,
+    // page, pageSize }`. The FE may also send a query string (e.g.
+    // `?page=1&pageSize=25`), so the route glob now matches `**/bookings*`
+    // so a leading "?" doesn't fall through.
+    await page.route("**/bookings*", async (route, req) => {
       if (req.method() !== "GET") return route.fallback();
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ bookings: [booking] }),
+        body: JSON.stringify({ bookings: [booking], total: 1, page: 1, pageSize: 25 }),
       });
     });
     await page.route("**/bookings/*", async (route, req) => {

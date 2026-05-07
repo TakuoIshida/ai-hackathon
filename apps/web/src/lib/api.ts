@@ -29,6 +29,35 @@ export class ApiError extends Error {
 
 export type AuthTokenGetter = () => Promise<string | null>;
 
+// ISH-268: GET /bookings query params + response shape.
+export type ListBookingsParams = {
+  q?: string;
+  status?: "all" | "confirmed" | "canceled";
+  page?: number;
+  pageSize?: number;
+};
+
+export type ListBookingsResponse = {
+  bookings: BookingSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+function buildBookingsQuery(params: ListBookingsParams | undefined): string {
+  if (!params) return "";
+  const usp = new URLSearchParams();
+  // Skip empty-string `q` so the server's `q.trim().length > 0` short-circuit
+  // is symmetric with what the FE shows in the input. Sending `?q=` would
+  // serialize to a literal "" on the server and trip nothing useful.
+  if (params.q && params.q.length > 0) usp.set("q", params.q);
+  if (params.status && params.status !== "all") usp.set("status", params.status);
+  if (params.page !== undefined) usp.set("page", String(params.page));
+  if (params.pageSize !== undefined) usp.set("pageSize", String(params.pageSize));
+  const qs = usp.toString();
+  return qs ? `?${qs}` : "";
+}
+
 async function request<T>(
   path: string,
   init: RequestInit & { getToken?: AuthTokenGetter } = {},
@@ -109,8 +138,11 @@ export const api = {
       { getToken },
     ),
 
-  listBookings: (getToken: AuthTokenGetter) =>
-    request<{ bookings: BookingSummary[] }>("/bookings", { getToken }),
+  // ISH-268: server-side search / status filter / pagination. The previous
+  // signature `(getToken)` is preserved by making `params` optional — when
+  // omitted the server still defaults to page=1, pageSize=25, status=all.
+  listBookings: (params: ListBookingsParams | undefined, getToken: AuthTokenGetter) =>
+    request<ListBookingsResponse>(`/bookings${buildBookingsQuery(params)}`, { getToken }),
 
   // ISH-254: dedicated detail endpoint. The detail screen calls this instead
   // of paging the entire booking list and filtering client-side.
