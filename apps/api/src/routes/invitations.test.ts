@@ -114,6 +114,7 @@ async function seedInvitation(
     email?: string;
     expiresAt?: Date;
     acceptedAt?: Date | null;
+    role?: "owner" | "member";
   },
 ) {
   const [inv] = await testDb
@@ -124,6 +125,7 @@ async function seedInvitation(
       invitedByUserId: inviterUserId,
       expiresAt: opts?.expiresAt ?? new Date(Date.now() + 7 * 24 * 60 * 60_000),
       acceptedAt: opts?.acceptedAt ?? null,
+      role: opts?.role ?? "member",
     })
     .returning();
   if (!inv) throw new Error("seed: invitation insert failed");
@@ -574,11 +576,29 @@ describe("GET /invitations/:token — public preview (ISH-208)", () => {
     // Allowed fields.
     expect(body.workspace).toEqual({ name: tenant.name });
     expect(body.expired).toBe(false);
+    // ISH-260: role is exposed so the Welcome card can show owner/member badge.
+    expect(body.role).toBe("member");
     // ISH-208: the response MUST NOT include the invited email. A guessed or
     // stolen token would otherwise let an attacker enumerate invitee emails.
     expect(body).not.toHaveProperty("email");
     // Defensive: also pin that no field happens to leak the email by value.
     expect(JSON.stringify(body)).not.toContain(inviteeEmail);
+  });
+
+  test("ISH-260: 200 returns role='owner' for an owner-role invitation", async () => {
+    const { owner, tenant } = await seedOwnerAndTenant();
+    const inv = await seedInvitation(tenant.id, owner.id, {
+      email: "owner-invite@example.com",
+      role: "owner",
+    });
+
+    const testApp = new Hono();
+    testApp.route("/invitations", createInvitationsRoute({}));
+
+    const res = await testApp.request(`/invitations/${inv.token}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { role: string };
+    expect(body.role).toBe("owner");
   });
 
   test("404 for unknown token (no leakage of any field)", async () => {
