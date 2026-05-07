@@ -36,7 +36,11 @@ export type ReminderJobResult = {
   sent: number;
   /** `markReminderSent` returned false (already sent / lost the race). */
   skipped: number;
-  /** An email or repo call threw. The mark is intentionally NOT rolled back. */
+  /**
+   * At least one recipient (owner or guest) failed to receive the email, OR
+   * the repo claim itself threw. The mark is intentionally NOT rolled back —
+   * single-send semantics dominate (see `dispatch` rationale).
+   */
   failed: number;
 };
 
@@ -131,15 +135,32 @@ async function dispatch(
     meetUrl: booking.meetUrl,
     cancelUrl: `${deps.appBaseUrl}/cancel/${booking.cancellationToken}`,
   };
-  try {
-    await Promise.all([
-      deps.sendEmail(ownerReminderEmail(ctx)),
-      deps.sendEmail(guestReminderEmail(ctx)),
-    ]);
-    result.sent += 1;
-  } catch (err) {
-    console.error(`[reminder-job] dispatch failed for booking=${booking.bookingId}:`, err);
+  // ISH-275: Promise.allSettled so an owner-side failure does not silently
+  // discard a successful guest send (and vice versa). Each recipient is
+  // logged independently for ops triage. result.failed semantics: "at least
+  // one recipient failed". reminder_sent_at is intentionally NOT cleared on
+  // partial failure — single-send semantics dominate over a missed reminder.
+  const settled = await Promise.allSettled([
+    deps.sendEmail(ownerReminderEmail(ctx)),
+    deps.sendEmail(guestReminderEmail(ctx)),
+  ]);
+  const ownerResult = settled[0];
+  const guestResult = settled[1];
+  if (ownerResult.status === "rejected") {
+    console.error(
+      `[reminder-job] owner email failed for booking=${booking.bookingId}:`,
+      ownerResult.reason,
+    );
+  }
+  if (guestResult.status === "rejected") {
+    console.error(
+      `[reminder-job] guest email failed for booking=${booking.bookingId}:`,
+      guestResult.reason,
+    );
+  }
+  if (ownerResult.status === "rejected" || guestResult.status === "rejected") {
     result.failed += 1;
-    // Do NOT clear reminder_sent_at — single-send semantics dominate.
+  } else {
+    result.sent += 1;
   }
 }
