@@ -26,6 +26,17 @@ export type OwnerBookingView = {
   guestEmail: string;
   status: string;
   meetUrl: string | null;
+  /**
+   * Google Calendar `event.id` saved at confirm-time. Null when Google sync
+   * was skipped or failed (best-effort policy in `confirmBooking`).
+   */
+  googleEventId: string | null;
+  /**
+   * Google Calendar `event.htmlLink` saved at confirm-time — the deep link
+   * used by the booking detail "Google Calendar で開く" button (ISH-269).
+   * Null when Google sync was skipped or failed.
+   */
+  googleHtmlLink: string | null;
   canceledAt: Date | null;
   createdAt: Date;
 };
@@ -67,6 +78,8 @@ export async function listOwnerBookings(
     guestEmail: b.guestEmail,
     status: b.status,
     meetUrl: b.meetUrl,
+    googleEventId: b.googleEventId,
+    googleHtmlLink: b.googleHtmlLink,
     canceledAt: b.canceledAt,
     createdAt: b.createdAt,
   }));
@@ -103,6 +116,8 @@ export async function getOwnerBooking(
     guestEmail: b.guestEmail,
     status: b.status,
     meetUrl: b.meetUrl,
+    googleEventId: b.googleEventId,
+    googleHtmlLink: b.googleHtmlLink,
     canceledAt: b.canceledAt,
     createdAt: b.createdAt,
   };

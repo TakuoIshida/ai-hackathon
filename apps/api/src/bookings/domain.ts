@@ -24,6 +24,7 @@ export type Booking = {
   guestTimeZone: string | null;
   status: BookingStatus;
   googleEventId: string | null;
+  googleHtmlLink: string | null;
   meetUrl: string | null;
   cancellationToken: string;
   reminderSentAt: Date | null;

@@ -189,6 +189,7 @@ export const bookings = tenantSchema.table(
     guestTimeZone: text("guest_time_zone"),
     status: varchar("status", { length: 16 }).notNull().default("confirmed"),
     googleEventId: text("google_event_id"),
+    googleHtmlLink: text("google_html_link"),
     meetUrl: text("meet_url"),
     // Security token: keep UUIDv4 to avoid timestamp exposure (P-5 design doc)
     cancellationToken: uuid("cancellation_token").defaultRandom().notNull().unique(),

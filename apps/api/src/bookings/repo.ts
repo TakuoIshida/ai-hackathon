@@ -34,6 +34,7 @@ function toBookingDomain(row: BookingTableRow): Booking {
     // 'confirmed' | 'canceled' at the DB level — narrowing here is safe.
     status: row.status as BookingStatus,
     googleEventId: row.googleEventId,
+    googleHtmlLink: row.googleHtmlLink,
     meetUrl: row.meetUrl,
     cancellationToken: row.cancellationToken,
     reminderSentAt: row.reminderSentAt,
@@ -69,8 +70,12 @@ export async function attachGoogleEvent(
   bookingId: string,
   googleEventId: string,
   meetUrl: string | null,
+  googleHtmlLink: string | null,
 ): Promise<void> {
-  await database.update(bookings).set({ googleEventId, meetUrl }).where(eq(bookings.id, bookingId));
+  await database
+    .update(bookings)
+    .set({ googleEventId, meetUrl, googleHtmlLink })
+    .where(eq(bookings.id, bookingId));
 }
 
 export async function findBookingById(
