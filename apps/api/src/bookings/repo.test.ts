@@ -66,12 +66,15 @@ async function seedLink(): Promise<{ userId: string; linkId: string; tenantId: s
 }
 
 function bookingInput(
-  seed: { linkId: string; tenantId: string },
+  seed: { linkId: string; tenantId: string; userId: string },
   overrides: Partial<NewBookingRow> = {},
 ): Omit<NewBookingRow, "id" | "status" | "createdAt"> & { status?: never } {
   return {
     tenantId: seed.tenantId,
     linkId: seed.linkId,
+    // ISH-267: host_user_id is NOT NULL — every insert in production carries
+    // the parent link's primary owner as host. The seed reuses that user.
+    hostUserId: seed.userId,
     startAt: SLOT_START,
     endAt: SLOT_END,
     guestName: "Guest A",

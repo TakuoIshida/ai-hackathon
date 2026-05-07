@@ -21,6 +21,11 @@ test.describe("owner-side booking cancel", () => {
       linkId: string;
       linkSlug: string;
       linkTitle: string;
+      // ISH-267: BookingSummary now carries host info; mock fixture mirrors
+      // the BE response shape so the FE doesn't crash on missing fields.
+      hostUserId: string;
+      hostName: string;
+      hostEmail: string;
       startAt: string;
       endAt: string;
       guestName: string;
@@ -35,6 +40,9 @@ test.describe("owner-side booking cancel", () => {
       linkId: "link-1",
       linkSlug: "intro-30min",
       linkTitle: "Intro 30 min",
+      hostUserId: "u-host-1",
+      hostName: "Host McHostface",
+      hostEmail: "host@example.com",
       startAt,
       endAt,
       guestName: "Guest McGuestface",

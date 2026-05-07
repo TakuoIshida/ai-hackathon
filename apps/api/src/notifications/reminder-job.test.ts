@@ -95,6 +95,7 @@ async function insertDueBookingAt(
   const created = await tryInsertConfirmedBooking(db, {
     tenantId: fixture.tenantId,
     linkId: fixture.linkId,
+    hostUserId: fixture.userId,
     startAt: start,
     endAt: end,
     guestName: "Guest",
@@ -232,6 +233,7 @@ describe("sendDueReminders (ISH-98)", () => {
     const created = await tryInsertConfirmedBooking(db, {
       tenantId: fixture.tenantId,
       linkId: fixture.linkId,
+      hostUserId: fixture.userId,
       startAt: start,
       endAt: end,
       guestName: "Guest",

@@ -67,6 +67,11 @@ export async function confirmBooking(
   const inserted = await tryInsertConfirmedBooking(database, {
     tenantId: link.tenantId,
     linkId: link.id,
+    // ISH-267: persist the host (the link's primary owner) so /bookings list
+    // and /bookings/:id can return host name + email without re-resolving via
+    // availability_links every time. A future round-robin assignment ticket
+    // would override this with the chosen co-owner; today there is only one.
+    hostUserId: link.userId,
     startAt: new Date(startMs),
     endAt: new Date(endMs),
     guestName: input.guestName,

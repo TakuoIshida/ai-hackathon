@@ -23,6 +23,7 @@ function toBookingDomain(row: BookingTableRow): Booking {
   return {
     id: row.id,
     linkId: row.linkId,
+    hostUserId: row.hostUserId,
     startAt: row.startAt,
     endAt: row.endAt,
     guestName: row.guestName,
@@ -107,15 +108,27 @@ export async function findBookingsByOwner(
       booking: bookings,
       linkSlug: availabilityLinks.slug,
       linkTitle: availabilityLinks.title,
+      // ISH-267: host display fields, joined via the denormalized
+      // bookings.host_user_id → common.users PK. INNER JOIN is safe because
+      // host_user_id is NOT NULL and references users.id with ON DELETE
+      // RESTRICT (a host user cannot be deleted while their bookings exist).
+      hostName: users.name,
+      hostEmail: users.email,
     })
     .from(bookings)
     .innerJoin(availabilityLinks, eq(bookings.linkId, availabilityLinks.id))
+    .innerJoin(users, eq(bookings.hostUserId, users.id))
     .where(eq(availabilityLinks.userId, ownerId))
     .orderBy(desc(bookings.startAt));
   return rows.map((r) => ({
     ...toBookingDomain(r.booking),
     linkSlug: r.linkSlug,
     linkTitle: r.linkTitle,
+    // `users.name` is nullable in the DB but the dashboard wants a non-null
+    // string for rendering — fall back to the email's local-part so the
+    // "主催者" Card never shows blank.
+    hostName: r.hostName ?? r.hostEmail.split("@")[0] ?? r.hostEmail,
+    hostEmail: r.hostEmail,
   }));
 }
 
@@ -141,9 +154,14 @@ export async function findOwnerBookingById(
       booking: bookings,
       linkSlug: availabilityLinks.slug,
       linkTitle: availabilityLinks.title,
+      // ISH-267: same JOIN pattern as `findBookingsByOwner` — host display
+      // fields come from common.users via bookings.host_user_id.
+      hostName: users.name,
+      hostEmail: users.email,
     })
     .from(bookings)
     .innerJoin(availabilityLinks, eq(bookings.linkId, availabilityLinks.id))
+    .innerJoin(users, eq(bookings.hostUserId, users.id))
     .where(and(eq(bookings.id, bookingId), eq(availabilityLinks.userId, ownerId)))
     .limit(1);
   if (!row) return null;
@@ -151,6 +169,8 @@ export async function findOwnerBookingById(
     ...toBookingDomain(row.booking),
     linkSlug: row.linkSlug,
     linkTitle: row.linkTitle,
+    hostName: row.hostName ?? row.hostEmail.split("@")[0] ?? row.hostEmail,
+    hostEmail: row.hostEmail,
   };
 }
 
