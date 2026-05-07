@@ -85,6 +85,7 @@ describe("<AcceptInvite />", () => {
     mockedApi.getInvitation.mockResolvedValueOnce({
       workspace: { name: "Acme" },
       expired: true,
+      role: "member",
     });
     renderAt("expired-token");
     expect(await screen.findByText("招待の有効期限が切れています")).toBeInTheDocument();
@@ -95,6 +96,7 @@ describe("<AcceptInvite />", () => {
     mockedApi.getInvitation.mockResolvedValueOnce({
       workspace: { name: "Acme" },
       expired: false,
+      role: "member",
     });
     renderAt("good-token");
     expect(await screen.findByRole("button", { name: /サインインして承認/ })).toBeInTheDocument();
@@ -106,6 +108,7 @@ describe("<AcceptInvite />", () => {
     mockedApi.getInvitation.mockResolvedValueOnce({
       workspace: { name: "Acme" },
       expired: false,
+      role: "member",
     });
     renderAt("good-token");
 
@@ -141,6 +144,7 @@ describe("<AcceptInvite />", () => {
     mockedApi.getInvitation.mockResolvedValueOnce({
       workspace: { name: "Acme" },
       expired: false,
+      role: "member",
     });
     mockedApi.acceptTenantInvitation.mockResolvedValueOnce({
       tenantId: "tenant-1",
@@ -171,6 +175,7 @@ describe("<AcceptInvite />", () => {
     mockedApi.getInvitation.mockResolvedValueOnce({
       workspace: { name: "Acme" },
       expired: false,
+      role: "member",
     });
     mockedApi.acceptTenantInvitation.mockRejectedValueOnce(
       new ApiError(409, "already_accepted", "409 already_accepted"),
@@ -199,6 +204,7 @@ describe("<AcceptInvite />", () => {
     mockedApi.getInvitation.mockResolvedValueOnce({
       workspace: { name: "Acme" },
       expired: false,
+      role: "member",
     });
     mockedApi.acceptTenantInvitation.mockRejectedValueOnce(
       new ApiError(404, "not_found", "404 not_found"),
@@ -211,11 +217,41 @@ describe("<AcceptInvite />", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/404 not_found/));
   });
 
+  test("ISH-260: role='owner' invitation renders オーナー badge in team card and lead copy", async () => {
+    authMockState.isSignedIn = true;
+    mockedApi.getInvitation.mockResolvedValueOnce({
+      workspace: { name: "Acme" },
+      expired: false,
+      role: "owner",
+    });
+    renderAt("good-token");
+
+    const badge = await screen.findByTestId("role-badge");
+    expect(badge).toHaveTextContent("オーナー");
+    // The lead copy mentions both the workspace name and the role.
+    expect(screen.getByRole("heading", { name: "Ripsへようこそ" })).toBeInTheDocument();
+    expect(screen.getByTestId("team-card")).toHaveTextContent("オーナー");
+  });
+
+  test("ISH-260: role='member' invitation renders メンバー badge", async () => {
+    authMockState.isSignedIn = true;
+    mockedApi.getInvitation.mockResolvedValueOnce({
+      workspace: { name: "Acme" },
+      expired: false,
+      role: "member",
+    });
+    renderAt("good-token");
+
+    const badge = await screen.findByTestId("role-badge");
+    expect(badge).toHaveTextContent("メンバー");
+  });
+
   test("auth + accept 410 expired: shows error", async () => {
     authMockState.isSignedIn = true;
     mockedApi.getInvitation.mockResolvedValueOnce({
       workspace: { name: "Acme" },
       expired: false,
+      role: "member",
     });
     mockedApi.acceptTenantInvitation.mockRejectedValueOnce(
       new ApiError(410, "expired", "410 expired"),

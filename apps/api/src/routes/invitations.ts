@@ -2,6 +2,7 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono, type MiddlewareHandler } from "hono";
 import { config } from "@/config";
 import { db } from "@/db/client";
+import type { TenantMemberRole } from "@/db/schema/common";
 import { acceptInvitationParamsSchema, createInvitationBodySchema } from "@/invitations/schemas";
 import {
   acceptInvitation,
@@ -204,6 +205,11 @@ export function createInvitationsRoute(deps: InvitationsRouteDeps = {}): Hono<an
   // which email a tenant invited. The FE renders only the workspace name +
   // expired flag — the email match is implicitly checked at POST /accept
   // time (collapsed to 404 by ISH-194).
+  //
+  // ISH-260: include the invited role so the FE Welcome card can show
+  // "オーナーとして招待されています" / "メンバーとして招待されています". role
+  // is not enumeration-leaky on its own — there's no useful signal beyond
+  // what the token already exposes (which tenant invited which role).
   route.get("/:token", async (c) => {
     const token = c.req.param("token");
     const invitation = await findInvitationByToken(db, token);
@@ -214,6 +220,7 @@ export function createInvitationsRoute(deps: InvitationsRouteDeps = {}): Hono<an
     return c.json({
       workspace: { name: workspace.name },
       expired,
+      role: invitation.role as TenantMemberRole,
     });
   });
 

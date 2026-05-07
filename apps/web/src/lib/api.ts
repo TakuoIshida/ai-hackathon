@@ -204,10 +204,13 @@ export const api = {
   // ISH-208: response intentionally omits `email` to prevent invitee
   // enumeration via guessed/stolen tokens. The email match is enforced
   // at POST /accept time (collapsed to 404 per ISH-194).
+  // ISH-260: response now includes the invited `role` so the Welcome card
+  // can show "オーナーとして / メンバーとして 招待されています".
   getInvitation: (token: string) =>
     request<{
       workspace: { name: string };
       expired: boolean;
+      role: MembershipRole;
     }>(`/invitations/${encodeURIComponent(token)}`),
 
   // ISH-111: change a member's role within a workspace. Owner-only on the

@@ -23,6 +23,7 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 import { Logo } from "@/components/ui/logo";
 import { Stepper } from "@/components/ui/stepper";
 import { ApiError, api } from "@/lib/api";
+import type { MembershipRole } from "@/lib/types";
 import { colors, radius, shadow, space, typography } from "@/styles/tokens.stylex";
 
 const ONBOARDING_STEPS = [
@@ -156,6 +157,35 @@ const styles = stylex.create({
     borderRadius: radius.full,
     fontSize: "0.6875rem",
     fontWeight: typography.fontWeightBold,
+  },
+  // ISH-260: 招待 role badge — owner / member の出し分けで色を変える。
+  roleBadgeOwner: {
+    display: "inline-flex",
+    alignItems: "center",
+    paddingBlock: "0.125rem",
+    paddingInline: "0.5rem",
+    backgroundColor: colors.lilac100,
+    color: colors.blue900,
+    border: `1px solid ${colors.blue150}`,
+    borderRadius: radius.full,
+    fontSize: "0.6875rem",
+    fontWeight: typography.fontWeightBold,
+    marginInlineStart: "0.5rem",
+    verticalAlign: "middle",
+  },
+  roleBadgeMember: {
+    display: "inline-flex",
+    alignItems: "center",
+    paddingBlock: "0.125rem",
+    paddingInline: "0.5rem",
+    backgroundColor: colors.blue50,
+    color: colors.blue700,
+    border: `1px solid ${colors.blue150}`,
+    borderRadius: radius.full,
+    fontSize: "0.6875rem",
+    fontWeight: typography.fontWeightBold,
+    marginInlineStart: "0.5rem",
+    verticalAlign: "middle",
   },
   // ---------- expires line ----------
   expires: {
@@ -319,6 +349,12 @@ const styles = stylex.create({
 type PreviewData = {
   workspaceName: string;
   expired: boolean;
+  role: MembershipRole;
+};
+
+const ROLE_LABEL: Record<MembershipRole, string> = {
+  owner: "オーナー",
+  member: "メンバー",
 };
 
 type LoadState =
@@ -486,7 +522,7 @@ export default function AcceptInvite() {
         if (!alive) return;
         setLoad({
           kind: "loaded",
-          preview: { workspaceName: data.workspace.name, expired: data.expired },
+          preview: { workspaceName: data.workspace.name, expired: data.expired, role: data.role },
         });
       } catch (err) {
         if (!alive) return;
@@ -553,6 +589,8 @@ export default function AcceptInvite() {
 
   const teamInitial = preview.workspaceName.charAt(0).toUpperCase() || "T";
   const expiresLabel = defaultExpiresLabel();
+  const roleLabel = ROLE_LABEL[preview.role];
+  const roleBadgeStyle = preview.role === "owner" ? styles.roleBadgeOwner : styles.roleBadgeMember;
 
   return (
     <div {...stylex.props(styles.shell)}>
@@ -577,7 +615,8 @@ export default function AcceptInvite() {
           <h1 {...stylex.props(styles.h1)}>Ripsへようこそ</h1>
           <p {...stylex.props(styles.lead)}>
             あなたは <strong {...stylex.props(styles.leadStrong)}>{preview.workspaceName}</strong>{" "}
-            のチームメンバーに招待されました。
+            に <strong {...stylex.props(styles.leadStrong)}>{roleLabel}</strong>{" "}
+            として招待されています。
           </p>
           <p {...stylex.props(styles.lead, styles.leadGap)}>
             セットアップを行い、Ripsの利用を開始しましょう。
@@ -589,7 +628,12 @@ export default function AcceptInvite() {
               {teamInitial}
             </div>
             <div {...stylex.props(styles.teamMeta)}>
-              <div {...stylex.props(styles.teamName)}>{preview.workspaceName}</div>
+              <div {...stylex.props(styles.teamName)}>
+                {preview.workspaceName}
+                <span {...stylex.props(roleBadgeStyle)} data-testid="role-badge">
+                  {roleLabel}
+                </span>
+              </div>
               <div {...stylex.props(styles.teamSub)}>3名のメンバー · お試し期間 2026/05/25まで</div>
             </div>
             <span {...stylex.props(styles.inviteBadge)}>
