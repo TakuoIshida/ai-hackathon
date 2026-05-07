@@ -115,13 +115,21 @@ export type AcceptInvitationResult =
  * invitee has no tenant_members row yet — attachTenantContext is NOT mounted
  * on this endpoint.
  *
- * Flow:
+ * Flow (all inside a single DB transaction — ISH-274):
  *   1. Find invitation by token (baseline db, bypasses RLS)
  *   2. Validate expiry, already-accepted
- *   3. Check that the user is not already a tenant member (different tenant)
+ *   3. SELECT existing tenant_members row FOR UPDATE — locks the row when one
+ *      exists so concurrent acceptances of unrelated tokens cannot both pass
+ *      this check.
  *   4. Validate email match LAST (and as a not_found, to avoid leaking that
  *      the token is otherwise live to a non-invitee — see ISH-194)
- *   5. Atomically: INSERT tenant_members + UPDATE invitations.accepted_at
+ *   5. INSERT tenant_members + UPDATE invitations.accepted_at; the INSERT runs
+ *      WITHOUT `ON CONFLICT DO NOTHING` so a concurrent acceptance that won
+ *      the race surfaces as a unique_violation, the transaction rolls back
+ *      (the invitations.accepted_at UPDATE is undone), and we return
+ *      `user_already_in_tenant`. Without this rollback, two concurrent
+ *      acceptances would both consume their tokens but only one would create
+ *      a tenant_members row.
  *
  * Error precedence rationale (ISH-194):
  *   not_found → expired → already_accepted → user_already_in_tenant → not_found (email)
@@ -144,49 +152,79 @@ export async function acceptInvitation(
   callerEmail: string,
   token: string,
 ): Promise<AcceptInvitationResult> {
-  const invitation = await findOpenInvitationByToken(database, token);
-  if (!invitation) return { kind: "not_found" };
+  try {
+    return await database.transaction(async (tx) => {
+      const invitation = await findOpenInvitationByToken(tx, token);
+      if (!invitation) return { kind: "not_found" };
 
-  if (invitation.expiresAt.getTime() < Date.now()) {
-    return { kind: "expired" };
+      if (invitation.expiresAt.getTime() < Date.now()) {
+        return { kind: "expired" };
+      }
+
+      if (invitation.acceptedAt !== null) {
+        return { kind: "already_accepted" };
+      }
+
+      // Check if the user is already a member of any tenant.
+      // tenant_members.user_id UNIQUE means 1 user = 1 tenant. FOR UPDATE
+      // locks an existing row so a concurrent membership change cannot slip
+      // past this check; the unique constraint on the INSERT below covers the
+      // "no row yet but two tokens redeemed in parallel" race that FOR UPDATE
+      // alone cannot serialize.
+      const [existingMembership] = await tx
+        .select({ tenantId: tenantMembers.tenantId })
+        .from(tenantMembers)
+        .where(eq(tenantMembers.userId, callerUserId))
+        .limit(1)
+        .for("update");
+
+      if (existingMembership) {
+        return { kind: "user_already_in_tenant" };
+      }
+
+      // Email check LAST — and we collapse to `not_found` rather than returning
+      // a distinct `email_mismatch` kind. See JSDoc above for the leak rationale.
+      if (invitation.email.toLowerCase() !== callerEmail.toLowerCase()) {
+        return { kind: "not_found" };
+      }
+
+      // ISH-252: read the persisted role from the invitation row. The DB-level
+      // CHECK constraint matches TENANT_MEMBER_ROLES (and the column has a
+      // default of 'member'), so this cast is safe.
+      const role = invitation.role as TenantMemberRole;
+
+      await markInvitationAccepted(tx, {
+        invitationId: invitation.id,
+        userId: callerUserId,
+        tenantId: invitation.tenantId,
+        role,
+        now: new Date(),
+      });
+
+      return { kind: "ok", tenantId: invitation.tenantId, role };
+    });
+  } catch (err) {
+    // ISH-274: a concurrent acceptInvitation that won the race already
+    // INSERTed the tenant_members row; our INSERT hits the UNIQUE(user_id)
+    // constraint and the surrounding tx rolls back (so invitations.accepted_at
+    // for *this* token stays NULL — the user can retry from the original link).
+    if (isMemberUniqueViolation(err)) {
+      return { kind: "user_already_in_tenant" };
+    }
+    throw err;
   }
+}
 
-  if (invitation.acceptedAt !== null) {
-    return { kind: "already_accepted" };
-  }
-
-  // Check if the user is already a member of any tenant.
-  // tenant_members.user_id UNIQUE means 1 user = 1 tenant.
-  const [existingMembership] = await database
-    .select({ tenantId: tenantMembers.tenantId })
-    .from(tenantMembers)
-    .where(eq(tenantMembers.userId, callerUserId))
-    .limit(1);
-
-  if (existingMembership) {
-    return { kind: "user_already_in_tenant" };
-  }
-
-  // Email check LAST — and we collapse to `not_found` rather than returning
-  // a distinct `email_mismatch` kind. See JSDoc above for the leak rationale.
-  if (invitation.email.toLowerCase() !== callerEmail.toLowerCase()) {
-    return { kind: "not_found" };
-  }
-
-  // ISH-252: read the persisted role from the invitation row. The DB-level
-  // CHECK constraint matches TENANT_MEMBER_ROLES (and the column has a
-  // default of 'member'), so this cast is safe.
-  const role = invitation.role as TenantMemberRole;
-
-  await markInvitationAccepted(database, {
-    invitationId: invitation.id,
-    userId: callerUserId,
-    tenantId: invitation.tenantId,
-    role,
-    now: new Date(),
-  });
-
-  return { kind: "ok", tenantId: invitation.tenantId, role };
+/**
+ * Returns true when `err` is a PostgreSQL unique_violation (23505) for the
+ * tenant_members.user_id constraint. postgres-js exposes the PostgreSQL error
+ * fields directly on the thrown Error, so we duck-type without importing a
+ * postgres-js type.
+ */
+function isMemberUniqueViolation(err: unknown): boolean {
+  if (err === null || typeof err !== "object") return false;
+  const e = err as Record<string, unknown>;
+  return e.code === "23505" && e.constraint_name === "tenant_members_user_id_unique";
 }
 
 // ---------------------------------------------------------------------------

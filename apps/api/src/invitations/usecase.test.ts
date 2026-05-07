@@ -351,6 +351,76 @@ describe("invitations/usecase: acceptInvitation (ISH-176)", () => {
     const result = await acceptInvitation(db, invitee.id, invitee.email, invitation.token);
     expect(result.kind).toBe("user_already_in_tenant");
   });
+
+  test("ISH-274: parallel acceptance of two open invitations leaves the loser with accepted_at NULL and exactly one membership", async () => {
+    // Two unrelated tenants each invite the same email. The invitee fires both
+    // accepts in parallel — the surviving membership must match the winning
+    // invitation, the loser must come back as user_already_in_tenant, and the
+    // loser's invitation row must remain unaccepted (so the user can retry
+    // from the original link if they ever wanted to switch tenants — though
+    // the JSDoc enforces the 1-user-1-tenant rule, the audit trail must not
+    // claim a token was redeemed when the membership wasn't actually granted).
+    const inviteeEmail = "race@example.com";
+    const ownerA = await seedUser();
+    const tenantA = await seedTenant(ownerA.id);
+    const ownerB = await seedUser();
+    const tenantB = await seedTenant(ownerB.id);
+    const [invA] = await testDb
+      .insert(invitations)
+      .values({
+        tenantId: tenantA.id,
+        email: inviteeEmail,
+        invitedByUserId: ownerA.id,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60_000),
+        role: "member",
+      })
+      .returning();
+    const [invB] = await testDb
+      .insert(invitations)
+      .values({
+        tenantId: tenantB.id,
+        email: inviteeEmail,
+        invitedByUserId: ownerB.id,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60_000),
+        role: "member",
+      })
+      .returning();
+    if (!invA || !invB) throw new Error("seed: race invitations");
+    const invitee = await seedUser(inviteeEmail);
+
+    const [resA, resB] = await Promise.all([
+      acceptInvitation(db, invitee.id, invitee.email, invA.token),
+      acceptInvitation(db, invitee.id, invitee.email, invB.token),
+    ]);
+
+    const kinds = [resA.kind, resB.kind].sort();
+    expect(kinds).toEqual(["ok", "user_already_in_tenant"]);
+
+    const winner = resA.kind === "ok" ? resA : resB.kind === "ok" ? resB : null;
+    if (!winner || winner.kind !== "ok") throw new Error("expected one ok result");
+
+    // Exactly one tenant_members row, on the winner's tenant.
+    const members = await testDb
+      .select()
+      .from(tenantMembers)
+      .where(eq(tenantMembers.userId, invitee.id));
+    expect(members.length).toBe(1);
+    expect(members[0]?.tenantId).toBe(winner.tenantId);
+
+    // Loser invitation must NOT be marked accepted (its tx rolled back).
+    const winnerInvitationId = winner.tenantId === tenantA.id ? invA.id : invB.id;
+    const loserInvitationId = winner.tenantId === tenantA.id ? invB.id : invA.id;
+    const [winnerRow] = await testDb
+      .select({ acceptedAt: invitations.acceptedAt })
+      .from(invitations)
+      .where(eq(invitations.id, winnerInvitationId));
+    const [loserRow] = await testDb
+      .select({ acceptedAt: invitations.acceptedAt })
+      .from(invitations)
+      .where(eq(invitations.id, loserInvitationId));
+    expect(winnerRow?.acceptedAt).not.toBeNull();
+    expect(loserRow?.acceptedAt).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

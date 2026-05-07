@@ -4,7 +4,12 @@ import { type TenantMemberRole, tenantMembers } from "@/db/schema/common";
 import { type Invitation, invitations } from "@/db/schema/tenant";
 
 type Database = typeof DbClient;
-type BatchQuery = Parameters<Database["batch"]>[0][number];
+/**
+ * Either the top-level Db handle or a transaction obtained via
+ * `db.transaction(async (tx) => ...)`. Repo helpers that may be called from
+ * inside a transaction (ISH-274: acceptInvitation) must accept both.
+ */
+type DbOrTx = Database | Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 // ---------------------------------------------------------------------------
 // Invitation reads
@@ -19,7 +24,7 @@ type BatchQuery = Parameters<Database["batch"]>[0][number];
  * route. The baseline db bypasses RLS.
  */
 export async function findOpenInvitationByToken(
-  database: Database,
+  database: DbOrTx,
   token: string,
 ): Promise<Invitation | null> {
   const [row] = await database
@@ -125,17 +130,17 @@ export async function updateInvitationExpiry(
 }
 
 /**
- * Mark an invitation as accepted and insert a tenant_members row atomically.
+ * Mark an invitation as accepted and insert a tenant_members row.
  *
- * Uses db.batch so the two statements execute inside the same DB transaction.
- * If the user is already a member (UNIQUE(user_id) conflict), the INSERT is
- * silently skipped via ON CONFLICT DO NOTHING — the row was created by a prior
- * acceptance or direct admin add. The caller validates the UNIQUE constraint
- * violation before this function is called (via a pre-check), so this is only
- * a safety net for race conditions.
+ * Caller is responsible for wrapping this call in a transaction (acceptInvitation
+ * does so — ISH-274) so the two statements commit together. The INSERT is
+ * intentionally NOT guarded by `ON CONFLICT DO NOTHING`: a UNIQUE(user_id)
+ * violation under concurrent token redemption must surface and roll back the
+ * surrounding tx so the losing acceptance keeps `invitations.accepted_at` NULL
+ * (vs. silently consuming both tokens with only one membership created).
  */
 export async function markInvitationAccepted(
-  database: Database,
+  database: DbOrTx,
   params: {
     invitationId: string;
     userId: string;
@@ -144,19 +149,13 @@ export async function markInvitationAccepted(
     now: Date;
   },
 ): Promise<void> {
-  const queries: BatchQuery[] = [
-    database
-      .insert(tenantMembers)
-      .values({
-        userId: params.userId,
-        tenantId: params.tenantId,
-        role: params.role,
-      })
-      .onConflictDoNothing({ target: [tenantMembers.userId] }),
-    database
-      .update(invitations)
-      .set({ acceptedAt: params.now })
-      .where(and(eq(invitations.id, params.invitationId), isNull(invitations.acceptedAt))),
-  ];
-  await database.batch(queries as [BatchQuery, ...BatchQuery[]]);
+  await database.insert(tenantMembers).values({
+    userId: params.userId,
+    tenantId: params.tenantId,
+    role: params.role,
+  });
+  await database
+    .update(invitations)
+    .set({ acceptedAt: params.now })
+    .where(and(eq(invitations.id, params.invitationId), isNull(invitations.acceptedAt)));
 }
