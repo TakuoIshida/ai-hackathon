@@ -317,9 +317,9 @@ describe("workspaces/usecase: acceptInvitation (ISH-109)", () => {
     expect(result.kind).toBe("expired");
   });
 
-  // Pins the WHERE accepted_at IS NULL guard on acceptInvitationAtomic. Without
-  // it, a concurrent second redemption (which the read-then-write window in
-  // acceptInvitation cannot itself prevent on neon-http) would overwrite the
+  // Pins the WHERE accepted_at IS NULL guard on acceptInvitationAtomic.
+  // Without it, a concurrent second redemption (which the read-then-write
+  // window in acceptInvitation cannot itself prevent) would overwrite the
   // first acceptance timestamp.
   test("acceptedAt is preserved across a racing second accept", async () => {
     const { invitation, email } = await seedOpenInvitation();

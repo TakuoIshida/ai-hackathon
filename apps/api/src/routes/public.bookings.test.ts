@@ -76,7 +76,7 @@ async function seedPublishedLink(
     })
     .returning();
   if (!link) throw new Error("seed: link insert failed");
-  // Mon-Fri 9-17 JST — single multi-row INSERT (1 RTT vs 5 in CI Neon HTTP).
+  // Mon-Fri 9-17 JST — single multi-row INSERT (1 RTT vs 5 separate ones).
   await db.insert(availabilityRules).values(
     [1, 2, 3, 4, 5].map((weekday) => ({
       tenantId: tenant.id,
@@ -313,8 +313,8 @@ describe("POST /public/links/:slug/bookings", () => {
   });
 
   // Two full-pipeline bookings + cancel UPDATE + count query is the slowest
-  // test in this file. With the Neon Local HTTP backend (CI), every DB round
-  // trip is real network — the suite was running ~4s on main and the default
+  // test in this file — every DB round trip is a real network call to the
+  // CI Postgres service. The suite was running ~4s on main and the default
   // 5s test timeout left no headroom. Give it 15s explicitly so unrelated
   // CI-side variance doesn't flake the test.
   test("re-booking the same slot succeeds after the first booking is canceled", async () => {

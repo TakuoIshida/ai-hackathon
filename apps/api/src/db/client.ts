@@ -5,12 +5,10 @@ import { getRequestScope } from "./request-scope";
 import * as schema from "./schema";
 
 /**
- * Drizzle's `postgres-js` adapter does not expose `batch()` (that was a
- * `neon-http` affordance to compensate for the lack of callback
- * transactions). Repo modules derive `BatchQuery` from
- * `Parameters<Database["batch"]>` and rely on `db.batch()` to run multiple
- * statements atomically, so we keep the same surface here implemented on
- * top of postgres-js's real callback transactions.
+ * Drizzle's `postgres-js` adapter does not expose a top-level `batch()`.
+ * Repo modules derive `BatchQuery` from `Parameters<Database["batch"]>` and
+ * rely on `db.batch()` to run multiple statements atomically, so we attach
+ * a `batch` method that wraps the queries in a real callback transaction.
  */
 type Db = PostgresJsDatabase<typeof schema> & {
   batch<U extends BatchItem<"pg">, T extends Readonly<[U, ...U[]]>>(queries: T): Promise<unknown[]>;
@@ -24,8 +22,7 @@ function attachBatch(database: PostgresJsDatabase<typeof schema>): Db {
     queries: T,
   ): Promise<unknown[]> => {
     // postgres-js supports real callback transactions, so we wrap the
-    // statements in a single tx. Atomicity matches the semantics that
-    // neon-http's `db.batch()` previously provided over its HTTP transaction.
+    // statements in a single tx for atomicity.
     return database.transaction(async (tx) => {
       const results: unknown[] = [];
       for (const q of queries) {

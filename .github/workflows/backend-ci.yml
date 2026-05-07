@@ -67,10 +67,9 @@ jobs:
     needs: setup
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Tests run against a plain postgres:17-alpine services container. We're
-    # migrating off Neon to Google Cloud SQL (ISH-154), so CI no longer needs
-    # the Neon Local image — a stock Postgres is closer to Cloud SQL and
-    # avoids the WAN round-trip Neon Local adds against the upstream project.
+    # Tests run against a plain postgres:17-alpine services container —
+    # the same major version we run via docker-compose locally and target
+    # via Cloud SQL in production.
     services:
       db:
         image: postgres:17-alpine

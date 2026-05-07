@@ -284,8 +284,8 @@ describe("cancelBookingByOwner", () => {
 describe("cancel side-effects — Google delete resilience", () => {
   // The Google adapter (built via wiring.ts) ultimately calls `deleteEvent`
   // from `@/google/calendar`, which uses the mocked `httpFetch` from
-  // `@/test/mock-http`. Neon Local DB queries go through `globalThis.fetch`
-  // directly and are unaffected.
+  // `@/test/mock-http`. DB queries go through the postgres-js TCP
+  // connection and are unaffected by the httpFetch mock.
   function stubCalendarFetch(handler: () => Promise<Response>): void {
     httpFetchMock.mockImplementation(async () => handler());
   }

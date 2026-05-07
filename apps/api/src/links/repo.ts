@@ -82,7 +82,8 @@ async function loadRelations(
   return { rules, excludes: excludes.map((e) => e.localDate) };
 }
 
-// neon-http does not support callback transactions, so we use db.batch (atomic, single HTTP req).
+// `db.batch()` (defined in db/client.ts) wraps the queries in a single
+// callback transaction so the inserts commit atomically.
 type BatchQuery = Parameters<Database["batch"]>[0][number];
 
 export async function createLink(
@@ -162,8 +163,8 @@ export async function updateLink(
   linkId: string,
   patch: UpdateLinkCommand,
 ): Promise<LinkWithRelations | null> {
-  // Existence + ownership check happens outside the batch — neon-http cannot
-  // return rows from a write inside a multi-statement HTTP transaction.
+  // Existence + ownership check happens outside the batch so we can short-
+  // circuit with a clean `null` before issuing the writes.
   const existing = await getLinkForUser(database, userId, linkId);
   if (!existing) return null;
 
