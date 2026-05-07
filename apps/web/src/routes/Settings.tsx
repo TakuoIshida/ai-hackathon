@@ -43,6 +43,7 @@ import { ApiError, api, googleConnectUrl } from "@/lib/api";
 import {
   useChangeTenantMemberRoleMutation,
   useRemoveTenantMemberMutation,
+  useResendTenantInvitationMutation,
   useRevokeTenantInvitationMutation,
   useTenantMembersQuery,
 } from "@/lib/queries";
@@ -626,16 +627,82 @@ function MemberRowView({
         {member.status === "active" ? formatJoinedAt(member.joinedAt) : "—"}
       </div>
       <div {...stylex.props(styles.rowActions)}>
-        {/* 再送 button is a P3-2 placeholder; the real handler ships separately. */}
-        {member.status !== "active" && (
-          <Button variant="outline" size="sm">
-            再送
-          </Button>
-        )}
+        {/* ISH-261: resend button — only owners can trigger this BE endpoint
+            (403 otherwise). Self-row guards aren't relevant here since
+            invitation rows have no userId yet. */}
+        {member.status !== "active" && canManage && <ResendInvitationButton member={member} />}
         {showActiveMenu && <RowActionMenu member={member} />}
         {showInvitationMenu && <InvitationRowActionMenu member={member} />}
       </div>
     </div>
+  );
+}
+
+/**
+ * ISH-261: row action「再送」for pending / expired invitation rows.
+ *
+ * Only rendered for owner callers (the BE endpoint is owner-only). On click:
+ *   - calls POST /tenant/invitations/:invitationId/resend
+ *   - on success: success toast + tenant-members listing invalidated by the
+ *     mutation hook, so the "残り N 時間" label refreshes
+ *   - on error: error toast keyed by ApiError.code
+ *
+ * The button is `disabled` while the mutation is in-flight to suppress
+ * double-clicks; the BE call is idempotent (each click extends expiresAt by
+ * another 24h) but we don't want the operator to wonder why nothing happened.
+ */
+function ResendInvitationButton({ member }: { member: TenantMemberView }) {
+  const { toast } = useToast();
+  const resendMutation = useResendTenantInvitationMutation();
+
+  // Listing rows carry the invitation id as `inv:<invitationId>`; strip the
+  // prefix before passing to the API helper.
+  const invitationId = member.id.startsWith("inv:") ? member.id.slice(4) : member.id;
+
+  const onClick = () => {
+    resendMutation.mutate(invitationId, {
+      onSuccess: () => {
+        toast({
+          title: `${member.email} に招待を再送しました`,
+          variant: "success",
+        });
+      },
+      onError: (err) => {
+        if (err instanceof ApiError && err.code === "already_accepted") {
+          toast({
+            title: "再送できません",
+            description: "この招待はすでに受諾されています。",
+            variant: "destructive",
+          });
+          return;
+        }
+        if (err instanceof ApiError && err.status === 404) {
+          toast({
+            title: "再送できません",
+            description: "招待が見つかりません。一覧を再読み込みしてください。",
+            variant: "destructive",
+          });
+          return;
+        }
+        toast({
+          title: "招待の再送に失敗しました",
+          description: err instanceof ApiError ? err.code : "unknown_error",
+          variant: "destructive",
+        });
+      },
+    });
+  };
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={onClick}
+      disabled={resendMutation.isPending}
+      data-testid={`invitation-resend-${member.email}`}
+    >
+      {resendMutation.isPending ? "送信中..." : "再送"}
+    </Button>
   );
 }
 

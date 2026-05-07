@@ -1,12 +1,20 @@
 import { eq } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
 import { type TenantMemberRole, tenantMembers, users } from "@/db/schema/common";
-import { deleteInvitationForTenant, findInvitationByIdForTenant } from "@/tenant-members/repo";
+import { workspaceInviteEmail } from "@/notifications/templates";
+import type { SendEmailFn } from "@/notifications/types";
 import {
+  deleteInvitationForTenant,
+  findInvitationByIdForTenant as findInvitationLookupForTenant,
+} from "@/tenant-members/repo";
+import { findWorkspaceById } from "@/workspaces/repo";
+import {
+  findInvitationByIdForTenant,
   findOpenInvitationByEmail,
   findOpenInvitationByToken,
   insertInvitation,
   markInvitationAccepted,
+  updateInvitationExpiry,
 } from "./repo";
 
 type Database = typeof DbClient;
@@ -205,11 +213,80 @@ export async function revokeTenantInvitation(
   tenantId: string,
   invitationId: string,
 ): Promise<RevokeTenantInvitationResult> {
-  const invitation = await findInvitationByIdForTenant(database, tenantId, invitationId);
+  const invitation = await findInvitationLookupForTenant(database, tenantId, invitationId);
   if (!invitation) return { kind: "not_found" };
   if (invitation.acceptedAt !== null) return { kind: "already_accepted" };
 
   const deleted = await deleteInvitationForTenant(database, tenantId, invitationId);
   if (!deleted) return { kind: "not_found" };
   return { kind: "ok" };
+}
+
+// ---------------------------------------------------------------------------
+// resendTenantInvitation (ISH-261)
+// ---------------------------------------------------------------------------
+
+/**
+ * ISH-261: resend a still-open tenant invitation, extending its expiry by
+ * `INVITE_TTL_MS` (24h per ticket spec — overrides the original 7d TTL so
+ * the recipient gets a fresh window from the moment of resend).
+ *
+ * Caller authorization (owner-only) is enforced at the route layer via
+ * `getTenantRole(c) === 'owner'`.
+ *
+ * Status precedence:
+ *   not_found → already_accepted → ok
+ *
+ * Email delivery is best-effort (mirrors `issueInvitation`): the row's
+ * `expiresAt` is committed before send, and a delivery failure is logged but
+ * does NOT roll back the extension. The operator can always click 再送 again.
+ */
+export type ResendTenantInvitationDeps = {
+  sendEmail: SendEmailFn;
+  appBaseUrl: string;
+  /** override-able for tests; defaults to Date.now() */
+  now?: () => number;
+};
+
+export type ResendTenantInvitationResult =
+  | { kind: "ok"; invitationId: string; expiresAt: Date }
+  | { kind: "not_found" }
+  | { kind: "already_accepted" };
+
+const RESEND_TTL_MS = 24 * 60 * 60_000; // 24h per ticket spec
+
+export async function resendTenantInvitation(
+  database: Database,
+  tenantId: string,
+  invitationId: string,
+  deps: ResendTenantInvitationDeps,
+): Promise<ResendTenantInvitationResult> {
+  const invitation = await findInvitationByIdForTenant(database, tenantId, invitationId);
+  if (!invitation) return { kind: "not_found" };
+  if (invitation.acceptedAt !== null) return { kind: "already_accepted" };
+
+  const now = deps.now?.() ?? Date.now();
+  const expiresAt = new Date(now + RESEND_TTL_MS);
+  const updated = await updateInvitationExpiry(database, invitation.id, expiresAt);
+  // Row vanished between read and write (canceled in another tab) — collapse
+  // to not_found so the FE re-fetches the listing.
+  if (!updated) return { kind: "not_found" };
+
+  // Best-effort email — mirrors issueInvitation's policy. The row is already
+  // committed, so a delivery failure is logged + swallowed.
+  try {
+    const workspace = await findWorkspaceById(database, tenantId);
+    await deps.sendEmail(
+      workspaceInviteEmail({
+        to: invitation.email,
+        workspaceName: workspace?.name ?? "ワークスペース",
+        acceptUrl: `${deps.appBaseUrl}/invite/${invitation.token}`,
+        expiresAt,
+      }),
+    );
+  } catch (err) {
+    console.warn("[invite] failed to resend invitation email; row kept:", err);
+  }
+
+  return { kind: "ok", invitationId: invitation.id, expiresAt };
 }
