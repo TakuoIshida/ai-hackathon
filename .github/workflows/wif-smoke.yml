@@ -1,0 +1,43 @@
+name: wif-smoke
+
+# Verifies that Workload Identity Federation is wired up correctly.
+# Run manually after `infrastructure/bootstrap` has been applied for the target env.
+# Each env has its own WIF provider + SA, so this is parameterised.
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: target env
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - stg
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  smoke:
+    name: WIF auth (${{ inputs.env }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_CI_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Show authenticated identity
+        run: |
+          gcloud auth list
+          gcloud config list project
+          gcloud storage buckets list --filter="name~^tfstate-" --format="value(name,location)"

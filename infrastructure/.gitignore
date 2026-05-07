@@ -1,0 +1,21 @@
+# Terraform / Terragrunt
+.terraform/
+.terraform.lock.hcl.bak
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terragrunt-cache/
+
+# tfvars: only the *.example variant is tracked
+*.tfvars
+!*.tfvars.example
+
+# Editor
+.idea/
+.vscode/
