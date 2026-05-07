@@ -12,6 +12,12 @@ import { expect, test } from "@playwright/test";
 // Google API is not exercised here — the BE does best-effort patch which the
 // route mock doesn't simulate.
 
+// The slot picker renders times in the browser TZ (defaults to
+// `Intl.DateTimeFormat().resolvedOptions().timeZone`). Pin the chromium
+// context to Asia/Tokyo so the slot button text matches /15:00.*15:30/
+// regardless of the runner's wall-clock TZ (CI runs in UTC).
+test.use({ timezoneId: "Asia/Tokyo" });
+
 test.describe("owner-side booking reschedule", () => {
   test("owner picks a new slot and the detail flips to the new time", async ({ page }) => {
     const BOOKING_ID = "bk-owner-reschedule-1";
