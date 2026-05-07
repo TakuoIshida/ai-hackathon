@@ -72,7 +72,7 @@ async function seedPublishedLink(
     })
     .returning();
   if (!linkRow) throw new Error("seed: link insert failed");
-  // Mon-Fri 9-17 JST — single multi-row INSERT (1 RTT vs 5 in CI Neon HTTP).
+  // Mon-Fri 9-17 JST — single multi-row INSERT (1 RTT vs 5 separate ones).
   await db.insert(availabilityRules).values(
     [1, 2, 3, 4, 5].map((weekday) => ({
       tenantId,

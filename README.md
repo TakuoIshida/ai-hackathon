@@ -9,7 +9,7 @@ Monorepo scaffold for an AI hackathon project.
 | Frontend | Vite + React 19 + TypeScript                                      |
 | UI       | Radix UI Primitives + StyleX (no Tailwind, no shadcn)             |
 | Backend  | Hono on **Bun** (`Bun.serve`) + TypeScript                        |
-| DB       | Neon Postgres (serverless) + Drizzle ORM                          |
+| DB       | Postgres (Cloud SQL in prod, docker-compose Postgres 17 in dev) + Drizzle ORM |
 | Auth     | Clerk (`@clerk/clerk-react` on web, `@hono/clerk-auth` on api)    |
 | PM       | **Bun** workspaces (`bun.lock`)                                   |
 | Quality  | **Biome** (format + lint, single config) + `tsc --noEmit`         |
@@ -129,11 +129,11 @@ docker compose up --build
 # web  → http://localhost:6173
 ```
 
-## Database (Drizzle + Neon)
+## Database (Drizzle + Postgres)
 
 ```bash
 bun run db:generate   # SQL migrations from schema.ts
-bun run db:migrate    # apply to Neon
+bun run db:migrate    # apply to the DATABASE_URL_ADMIN target
 bun run db:studio     # open Drizzle Studio
 ```
 

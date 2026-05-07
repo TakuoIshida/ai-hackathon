@@ -81,7 +81,7 @@ export type BookingTestSinks = {
  * captures published events AND drives the real `createBookingNotifier`
  * adapter so template rendering + sendEmail are exercised; the lookup
  * ports go through `wiring.ts` so they read the test DB the same way
- * production reads Neon.
+ * production reads its Postgres.
  */
 export function buildBookingTestSinks(
   database: Database,

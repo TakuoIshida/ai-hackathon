@@ -91,7 +91,6 @@ export function decryptOauthRefreshToken(account: OauthAccount, encryptionKey: B
  * oauth account get `usedForWrites = false` first; then the target row is
  * updated with the requested patch. Reads back the row and returns it.
  *
- * neon-http does not support callback transactions; we batch instead.
  */
 export async function setCalendarFlags(
   database: Database,
