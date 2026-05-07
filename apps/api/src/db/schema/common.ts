@@ -60,6 +60,16 @@ export type NewTenant = typeof tenants.$inferInsert;
 export const TENANT_MEMBER_ROLES = ["owner", "member"] as const;
 export type TenantMemberRole = (typeof TENANT_MEMBER_ROLES)[number];
 
+/**
+ * Name of the UNIQUE constraint on `common.tenant_members.user_id` that
+ * enforces "1 user = 1 tenant". Drizzle auto-derives this from the column's
+ * `.unique()` modifier (`<table>_<column>_unique`); we re-export it as a
+ * named constant so error-handling code (e.g. ISH-274's `acceptInvitation`
+ * race recovery) can match `unique_violation` errors by constraint name
+ * without re-typing the magic string.
+ */
+export const TENANT_MEMBERS_USER_ID_UNIQUE = "tenant_members_user_id_unique";
+
 // SQL fragment for the CHECK constraint: `'owner', 'member'` (raw because we
 // want literal SQL, not parameter placeholders).
 const TENANT_MEMBER_ROLES_SQL = sql.raw(TENANT_MEMBER_ROLES.map((r) => `'${r}'`).join(", "));

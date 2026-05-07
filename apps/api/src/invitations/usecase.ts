@@ -1,6 +1,11 @@
 import { eq } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
-import { type TenantMemberRole, tenantMembers, users } from "@/db/schema/common";
+import {
+  TENANT_MEMBERS_USER_ID_UNIQUE,
+  type TenantMemberRole,
+  tenantMembers,
+  users,
+} from "@/db/schema/common";
 import { workspaceInviteEmail } from "@/notifications/templates";
 import type { SendEmailFn } from "@/notifications/types";
 import {
@@ -224,7 +229,7 @@ export async function acceptInvitation(
 function isMemberUniqueViolation(err: unknown): boolean {
   if (err === null || typeof err !== "object") return false;
   const e = err as Record<string, unknown>;
-  return e.code === "23505" && e.constraint_name === "tenant_members_user_id_unique";
+  return e.code === "23505" && e.constraint_name === TENANT_MEMBERS_USER_ID_UNIQUE;
 }
 
 // ---------------------------------------------------------------------------
