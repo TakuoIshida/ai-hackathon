@@ -16,6 +16,7 @@ export type ActiveMemberRow = {
 export type OpenInvitationRow = {
   invitationId: string;
   email: string;
+  role: "owner" | "member";
   expiresAt: Date;
   createdAt: Date;
 };
@@ -58,13 +59,14 @@ export async function findOpenInvitationsForTenant(
     .select({
       invitationId: invitations.id,
       email: invitations.email,
+      role: invitations.role,
       expiresAt: invitations.expiresAt,
       createdAt: invitations.createdAt,
     })
     .from(invitations)
     .where(and(eq(invitations.tenantId, tenantId), isNull(invitations.acceptedAt)))
     .orderBy(asc(invitations.createdAt));
-  return rows;
+  return rows.map((r) => ({ ...r, role: r.role as "owner" | "member" }));
 }
 
 /**
