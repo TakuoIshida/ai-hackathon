@@ -258,6 +258,59 @@ describe("cancelBookingByOwner", () => {
     expect(sinks.sentEmails.length).toBe(0);
   });
 
+  test("co-owner is allowed to cancel (ISH-273): symmetric with confirm-side attendee set", async () => {
+    const seed = await seedConfirmedBooking();
+    const [coOwner] = await testDb
+      .insert(users)
+      .values({ externalId: `clerk_${randomUUID()}`, email: "co-owner@example.com" })
+      .returning();
+    if (!coOwner) throw new Error("seed co-owner");
+
+    const ports = toCancelPorts(sinks, null);
+    const result = await cancelBookingByOwner(db, seed.bookingId, coOwner.id, {
+      ...ports,
+      links: {
+        ...ports.links,
+        listLinkCoOwnerUserIds: async (linkId) => (linkId === seed.linkId ? [coOwner.id] : []),
+      },
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error("unexpected kind");
+    expect(result.booking.status).toBe("canceled");
+
+    const [row] = await testDb.select().from(bookings).where(eq(bookings.id, seed.bookingId));
+    expect(row?.status).toBe("canceled");
+  });
+
+  test("non-primary, non-co-owner user gets kind:'not_found' even when co-owner list is non-empty", async () => {
+    const seed = await seedConfirmedBooking();
+    const [coOwner] = await testDb
+      .insert(users)
+      .values({ externalId: `clerk_${randomUUID()}`, email: "co-owner@example.com" })
+      .returning();
+    if (!coOwner) throw new Error("seed co-owner");
+    const [intruder] = await testDb
+      .insert(users)
+      .values({ externalId: `clerk_${randomUUID()}`, email: "intruder2@example.com" })
+      .returning();
+    if (!intruder) throw new Error("seed intruder");
+
+    const ports = toCancelPorts(sinks, null);
+    const result = await cancelBookingByOwner(db, seed.bookingId, intruder.id, {
+      ...ports,
+      links: {
+        ...ports.links,
+        listLinkCoOwnerUserIds: async () => [coOwner.id],
+      },
+    });
+    expect(result.kind).toBe("not_found");
+
+    const [row] = await testDb.select().from(bookings).where(eq(bookings.id, seed.bookingId));
+    expect(row?.status).toBe("confirmed");
+    expect(sinks.sentEmails.length).toBe(0);
+  });
+
   test("idempotent: second owner-cancel returns 'already_canceled' and fires no emails", async () => {
     const seed = await seedConfirmedBooking();
 
