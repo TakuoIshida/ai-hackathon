@@ -101,9 +101,16 @@ export async function cancelBookingByOwner(
 ): Promise<CancelResult> {
   const booking = await findBookingById(database, bookingId);
   if (!booking) return { kind: "not_found" };
-  // Ownership check via the link.
+  // Ownership check via the link. Both primary owner (link.userId) and any
+  // registered co-owner are allowed to cancel — confirm.ts puts co-owners on
+  // the calendar event as attendees, so cancel must accept the same set
+  // (ISH-273).
   const link = await ports.links.findLinkById(booking.linkId);
-  if (!link || link.userId !== ownerUserId) return { kind: "not_found" };
+  if (!link) return { kind: "not_found" };
+  const coOwnerIds = await ports.links.listLinkCoOwnerUserIds(link.id);
+  if (link.userId !== ownerUserId && !coOwnerIds.includes(ownerUserId)) {
+    return { kind: "not_found" };
+  }
   if (booking.status === "canceled") return { kind: "already_canceled" };
 
   const canceled = await markBookingCanceled(database, booking.id);
