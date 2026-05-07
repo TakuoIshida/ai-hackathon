@@ -82,12 +82,81 @@ describe("<BookingDetail />", () => {
     expect(mockedApi.getBooking).toHaveBeenCalledWith("b1", expect.any(Function));
   });
 
+  // ISH-248: redesigned page is composed of 5 Card sections plus the cancel
+  // banner / action footer.
+  test("renders all 5 redesigned Card sections", async () => {
+    mockedApi.getBooking.mockResolvedValue({ booking: futureBooking({ id: "b1" }) });
+
+    renderAt("b1");
+
+    // 1. 基本情報
+    expect(await screen.findByRole("heading", { level: 2, name: "基本情報" })).toBeInTheDocument();
+    expect(screen.getByText("日時")).toBeInTheDocument();
+    expect(screen.getByText("所要時間")).toBeInTheDocument();
+    expect(screen.getByText("30 分")).toBeInTheDocument();
+    // リンク row points to the link edit page.
+    expect(screen.getByRole("link", { name: /30 minute intro/ })).toHaveAttribute(
+      "href",
+      "/availability-sharings/l1/edit",
+    );
+
+    // 2. 主催者
+    expect(screen.getByRole("heading", { level: 2, name: /主催者/ })).toBeInTheDocument();
+    expect(screen.getByText("あなた")).toBeInTheDocument();
+
+    // 3. 参加者 — guest + メール link
+    expect(screen.getByRole("heading", { level: 2, name: /参加者/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /メールでメッセージ/ })).toHaveAttribute(
+      "href",
+      "mailto:alice@example.com",
+    );
+
+    // 4. 会議情報
+    expect(screen.getByRole("heading", { level: 2, name: /会議情報/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Meet を開く" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Google Calendar で開く/ })).toBeInTheDocument();
+
+    // 5. アクション Footer — リスケ placeholder is disabled, cancel is active.
+    expect(screen.getByRole("button", { name: "リスケ" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "予約をキャンセル" })).toBeEnabled();
+  });
+
+  test("canceled state shows the rose-tone banner and hides the action footer", async () => {
+    mockedApi.getBooking.mockResolvedValue({
+      booking: futureBooking({
+        status: "canceled",
+        canceledAt: "2026-05-01T03:00:00Z",
+      }),
+    });
+
+    renderAt("b1");
+
+    // Banner shows up
+    const banner = await screen.findByRole("status");
+    expect(banner.textContent).toMatch(/キャンセル済/);
+
+    // 「キャンセル済」 badge sits next to the heading too.
+    expect(screen.getAllByText("キャンセル済").length).toBeGreaterThan(0);
+
+    // Action footer is hidden — neither リスケ nor 予約をキャンセル button.
+    expect(screen.queryByRole("button", { name: "リスケ" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "予約をキャンセル" })).toBeNull();
+  });
+
   test("renders the not_found empty state when the API returns 404", async () => {
     mockedApi.getBooking.mockRejectedValue(new ApiError(404, "not_found", "404 Not Found"));
 
     renderAt("missing-id");
 
     expect(await screen.findByText("予約が見つかりません")).toBeInTheDocument();
+  });
+
+  test("renders the error state when the API rejects with a non-404", async () => {
+    mockedApi.getBooking.mockRejectedValue(new ApiError(500, "internal", "500"));
+
+    renderAt("b1");
+
+    expect(await screen.findByText(/500 internal/)).toBeInTheDocument();
   });
 
   test("cancel flow: confirm → API call → reload reflects canceled state", async () => {
@@ -117,6 +186,6 @@ describe("<BookingDetail />", () => {
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "予約をキャンセル" })).toBeNull(),
     );
-    expect(screen.getByText(/キャンセル済/)).toBeInTheDocument();
+    expect(screen.getAllByText(/キャンセル済/).length).toBeGreaterThan(0);
   });
 });

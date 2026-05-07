@@ -95,15 +95,18 @@ test.describe("owner-side booking cancel", () => {
     await expect(page.getByRole("heading", { name: "Intro 30 min" })).toBeVisible({
       timeout: 10_000,
     });
-    await expect(page.getByText("ステータス: 確定")).toBeVisible();
+    // ISH-248: status moved from "ステータス: X" text into a Badge next to H1.
+    // Badge text alone matches; "確定" is unique on this page (banner uses "キャンセル済 · ..." instead).
+    await expect(page.getByText("確定", { exact: true })).toBeVisible();
 
     // Cancel button — only visible while the booking is future + confirmed.
     const cancelBtn = page.getByRole("button", { name: "予約をキャンセル" });
     await expect(cancelBtn).toBeVisible();
     await cancelBtn.click();
 
-    // After DELETE → reload (the page calls list again). The status flips.
-    await expect(page.getByText("ステータス: キャンセル済")).toBeVisible();
+    // After DELETE → reload. Badge flips to "キャンセル済"; banner also shows
+    // "キャンセル済 · {date}"; either is fine for the visibility assertion.
+    await expect(page.getByText("キャンセル済", { exact: true })).toBeVisible();
     // The cancel button is gone now that the booking is canceled.
     await expect(page.getByRole("button", { name: "予約をキャンセル" })).toBeHidden();
   });
