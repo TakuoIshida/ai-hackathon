@@ -149,32 +149,6 @@ function formatDuration(startAt: string, endAt: string): string {
   return `${hours} 時間 ${minutes} 分`;
 }
 
-/**
- * Build a Google Calendar event-create deeplink. Best-effort — if the user
- * isn't signed into the matching Google account it'll just open the new event
- * dialog with the title prefilled. The booking already lives in their calendar
- * via Meet sync, so this is purely a convenience deep link.
- *
- * `dates` format: `YYYYMMDDTHHMMSSZ/YYYYMMDDTHHMMSSZ` (UTC, no separators).
- */
-function googleCalendarDeeplink(b: BookingSummary): string {
-  const fmt = (iso: string) => {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return (
-      `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}` +
-      `T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`
-    );
-  };
-  const dates = `${fmt(b.startAt)}/${fmt(b.endAt)}`;
-  const params = new URLSearchParams({
-    text: b.linkTitle,
-    dates,
-  });
-  return `https://calendar.google.com/calendar/r/eventedit?${params.toString()}`;
-}
-
 function initial(name: string, fallback: string): string {
   const source = name.trim() || fallback;
   return source.charAt(0).toUpperCase();
@@ -425,11 +399,21 @@ export default function BookingDetail() {
                     Meet を開く
                   </a>
                 </Button>
-                <Button asChild variant="outline" leftIcon={<ExternalLink size={14} />}>
-                  <a href={googleCalendarDeeplink(b)} target="_blank" rel="noreferrer">
-                    Google Calendar で開く
-                  </a>
-                </Button>
+                {/*
+                 * ISH-269: deeplink straight into the real Google Calendar
+                 * event via `htmlLink` (returned by events.insert and
+                 * persisted at confirm time). Null means Google sync was
+                 * skipped/failed; we hide the button rather than offering a
+                 * best-effort eventedit URL that'd take the user to a new-
+                 * event-create form for a meeting they already have.
+                 */}
+                {b.googleHtmlLink ? (
+                  <Button asChild variant="outline" leftIcon={<ExternalLink size={14} />}>
+                    <a href={b.googleHtmlLink} target="_blank" rel="noreferrer">
+                      Google Calendar で開く
+                    </a>
+                  </Button>
+                ) : null}
               </div>
             </div>
           ) : (

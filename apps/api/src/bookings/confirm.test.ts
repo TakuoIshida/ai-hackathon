@@ -219,6 +219,9 @@ describe("confirmBooking — Google integration", () => {
     if (result.kind !== "ok") throw new Error("unexpected kind");
     expect(result.booking.googleEventId).toBe("evt-google-1");
     expect(result.booking.meetUrl).toBe("https://meet.google.com/abc-defg-hij");
+    // ISH-269: htmlLink from events.insert is persisted on the booking so
+    // the owner detail page can deeplink to the actual event.
+    expect(result.booking.googleHtmlLink).toBe("https://example.com/evt-google-1");
     expect(createEventCalled).toBe(1);
     expect(lastTitle).toBe("30 min meeting");
 
@@ -228,6 +231,7 @@ describe("confirmBooking — Google integration", () => {
       .where(eq(bookings.id, result.booking.id));
     expect(persisted?.googleEventId).toBe("evt-google-1");
     expect(persisted?.meetUrl).toBe("https://meet.google.com/abc-defg-hij");
+    expect(persisted?.googleHtmlLink).toBe("https://example.com/evt-google-1");
 
     expect(sinks.sentEmails.length).toBe(2);
   });
@@ -274,9 +278,10 @@ describe("confirmBooking — Google integration", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("unexpected kind");
-    // Booking persisted, but without googleEventId / meetUrl.
+    // Booking persisted, but without googleEventId / meetUrl / googleHtmlLink.
     expect(result.booking.googleEventId).toBeNull();
     expect(result.booking.meetUrl).toBeNull();
+    expect(result.booking.googleHtmlLink).toBeNull();
     expect(createEventCalls).toBe(1);
 
     const [persisted] = await testDb
@@ -286,6 +291,7 @@ describe("confirmBooking — Google integration", () => {
     expect(persisted?.status).toBe("confirmed");
     expect(persisted?.googleEventId).toBeNull();
     expect(persisted?.meetUrl).toBeNull();
+    expect(persisted?.googleHtmlLink).toBeNull();
 
     // Email side-effects still ran.
     expect(sinks.sentEmails.length).toBe(2);

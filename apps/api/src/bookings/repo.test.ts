@@ -151,7 +151,7 @@ describe("bookings/repo", () => {
     expect(persisted.id).toBe(winners[0]?.id ?? "");
   });
 
-  test("attachGoogleEvent sets googleEventId and meetUrl on the row", async () => {
+  test("attachGoogleEvent sets googleEventId, meetUrl and googleHtmlLink on the row", async () => {
     const seed = await seedLink();
     const created = await tryInsertConfirmedBooking(db, bookingInput(seed));
     if (!created) throw new Error("precondition: insert should succeed");
@@ -161,17 +161,24 @@ describe("bookings/repo", () => {
       created.id,
       "evt-google-123",
       "https://meet.google.com/abc-defg-hij",
+      "https://www.google.com/calendar/event?eid=evt-google-123",
     );
 
     const reloaded = await findBookingById(db, created.id);
     expect(reloaded?.googleEventId).toBe("evt-google-123");
     expect(reloaded?.meetUrl).toBe("https://meet.google.com/abc-defg-hij");
+    // ISH-269: htmlLink persisted alongside event id so the booking detail
+    // page can deeplink straight to the actual Google Calendar event.
+    expect(reloaded?.googleHtmlLink).toBe(
+      "https://www.google.com/calendar/event?eid=evt-google-123",
+    );
 
-    // Also accepts a null meetUrl (no Meet attached).
-    await attachGoogleEvent(db, created.id, "evt-google-456", null);
+    // Also accepts a null meetUrl + null htmlLink (no Meet, no link returned).
+    await attachGoogleEvent(db, created.id, "evt-google-456", null, null);
     const reloaded2 = await findBookingById(db, created.id);
     expect(reloaded2?.googleEventId).toBe("evt-google-456");
     expect(reloaded2?.meetUrl).toBeNull();
+    expect(reloaded2?.googleHtmlLink).toBeNull();
   });
 
   test("findActiveBookingsForLink returns rows scoped to the given linkId", async () => {

@@ -81,6 +81,18 @@ export type BookingSummary = {
   guestEmail: string;
   status: BookingStatus;
   meetUrl: string | null;
+  /**
+   * Google Calendar event id captured at confirm time. Null when Google sync
+   * was skipped or failed (best-effort policy in `confirmBooking`).
+   */
+  googleEventId: string | null;
+  /**
+   * Google Calendar `event.htmlLink` captured at confirm time — used by the
+   * booking detail "Google Calendar で開く" button to deep-link straight to
+   * the real event (ISH-269). Null means we don't have a deeplink to offer
+   * (Google disabled / oauth missing / sync failed) and the button is hidden.
+   */
+  googleHtmlLink: string | null;
   canceledAt: string | null;
   createdAt: string;
 };

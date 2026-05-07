@@ -188,6 +188,17 @@ async function applyMigrationsIfNeeded(sql: postgres.Sql): Promise<void> {
             AND column_name = 'host_user_id'
         ) AS present
       `;
+    } else if (name.startsWith("0006_")) {
+      // 0006_bookings-google-link (ISH-269): sentinel = google_html_link
+      // column on tenant.bookings.
+      probe = sql<Array<{ present: boolean }>>`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'tenant'
+            AND table_name = 'bookings'
+            AND column_name = 'google_html_link'
+        ) AS present
+      `;
     } else {
       // Unknown migration: always apply (safe because SQL uses IF NOT EXISTS /
       // IF EXISTS where appropriate, or will error loudly).

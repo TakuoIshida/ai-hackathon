@@ -32,6 +32,10 @@ test.describe("owner-side booking cancel", () => {
       guestEmail: string;
       status: "confirmed" | "canceled";
       meetUrl: string | null;
+      // ISH-269: BE response now includes Google Calendar event id +
+      // htmlLink so the detail page can deeplink to the real event.
+      googleEventId: string | null;
+      googleHtmlLink: string | null;
       canceledAt: string | null;
       createdAt: string;
     };
@@ -49,6 +53,8 @@ test.describe("owner-side booking cancel", () => {
       guestEmail: "guest@example.com",
       status: "confirmed",
       meetUrl: "https://meet.google.com/zzz-yyyy-xxx",
+      googleEventId: "evt-google-zzz",
+      googleHtmlLink: "https://www.google.com/calendar/event?eid=evt-google-zzz",
       canceledAt: null,
       createdAt: new Date().toISOString(),
     };

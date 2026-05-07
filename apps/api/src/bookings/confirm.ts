@@ -150,8 +150,19 @@ async function syncGoogleEvent(
       ],
       generateMeetUrl: true,
     });
-    await attachGoogleEvent(database, booking.id, created.id, created.meetUrl ?? null);
-    return { ...booking, googleEventId: created.id, meetUrl: created.meetUrl ?? null };
+    await attachGoogleEvent(
+      database,
+      booking.id,
+      created.id,
+      created.meetUrl ?? null,
+      created.htmlLink ?? null,
+    );
+    return {
+      ...booking,
+      googleEventId: created.id,
+      meetUrl: created.meetUrl ?? null,
+      googleHtmlLink: created.htmlLink ?? null,
+    };
   } catch (err) {
     console.warn("[booking] google calendar sync failed; booking kept without event:", err);
     return booking;

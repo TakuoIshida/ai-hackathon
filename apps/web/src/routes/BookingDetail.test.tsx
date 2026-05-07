@@ -45,6 +45,8 @@ function futureBooking(overrides: Partial<BookingSummary> = {}): BookingSummary 
     guestEmail: "alice@example.com",
     status: "confirmed",
     meetUrl: "https://meet.google.com/abc-defg-hij",
+    googleEventId: "evt-google-abc",
+    googleHtmlLink: "https://www.google.com/calendar/event?eid=evt-google-abc",
     canceledAt: null,
     createdAt: "2026-04-01T00:00:00Z",
     ...overrides,
@@ -118,11 +120,32 @@ describe("<BookingDetail />", () => {
     // 4. 会議情報
     expect(screen.getByRole("heading", { level: 2, name: /会議情報/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Meet を開く" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Google Calendar で開く/ })).toBeInTheDocument();
+    // ISH-269: 「Google Calendar で開く」 must point at the real event htmlLink
+    // returned by events.insert — NOT the old best-effort eventedit URL.
+    expect(screen.getByRole("link", { name: /Google Calendar で開く/ })).toHaveAttribute(
+      "href",
+      "https://www.google.com/calendar/event?eid=evt-google-abc",
+    );
 
     // 5. アクション Footer — リスケ placeholder is disabled, cancel is active.
     expect(screen.getByRole("button", { name: "リスケ" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "予約をキャンセル" })).toBeEnabled();
+  });
+
+  test("ISH-269: hides 「Google Calendar で開く」 button when googleHtmlLink is null", async () => {
+    // Google sync skipped or failed at confirm time → no real event deeplink
+    // to offer. We hide the button rather than fall back to a new-event-create
+    // URL so the user isn't sent to the wrong place.
+    mockedApi.getBooking.mockResolvedValue({
+      booking: futureBooking({ id: "b1", googleHtmlLink: null }),
+    });
+
+    renderAt("b1");
+
+    // Meet button still rendered as long as meetUrl is set.
+    expect(await screen.findByRole("link", { name: "Meet を開く" })).toBeInTheDocument();
+    // Calendar deeplink button is gone.
+    expect(screen.queryByRole("link", { name: /Google Calendar で開く/ })).toBeNull();
   });
 
   test("canceled state shows the rose-tone banner and hides the action footer", async () => {
