@@ -26,7 +26,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatCard } from "@/components/ui/stat-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ApiError, api, type ListBookingsParams } from "@/lib/api";
+import { ApiError, api, type ExportBookingsCsvParams, type ListBookingsParams } from "@/lib/api";
 import { formatLocalDate, formatLocalTime } from "@/lib/local-date";
 import type { BookingSummary } from "@/lib/types";
 import { colors, radius, space, typography } from "@/styles/tokens.stylex";
@@ -396,6 +396,52 @@ export default function Bookings() {
     void reload();
   }, [reload]);
 
+  // ISH-271: CSV export. Reuses the same (q, status) filters that drove the
+  // visible table so the file mirrors what the user sees. Pagination is
+  // intentionally NOT forwarded — the server returns every matching row.
+  // The download itself goes through a transient Blob URL + a programmatic
+  // <a download> click, with `URL.revokeObjectURL` once the click has been
+  // dispatched. Loading state on the button doubles as a re-click guard.
+  const [exporting, setExporting] = useState(false);
+  const onExportCsv = useCallback(async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const params: ExportBookingsCsvParams = {
+        q: debouncedSearch.trim() || undefined,
+        status: serverStatus,
+      };
+      const blob = await api.exportBookingsCsv(params, () => getToken());
+      // jsdom / happy-dom both stub URL.createObjectURL when the test sets
+      // it up explicitly; in production the browser provides it. Guard so a
+      // missing impl doesn't crash the page (the download just won't fire).
+      if (typeof URL.createObjectURL !== "function") return;
+      const url = URL.createObjectURL(blob);
+      const yyyy = new Date().getFullYear().toString().padStart(4, "0");
+      const mm = (new Date().getMonth() + 1).toString().padStart(2, "0");
+      const dd = new Date().getDate().toString().padStart(2, "0");
+      const filename = `bookings-${yyyy}${mm}${dd}.csv`;
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      // `a` must be in the DOM for Firefox to honor the click() download.
+      // We attach + click + remove synchronously; the actual fetch already
+      // completed when we got the Blob.
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      // Surface as a console warning — the page already has its own error
+      // surface for the table itself, and the CSV button failure is not
+      // worth a full toast UX in this iteration. A failed export keeps the
+      // table state intact.
+      console.warn("[bookings] CSV export failed:", err);
+    } finally {
+      setExporting(false);
+    }
+  }, [exporting, debouncedSearch, serverStatus, getToken]);
+
   // Stats — 3 値: 今後の予定 / 今月の確定 / キャンセル (今月)。
   //
   // ISH-268 explicitly leaves stats out of scope ("stats は client-side で
@@ -436,7 +482,12 @@ export default function Bookings() {
           <h1 {...stylex.props(styles.heading)}>確定済の予定</h1>
           <p {...stylex.props(styles.sub)}>確定した予約を一覧で確認できます</p>
         </div>
-        <Button variant="outline" leftIcon={<Download size={15} />} disabled>
+        <Button
+          variant="outline"
+          leftIcon={<Download size={15} />}
+          loading={exporting}
+          onClick={onExportCsv}
+        >
           CSV エクスポート
         </Button>
       </header>

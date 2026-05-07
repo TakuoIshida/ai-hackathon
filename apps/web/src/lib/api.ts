@@ -1,4 +1,5 @@
 import { httpFetch } from "./http";
+// httpFetch is also re-used directly by exportBookingsCsv (binary blob path).
 import type {
   BookingSummary,
   GoogleCalendarSummary,
@@ -43,6 +44,22 @@ export type ListBookingsResponse = {
   page: number;
   pageSize: number;
 };
+
+// ISH-271: CSV export query params. Same shape as `ListBookingsParams` minus
+// pagination (the server returns every matching row in one shot).
+export type ExportBookingsCsvParams = {
+  q?: string;
+  status?: "all" | "confirmed" | "canceled";
+};
+
+function buildExportCsvQuery(params: ExportBookingsCsvParams | undefined): string {
+  if (!params) return "";
+  const usp = new URLSearchParams();
+  if (params.q && params.q.length > 0) usp.set("q", params.q);
+  if (params.status && params.status !== "all") usp.set("status", params.status);
+  const qs = usp.toString();
+  return qs ? `?${qs}` : "";
+}
 
 function buildBookingsQuery(params: ListBookingsParams | undefined): string {
   if (!params) return "";
@@ -143,6 +160,39 @@ export const api = {
   // omitted the server still defaults to page=1, pageSize=25, status=all.
   listBookings: (params: ListBookingsParams | undefined, getToken: AuthTokenGetter) =>
     request<ListBookingsResponse>(`/bookings${buildBookingsQuery(params)}`, { getToken }),
+
+  // ISH-271: CSV export. Same `q` / `status` filters as `listBookings` (no
+  // pagination). Returns a Blob so the caller can trigger a download via
+  // URL.createObjectURL + an anchor click without inspecting the body.
+  // Uses `httpFetch` directly (instead of the JSON-centric `request` helper)
+  // because the response body is `text/csv`, not JSON, and we need to
+  // surface the binary stream to the FE intact.
+  exportBookingsCsv: async (
+    params: ExportBookingsCsvParams | undefined,
+    getToken: AuthTokenGetter,
+  ): Promise<Blob> => {
+    const headers = new Headers();
+    const token = await getToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    const res = await httpFetch(`${API_URL}/bookings/export.csv${buildExportCsvQuery(params)}`, {
+      credentials: "include",
+      headers,
+    });
+    if (!res.ok) {
+      let body: { error?: string } = {};
+      try {
+        body = (await res.json()) as { error?: string };
+      } catch {
+        // not JSON — server responded with text/html or empty body
+      }
+      throw new ApiError(
+        res.status,
+        body.error ?? "request_failed",
+        `${res.status} ${res.statusText}`,
+      );
+    }
+    return await res.blob();
+  },
 
   // ISH-254: dedicated detail endpoint. The detail screen calls this instead
   // of paging the entire booking list and filtering client-side.
