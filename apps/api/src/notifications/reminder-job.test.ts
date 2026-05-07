@@ -389,25 +389,136 @@ describe("sendDueReminders (ISH-98)", () => {
     }
   });
 
-  test("partial Promise.all failure (only guest send fails): result.failed=1, mark retained", async () => {
+  test("partial failure (only guest send fails): result.failed=1, mark retained, owner still received (ISH-275)", async () => {
     const fixture = await seedOwnerAndLink();
     const due = await insertDueBooking(fixture, "guest@example.com");
 
-    // Owner email succeeds, guest email throws. Promise.all rejects → dispatch
-    // catches → counted as failed; reminder_sent_at stays SET.
+    // Owner email succeeds, guest email throws. Promise.allSettled keeps the
+    // owner-side success while still flagging the booking as failed for ops
+    // visibility. Pre-ISH-275 (Promise.all) the owner success was silently
+    // discarded; the bug was that the owner had ALREADY been sent before guest
+    // rejected, so the email reached the inbox but the result counter said
+    // "failed" with no per-recipient signal.
+    const calls: { to: string; threw: boolean }[] = [];
     const partialSender: SendEmailFn = async (msg) => {
-      if (msg.to === "guest@example.com") throw new Error("guest send fail");
-      // owner ok
+      if (msg.to === "guest@example.com") {
+        calls.push({ to: msg.to, threw: true });
+        throw new Error("guest send fail");
+      }
+      calls.push({ to: msg.to, threw: false });
     };
 
-    const result = await sendDueReminders(db, {
-      sendEmail: partialSender,
-      appBaseUrl: APP_BASE_URL,
-      now: () => NOW.getTime(),
-    });
-    expect(result).toEqual({ considered: 1, sent: 0, skipped: 0, failed: 1 });
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await sendDueReminders(db, {
+        sendEmail: partialSender,
+        appBaseUrl: APP_BASE_URL,
+        now: () => NOW.getTime(),
+      });
+      expect(result).toEqual({ considered: 1, sent: 0, skipped: 0, failed: 1 });
 
-    const [persisted] = await testDb.select().from(bookings).where(eq(bookings.id, due.id));
-    expect(persisted?.reminderSentAt).toBeTruthy();
+      // Both recipients were attempted (the bug-fix: owner does NOT get
+      // skipped just because guest's promise was created in the same batch).
+      const targets = calls.map((c) => c.to).sort();
+      expect(targets).toEqual([fixture.ownerEmail, "guest@example.com"].sort());
+      // Owner attempt did not throw.
+      expect(calls.find((c) => c.to === fixture.ownerEmail)?.threw).toBe(false);
+
+      // Per-recipient log path: only the guest-failure log line should fire.
+      const guestLogged = errorSpy.mock.calls.some((args) =>
+        args.some(
+          (a) => typeof a === "string" && a.includes("guest email failed") && a.includes(due.id),
+        ),
+      );
+      const ownerLogged = errorSpy.mock.calls.some((args) =>
+        args.some((a) => typeof a === "string" && a.includes("owner email failed")),
+      );
+      expect(guestLogged).toBe(true);
+      expect(ownerLogged).toBe(false);
+
+      const [persisted] = await testDb.select().from(bookings).where(eq(bookings.id, due.id));
+      expect(persisted?.reminderSentAt).toBeTruthy();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  test("partial failure (only owner send fails): guest still received, failed=1 (ISH-275)", async () => {
+    // Symmetric counterpart of the previous test: the pre-ISH-275 Promise.all
+    // version would have rejected as soon as owner threw and discarded the
+    // guest result entirely. With allSettled, guest still gets the email and
+    // the operator sees an owner-specific log line.
+    const fixture = await seedOwnerAndLink();
+    const due = await insertDueBooking(fixture, "guest@example.com");
+
+    const calls: { to: string; threw: boolean }[] = [];
+    const partialSender: SendEmailFn = async (msg) => {
+      if (msg.to === fixture.ownerEmail) {
+        calls.push({ to: msg.to, threw: true });
+        throw new Error("owner send fail");
+      }
+      calls.push({ to: msg.to, threw: false });
+    };
+
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await sendDueReminders(db, {
+        sendEmail: partialSender,
+        appBaseUrl: APP_BASE_URL,
+        now: () => NOW.getTime(),
+      });
+      expect(result).toEqual({ considered: 1, sent: 0, skipped: 0, failed: 1 });
+
+      // Both attempted; guest's send was not aborted by owner's rejection.
+      expect(calls.find((c) => c.to === "guest@example.com")?.threw).toBe(false);
+      expect(calls.find((c) => c.to === fixture.ownerEmail)?.threw).toBe(true);
+
+      const ownerLogged = errorSpy.mock.calls.some((args) =>
+        args.some(
+          (a) => typeof a === "string" && a.includes("owner email failed") && a.includes(due.id),
+        ),
+      );
+      expect(ownerLogged).toBe(true);
+
+      const [persisted] = await testDb.select().from(bookings).where(eq(bookings.id, due.id));
+      expect(persisted?.reminderSentAt).toBeTruthy();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  test("both recipients fail: failed=1, sent=0, both recipients logged (ISH-275)", async () => {
+    const fixture = await seedOwnerAndLink();
+    const due = await insertDueBooking(fixture, "guest@example.com");
+
+    const failingSender: SendEmailFn = async () => {
+      throw new Error("smtp down");
+    };
+
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await sendDueReminders(db, {
+        sendEmail: failingSender,
+        appBaseUrl: APP_BASE_URL,
+        now: () => NOW.getTime(),
+      });
+      expect(result).toEqual({ considered: 1, sent: 0, skipped: 0, failed: 1 });
+
+      // Each recipient gets its own log line (ops can identify both fell over).
+      const ownerLogged = errorSpy.mock.calls.some((args) =>
+        args.some(
+          (a) => typeof a === "string" && a.includes("owner email failed") && a.includes(due.id),
+        ),
+      );
+      const guestLogged = errorSpy.mock.calls.some((args) =>
+        args.some(
+          (a) => typeof a === "string" && a.includes("guest email failed") && a.includes(due.id),
+        ),
+      );
+      expect(ownerLogged).toBe(true);
+      expect(guestLogged).toBe(true);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });
