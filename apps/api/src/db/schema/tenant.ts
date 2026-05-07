@@ -174,6 +174,13 @@ export const bookings = tenantSchema.table(
     linkId: text("link_id")
       .notNull()
       .references(() => availabilityLinks.id, { onDelete: "restrict" }),
+    // ISH-267: denormalized host (owner) reference so the dashboard list /
+    // detail endpoints can return the host name + email without a transitive
+    // JOIN through availability_links every time. Populated at insert with
+    // link.user_id; survives any future link reassignment.
+    hostUserId: text("host_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
     startAt: timestamp("start_at", { withTimezone: true }).notNull(),
     endAt: timestamp("end_at", { withTimezone: true }).notNull(),
     guestName: text("guest_name").notNull(),
@@ -193,6 +200,7 @@ export const bookings = tenantSchema.table(
     index("bookings_tenant_id_idx").on(t.tenantId),
     index("idx_bookings_link_start").on(t.linkId, t.startAt),
     index("idx_bookings_status_start").on(t.status, t.startAt),
+    index("idx_bookings_host_user_id").on(t.hostUserId),
     // Dual-booking guard: at most one confirmed booking per (link, slot start).
     // Canceled rows do not block re-booking the same slot.
     uniqueIndex("uniq_bookings_active_slot")

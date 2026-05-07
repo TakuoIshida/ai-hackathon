@@ -69,6 +69,12 @@ export type BookingSummary = {
   linkId: string;
   linkSlug: string;
   linkTitle: string;
+  // ISH-267: host (owner) info — returned by GET /bookings + /bookings/:id so
+  // the dashboard can render the actual host name + email instead of the
+  // hard-coded "あなた" / "このワークスペースのオーナー" placeholders.
+  hostUserId: string;
+  hostName: string;
+  hostEmail: string;
   startAt: string;
   endAt: string;
   guestName: string;

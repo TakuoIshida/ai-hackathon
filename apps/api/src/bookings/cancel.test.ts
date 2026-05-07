@@ -114,6 +114,7 @@ async function seedConfirmedBooking(
     .values({
       tenantId: tenant.id,
       linkId: link.id,
+      hostUserId: user.id,
       startAt: new Date("2026-12-14T05:00:00Z"),
       endAt: new Date("2026-12-14T05:30:00Z"),
       guestName: "Guest",

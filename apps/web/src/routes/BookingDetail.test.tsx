@@ -36,6 +36,9 @@ function futureBooking(overrides: Partial<BookingSummary> = {}): BookingSummary 
     linkId: "l1",
     linkSlug: "intro-30",
     linkTitle: "30 minute intro",
+    hostUserId: "u-host-1",
+    hostName: "Hana Host",
+    hostEmail: "hana@example.com",
     startAt: start.toISOString(),
     endAt: end.toISOString(),
     guestName: "Alice",
@@ -100,9 +103,10 @@ describe("<BookingDetail />", () => {
       "/availability-sharings/l1/edit",
     );
 
-    // 2. 主催者
+    // 2. 主催者 — ISH-267: BE が返す hostName / hostEmail を render する。
     expect(screen.getByRole("heading", { level: 2, name: /主催者/ })).toBeInTheDocument();
-    expect(screen.getByText("あなた")).toBeInTheDocument();
+    expect(screen.getByText("Hana Host")).toBeInTheDocument();
+    expect(screen.getByText("hana@example.com")).toBeInTheDocument();
 
     // 3. 参加者 — guest + メール link
     expect(screen.getByRole("heading", { level: 2, name: /参加者/ })).toBeInTheDocument();

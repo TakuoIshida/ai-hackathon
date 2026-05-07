@@ -124,15 +124,34 @@ async function seedLink(
 async function seedConfirmedBooking(
   tenantId: string,
   linkId: string,
-  overrides: { startAt?: Date; guestEmail?: string; googleEventId?: string | null } = {},
+  overrides: {
+    startAt?: Date;
+    guestEmail?: string;
+    googleEventId?: string | null;
+    hostUserId?: string;
+  } = {},
 ): Promise<string> {
   const startAt = overrides.startAt ?? new Date("2026-12-14T05:00:00.000Z");
   const endAt = new Date(startAt.getTime() + 30 * 60_000);
+  // ISH-267: host_user_id is NOT NULL. Tests typically pass the seeded link's
+  // owner userId; if omitted, look it up via the link row to avoid every
+  // call site needing to thread it through.
+  let hostUserId = overrides.hostUserId;
+  if (!hostUserId) {
+    const [linkRow] = await testDb
+      .select({ userId: availabilityLinks.userId })
+      .from(availabilityLinks)
+      .where(eq(availabilityLinks.id, linkId))
+      .limit(1);
+    if (!linkRow) throw new Error("seed booking: link not found");
+    hostUserId = linkRow.userId;
+  }
   const [row] = await testDb
     .insert(bookings)
     .values({
       tenantId,
       linkId,
+      hostUserId,
       startAt,
       endAt,
       guestName: "Guest",

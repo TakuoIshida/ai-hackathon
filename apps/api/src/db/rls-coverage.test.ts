@@ -185,6 +185,9 @@ const SPECS: TableSpec[] = [
       id: ulid(),
       tenant_id: f.tenantId,
       link_id: f.linkId,
+      // ISH-267: host_user_id is NOT NULL. RLS test only cares about the
+      // tenant boundary; the host happens to be the seeded user in `f`.
+      host_user_id: f.userId,
       // start time is unique-per-salt so the per-link uniq_bookings_active_slot
       // partial index doesn't reject the cross-tenant INSERT for a reason
       // OTHER than RLS WITH CHECK (which is what we're testing).

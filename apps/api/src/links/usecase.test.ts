@@ -371,6 +371,7 @@ describe("computePublicSlots — confirmed-booking merge (ISH-138)", () => {
     await testDb.insert(bookings).values({
       tenantId,
       linkId: created.link.id,
+      hostUserId: userId,
       startAt: new Date(slotStart),
       endAt: new Date(slotEnd),
       guestName: "Guest A",
@@ -416,6 +417,7 @@ describe("computePublicSlots — confirmed-booking merge (ISH-138)", () => {
     await testDb.insert(bookings).values({
       tenantId,
       linkId: created.link.id,
+      hostUserId: userId,
       startAt: new Date(slotStart),
       endAt: new Date(slotEnd),
       guestName: "Guest A",

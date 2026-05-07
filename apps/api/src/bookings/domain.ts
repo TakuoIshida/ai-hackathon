@@ -12,6 +12,10 @@ export type BookingStatus = "confirmed" | "canceled";
 export type Booking = {
   id: string;
   linkId: string;
+  // ISH-267: persisted host (owner) reference. The list / detail endpoints
+  // resolve this to name + email via a JOIN — see `OwnerBooking`. Populated at
+  // insert with the parent link's primary owner user id.
+  hostUserId: string;
   startAt: Date;
   endAt: Date;
   guestName: string;
@@ -28,13 +32,17 @@ export type Booking = {
 };
 
 /**
- * Booking joined with the parent link's slug + title. Returned by the owner
- * "My bookings" list view so the response can include link metadata in a
- * single round trip without N+1 lookups in the route handler.
+ * Booking joined with the parent link's slug + title and the host user's
+ * display fields. Returned by the owner "My bookings" list view so the
+ * response can include host + link metadata in a single round trip without
+ * N+1 lookups in the route handler. ISH-267 added the host fields so the
+ * dashboard can stop hard-coding "あなた" / "このワークスペースのオーナー".
  */
 export type OwnerBooking = Booking & {
   linkSlug: string;
   linkTitle: string;
+  hostName: string;
+  hostEmail: string;
 };
 
 /**

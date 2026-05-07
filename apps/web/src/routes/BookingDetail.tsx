@@ -43,9 +43,9 @@ import { colors, radius, space, typography } from "@/styles/tokens.stylex";
  *
  * `canceledAt` がある場合は上部に rose tone banner を出し、Footer は非表示。
  *
- * BookingSummary には host 情報が含まれないため、主催者 Card は「あなた」
- * 表記で固定 (現状ロジック維持: 当該 user のオーナー予約しか取得できない)。
- * 将来 BE が host を返すようになったら差し替える。
+ * ISH-267: 主催者 Card は BE が返す `hostName` / `hostEmail` を使う
+ * (denormalized bookings.host_user_id → common.users JOIN)。BookingSummary
+ * の hostUserId / hostName / hostEmail を直接 render する。
  */
 
 const styles = stylex.create({
@@ -357,11 +357,11 @@ export default function BookingDetail() {
         <CardBody>
           <div {...stylex.props(styles.personRow)}>
             <Avatar size="lg">
-              <AvatarFallback>あ</AvatarFallback>
+              <AvatarFallback>{initial(b.hostName, b.hostEmail)}</AvatarFallback>
             </Avatar>
             <div {...stylex.props(styles.personMeta)}>
-              <span {...stylex.props(styles.personName)}>あなた</span>
-              <span {...stylex.props(styles.personEmail)}>このワークスペースのオーナー</span>
+              <span {...stylex.props(styles.personName)}>{b.hostName}</span>
+              <span {...stylex.props(styles.personEmail)}>{b.hostEmail}</span>
             </div>
           </div>
         </CardBody>

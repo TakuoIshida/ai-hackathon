@@ -697,10 +697,12 @@ function BookingRow({ booking, tz }: { booking: BookingSummary; tz: string }) {
   const end = booking.endAt;
   const rowSx = stylex.props(styles.tableRow, booking.status === "canceled" && styles.rowCanceled);
 
-  // 主催者は login user 固定 (auth adapter に useUser() が無いので display 名は
-  // placeholder。実 user 情報の取得は別 issue で対応)。
-  const hostName = "あなた";
-  const hostColor = guestColor(hostName);
+  // ISH-267: host info now comes from the BE per-booking (denormalized
+  // bookings.host_user_id JOIN common.users). Falls back to "(不明)" defensively
+  // — the BE always returns a non-empty name (email local-part if name is
+  // null), so this branch is only for malformed payloads.
+  const hostName = booking.hostName || "(不明)";
+  const hostColor = guestColor(booking.hostEmail || hostName);
 
   const guestMembers: AvatarStackMember[] = [
     {

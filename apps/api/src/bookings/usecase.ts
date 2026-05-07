@@ -14,6 +14,12 @@ export type OwnerBookingView = {
   linkId: string;
   linkTitle: string;
   linkSlug: string;
+  // ISH-267: host info pass-through. The dashboard list / detail screens
+  // render these directly so no further name/email resolution happens at the
+  // route layer.
+  hostUserId: string;
+  hostName: string;
+  hostEmail: string;
   startAt: Date;
   endAt: Date;
   guestName: string;
@@ -52,6 +58,9 @@ export async function listOwnerBookings(
     linkId: b.linkId,
     linkTitle: b.linkTitle,
     linkSlug: b.linkSlug,
+    hostUserId: b.hostUserId,
+    hostName: b.hostName,
+    hostEmail: b.hostEmail,
     startAt: b.startAt,
     endAt: b.endAt,
     guestName: b.guestName,
@@ -85,6 +94,9 @@ export async function getOwnerBooking(
     linkId: b.linkId,
     linkTitle: b.linkTitle,
     linkSlug: b.linkSlug,
+    hostUserId: b.hostUserId,
+    hostName: b.hostName,
+    hostEmail: b.hostEmail,
     startAt: b.startAt,
     endAt: b.endAt,
     guestName: b.guestName,

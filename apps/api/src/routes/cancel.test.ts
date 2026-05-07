@@ -70,7 +70,7 @@ beforeEach(async () => {
 
 async function seedConfirmedBooking(
   token: string,
-): Promise<{ bookingId: string; tenantId: string; linkId: string }> {
+): Promise<{ bookingId: string; tenantId: string; linkId: string; userId: string }> {
   const [tenant] = await testDb.insert(tenants).values({ name: "Test Tenant" }).returning();
   if (!tenant) throw new Error("seed tenant");
   const [user] = await testDb
@@ -96,6 +96,7 @@ async function seedConfirmedBooking(
     .values({
       tenantId: tenant.id,
       linkId: link.id,
+      hostUserId: user.id,
       startAt: new Date("2026-12-14T05:00:00Z"),
       endAt: new Date("2026-12-14T05:30:00Z"),
       guestName: "Guest",
@@ -105,7 +106,12 @@ async function seedConfirmedBooking(
     })
     .returning();
   if (!booking) throw new Error("seed booking");
-  return { bookingId: booking.id, tenantId: tenant.id, linkId: link.id };
+  return {
+    bookingId: booking.id,
+    tenantId: tenant.id,
+    linkId: link.id,
+    userId: user.id,
+  };
 }
 
 /**
@@ -172,6 +178,7 @@ async function seedConfirmedBookingWithGoogle(token: string): Promise<{
     .values({
       tenantId: tenant.id,
       linkId: link.id,
+      hostUserId: user.id,
       startAt: new Date("2026-12-14T05:00:00Z"),
       endAt: new Date("2026-12-14T05:30:00Z"),
       guestName: "Guest",
@@ -233,7 +240,7 @@ describe("POST /public/cancel/:token", () => {
 
   test("after cancel, the same slot can be re-booked (partial unique index frees it)", async () => {
     const token = randomUUID();
-    const { tenantId } = await seedConfirmedBooking(token);
+    const { tenantId, userId } = await seedConfirmedBooking(token);
     const app = buildApp();
     await app.request(`/public/cancel/${token}`, { method: "POST" });
 
@@ -247,6 +254,7 @@ describe("POST /public/cancel/:token", () => {
       .values({
         tenantId,
         linkId: linkId as string,
+        hostUserId: userId,
         startAt: new Date("2026-12-14T05:00:00Z"),
         endAt: new Date("2026-12-14T05:30:00Z"),
         guestName: "Guest 2",
@@ -337,7 +345,7 @@ describe("POST /public/cancel/:token", () => {
     // the real confirm path; then cancel it, re-confirm via the same slot, and
     // cancel the new booking using *its* cancellation token.
     const seedToken = randomUUID();
-    const { linkId, tenantId } = await seedConfirmedBookingWithGoogle(seedToken);
+    const { linkId, tenantId, userId } = await seedConfirmedBookingWithGoogle(seedToken);
     const app = buildApp();
 
     // First cancel.
@@ -356,6 +364,7 @@ describe("POST /public/cancel/:token", () => {
       .values({
         tenantId,
         linkId,
+        hostUserId: userId,
         startAt: new Date("2026-12-14T05:00:00Z"),
         endAt: new Date("2026-12-14T05:30:00Z"),
         guestName: "Guest 2",
