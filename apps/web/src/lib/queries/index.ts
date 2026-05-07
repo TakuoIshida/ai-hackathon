@@ -10,6 +10,7 @@ export { queryKeys } from "./queryKeys";
 export {
   useChangeTenantMemberRoleMutation,
   useRemoveTenantMemberMutation,
+  useResendTenantInvitationMutation,
   useRevokeTenantInvitationMutation,
   useTenantMembersQuery,
 } from "./tenantMembers";

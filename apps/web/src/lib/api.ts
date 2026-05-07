@@ -293,6 +293,19 @@ export const api = {
       method: "DELETE",
       getToken,
     }),
+
+  // ISH-261: resend a still-open tenant invitation (owner only). Bumps the
+  // server-side `expiresAt` by 24h and re-delivers the invitation email
+  // through the BE's mail port (best-effort send).
+  // 200 { ok: true, expiresAt: string } | 401 | 403 | 404 | 409 already_accepted.
+  resendTenantInvitation: (invitationId: string, getToken: AuthTokenGetter) =>
+    request<{ ok: true; expiresAt: string }>(
+      `/tenant/invitations/${encodeURIComponent(invitationId)}/resend`,
+      {
+        method: "POST",
+        getToken,
+      },
+    ),
 };
 
 export type { InvitationSummary };

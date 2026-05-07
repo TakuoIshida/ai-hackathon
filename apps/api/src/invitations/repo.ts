@@ -31,6 +31,26 @@ export async function findOpenInvitationByToken(
 }
 
 /**
+ * ISH-261: lookup the full invitation row scoped to a tenant. Used by the
+ * resend usecase which needs the token + email + acceptedAt + expiresAt.
+ *
+ * tenant.invitations is RLS-scoped via attachTenantContext, but we keep an
+ * explicit tenantId filter here for defense-in-depth (cross-tenant probing).
+ */
+export async function findInvitationByIdForTenant(
+  database: Database,
+  tenantId: string,
+  invitationId: string,
+): Promise<Invitation | null> {
+  const [row] = await database
+    .select()
+    .from(invitations)
+    .where(and(eq(invitations.tenantId, tenantId), eq(invitations.id, invitationId)))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
  * Find an open (not yet accepted) invitation for a given (tenant, email) pair.
  * Used by createInvitation to detect duplicates before INSERT.
  */
@@ -83,6 +103,25 @@ export async function insertInvitation(
     .returning();
   if (!row) throw new Error("failed to insert invitation");
   return row;
+}
+
+/**
+ * ISH-261: extend an invitation's `expiresAt` (typically by 24h on resend).
+ * Caller is responsible for the open / not-accepted check beforehand.
+ *
+ * Returns true iff a row matched and was updated.
+ */
+export async function updateInvitationExpiry(
+  database: Database,
+  invitationId: string,
+  expiresAt: Date,
+): Promise<boolean> {
+  const updated = await database
+    .update(invitations)
+    .set({ expiresAt })
+    .where(eq(invitations.id, invitationId))
+    .returning({ id: invitations.id });
+  return updated.length > 0;
 }
 
 /**

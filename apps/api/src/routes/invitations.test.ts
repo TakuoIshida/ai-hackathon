@@ -558,6 +558,139 @@ describe("DELETE /tenant/invitations/:invitationId (ISH-256)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// POST /tenant/invitations/:invitationId/resend (ISH-261)
+// ---------------------------------------------------------------------------
+
+describe("POST /tenant/invitations/:invitationId/resend — auth gate (ISH-261)", () => {
+  test("401 when not authenticated", async () => {
+    const res = await app.request("/tenant/invitations/some-id/resend", { method: "POST" });
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("POST /tenant/invitations/:invitationId/resend (ISH-261)", () => {
+  test("403 when caller is a member, not owner", async () => {
+    const { owner, tenant } = await seedOwnerAndTenant();
+    const inv = await seedInvitation(tenant.id, owner.id, { email: "x@example.com" });
+    const member = await seedMember(tenant.id);
+
+    const testApp = new Hono();
+    testApp.route(
+      "/tenant/invitations",
+      createTenantInvitationsRoute({
+        authMiddlewares: [fakeAuthWithDbUser(member), fakeTenantContext(tenant.id, "member")],
+      }),
+    );
+
+    const res = await testApp.request(`/tenant/invitations/${inv.id}/resend`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(403);
+  });
+
+  test("200 owner triggers resend; expiresAt is extended and email is sent via injected port", async () => {
+    const { owner, tenant } = await seedOwnerAndTenant();
+    // Pin the original expiry in the past so we can verify it was overwritten.
+    const inv = await seedInvitation(tenant.id, owner.id, {
+      email: "resend@example.com",
+      expiresAt: new Date(Date.now() - 60_000),
+    });
+
+    const sent: Array<{ to: string; subject: string; text: string }> = [];
+    const testApp = new Hono();
+    testApp.route(
+      "/tenant/invitations",
+      createTenantInvitationsRoute({
+        authMiddlewares: [fakeAuthWithDbUser(owner), fakeTenantContext(tenant.id, "owner")],
+        sendEmail: async (msg) => {
+          sent.push({ to: msg.to, subject: msg.subject, text: msg.text });
+        },
+        appBaseUrl: "https://app.test",
+      }),
+    );
+
+    const res = await testApp.request(`/tenant/invitations/${inv.id}/resend`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; expiresAt: string };
+    expect(body.ok).toBe(true);
+    expect(typeof body.expiresAt).toBe("string");
+    expect(new Date(body.expiresAt).getTime()).toBeGreaterThan(Date.now());
+
+    // DB row carries the new expiry.
+    const [row] = await testDb
+      .select({ expiresAt: invitations.expiresAt })
+      .from(invitations)
+      .where(eq(invitations.id, inv.id));
+    expect(row?.expiresAt.toISOString()).toBe(body.expiresAt);
+
+    // Email was sent through the injected port.
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.to).toBe("resend@example.com");
+    expect(sent[0]?.text).toContain(inv.token);
+    expect(sent[0]?.text).toContain("https://app.test/invite/");
+  });
+
+  test("404 when the invitation does not belong to the caller's tenant", async () => {
+    const { owner, tenant } = await seedOwnerAndTenant();
+
+    const testApp = new Hono();
+    testApp.route(
+      "/tenant/invitations",
+      createTenantInvitationsRoute({
+        authMiddlewares: [fakeAuthWithDbUser(owner), fakeTenantContext(tenant.id, "owner")],
+        sendEmail: async () => {},
+        appBaseUrl: "https://app.test",
+      }),
+    );
+
+    const res = await testApp.request(`/tenant/invitations/${randomUUID()}/resend`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(404);
+  });
+
+  test("409 already_accepted when invitation has been accepted (row preserved untouched)", async () => {
+    const { owner, tenant } = await seedOwnerAndTenant();
+    const originalExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60_000);
+    const inv = await seedInvitation(tenant.id, owner.id, {
+      email: "accepted@example.com",
+      acceptedAt: new Date(),
+      expiresAt: originalExpiresAt,
+    });
+
+    const sent: Array<{ to: string }> = [];
+    const testApp = new Hono();
+    testApp.route(
+      "/tenant/invitations",
+      createTenantInvitationsRoute({
+        authMiddlewares: [fakeAuthWithDbUser(owner), fakeTenantContext(tenant.id, "owner")],
+        sendEmail: async (msg) => {
+          sent.push({ to: msg.to });
+        },
+        appBaseUrl: "https://app.test",
+      }),
+    );
+
+    const res = await testApp.request(`/tenant/invitations/${inv.id}/resend`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("already_accepted");
+
+    // No mail dispatched; row's expiresAt unchanged.
+    expect(sent).toHaveLength(0);
+    const [row] = await testDb
+      .select({ expiresAt: invitations.expiresAt })
+      .from(invitations)
+      .where(eq(invitations.id, inv.id));
+    expect(row?.expiresAt.toISOString()).toBe(originalExpiresAt.toISOString());
+  });
+});
+
 describe("GET /invitations/:token — public preview (ISH-208)", () => {
   test("200 returns workspace name + expired flag, but does NOT echo the invited email (anti-enumeration)", async () => {
     const { owner, tenant } = await seedOwnerAndTenant();

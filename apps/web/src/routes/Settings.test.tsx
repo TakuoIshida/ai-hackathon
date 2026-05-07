@@ -46,6 +46,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
       // ISH-256: tenant-scoped role change + invitation revoke.
       changeTenantMemberRole: vi.fn(),
       revokeTenantInvitation: vi.fn(),
+      // ISH-261: tenant-scoped invitation resend.
+      resendTenantInvitation: vi.fn(),
     },
   };
 });
@@ -810,5 +812,167 @@ describe("useRevokeTenantInvitationMutation (ISH-256)", () => {
         await result.current.mutateAsync("abc123");
       }),
     ).rejects.toMatchObject({ code: "already_accepted", status: 409 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ISH-261: 再送 button — visibility + click flow.
+// ---------------------------------------------------------------------------
+
+import { useResendTenantInvitationMutation } from "@/lib/queries";
+
+describe("<MembersTab /> 再送 button visibility (ISH-261)", () => {
+  const ownerSelf: TenantMemberView = {
+    id: "u-owner",
+    userId: "u-owner",
+    email: "owner@example.com",
+    name: "Owner",
+    role: "owner",
+    status: "active",
+    joinedAt: "2025-12-01T00:00:00Z",
+  };
+  const pendingRow: TenantMemberView = {
+    id: "inv:abc123",
+    userId: null,
+    email: "invitee@example.com",
+    name: null,
+    role: "member",
+    status: "pending",
+    joinedAt: "2026-05-01T00:00:00Z",
+    expiresIn: "残り 18 時間",
+  };
+  const expiredRow: TenantMemberView = {
+    id: "inv:def456",
+    userId: null,
+    email: "tanaka@team.example.com",
+    name: null,
+    role: "member",
+    status: "expired",
+    joinedAt: "2026-04-20T00:00:00Z",
+  };
+
+  const renderTab = (props: Parameters<typeof MembersTab>[0]) =>
+    render(
+      <TestQueryProvider>
+        <ToastProvider>
+          <MembersTab {...props} />
+        </ToastProvider>
+      </TestQueryProvider>,
+    );
+
+  test("owner sees 再送 button on pending rows", () => {
+    renderTab({
+      members: [ownerSelf, pendingRow],
+      stats: { active: 1, pending: 1, expired: 0 },
+      isLoading: false,
+      isError: false,
+      error: null,
+      onRetry: () => {},
+      callerRole: "owner",
+      callerUserId: "u-owner",
+    });
+    expect(screen.getByTestId("invitation-resend-invitee@example.com")).toBeInTheDocument();
+  });
+
+  test("owner sees 再送 button on expired rows", () => {
+    renderTab({
+      members: [ownerSelf, expiredRow],
+      stats: { active: 1, pending: 0, expired: 1 },
+      isLoading: false,
+      isError: false,
+      error: null,
+      onRetry: () => {},
+      callerRole: "owner",
+      callerUserId: "u-owner",
+    });
+    expect(screen.getByTestId("invitation-resend-tanaka@team.example.com")).toBeInTheDocument();
+  });
+
+  test("member caller does NOT see 再送 buttons (BE owner-only; FE hides for UX)", () => {
+    renderTab({
+      members: [ownerSelf, pendingRow],
+      stats: { active: 1, pending: 1, expired: 0 },
+      isLoading: false,
+      isError: false,
+      error: null,
+      onRetry: () => {},
+      callerRole: "member",
+      callerUserId: "u-other",
+    });
+    expect(screen.queryByTestId("invitation-resend-invitee@example.com")).toBeNull();
+  });
+
+  test("clicking 再送 calls api.resendTenantInvitation with the bare invitation id", async () => {
+    mockedApi.resendTenantInvitation.mockResolvedValue({
+      ok: true,
+      expiresAt: "2026-05-08T00:00:00Z",
+    });
+    renderTab({
+      members: [ownerSelf, pendingRow],
+      stats: { active: 1, pending: 1, expired: 0 },
+      isLoading: false,
+      isError: false,
+      error: null,
+      onRetry: () => {},
+      callerRole: "owner",
+      callerUserId: "u-owner",
+    });
+
+    fireEvent.click(screen.getByTestId("invitation-resend-invitee@example.com"));
+
+    await waitFor(() => {
+      expect(mockedApi.resendTenantInvitation).toHaveBeenCalledWith("abc123", expect.any(Function));
+    });
+  });
+});
+
+describe("useResendTenantInvitationMutation (ISH-261)", () => {
+  test("calls api.resendTenantInvitation with the bare invitation id", async () => {
+    mockedApi.resendTenantInvitation.mockResolvedValue({
+      ok: true,
+      expiresAt: "2026-05-08T00:00:00Z",
+    });
+
+    const { result } = renderHook(() => useResendTenantInvitationMutation(), {
+      wrapper: HookWrapper,
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync("abc123");
+    });
+
+    expect(mockedApi.resendTenantInvitation).toHaveBeenCalledWith("abc123", expect.any(Function));
+  });
+
+  test("propagates a 409 already_accepted ApiError from the server", async () => {
+    mockedApi.resendTenantInvitation.mockRejectedValue(
+      new ApiError(409, "already_accepted", "409 already_accepted"),
+    );
+
+    const { result } = renderHook(() => useResendTenantInvitationMutation(), {
+      wrapper: HookWrapper,
+    });
+
+    await expect(
+      act(async () => {
+        await result.current.mutateAsync("abc123");
+      }),
+    ).rejects.toMatchObject({ code: "already_accepted", status: 409 });
+  });
+
+  test("propagates a 404 not_found ApiError when the invitation has been canceled", async () => {
+    mockedApi.resendTenantInvitation.mockRejectedValue(
+      new ApiError(404, "not_found", "404 not_found"),
+    );
+
+    const { result } = renderHook(() => useResendTenantInvitationMutation(), {
+      wrapper: HookWrapper,
+    });
+
+    await expect(
+      act(async () => {
+        await result.current.mutateAsync("abc123");
+      }),
+    ).rejects.toMatchObject({ code: "not_found", status: 404 });
   });
 });

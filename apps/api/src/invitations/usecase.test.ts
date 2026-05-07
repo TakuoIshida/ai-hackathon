@@ -4,9 +4,10 @@ import { eq, sql } from "drizzle-orm";
 import { clearDbForTests, db, setDbForTests } from "@/db/client";
 import { tenantMembers, tenants } from "@/db/schema/common";
 import { invitations } from "@/db/schema/tenant";
+import type { EmailMessage, SendEmailFn } from "@/notifications/types";
 import { createTestDb, type TestDb } from "@/test/integration-db";
 import { insertUser } from "@/users/repo";
-import { acceptInvitation, createInvitation } from "./usecase";
+import { acceptInvitation, createInvitation, resendTenantInvitation } from "./usecase";
 
 let testDb: TestDb;
 
@@ -349,5 +350,161 @@ describe("invitations/usecase: acceptInvitation (ISH-176)", () => {
 
     const result = await acceptInvitation(db, invitee.id, invitee.email, invitation.token);
     expect(result.kind).toBe("user_already_in_tenant");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resendTenantInvitation tests (ISH-261)
+// ---------------------------------------------------------------------------
+
+describe("invitations/usecase: resendTenantInvitation (ISH-261)", () => {
+  function captureEmails(): { fn: SendEmailFn; sent: EmailMessage[] } {
+    const sent: EmailMessage[] = [];
+    return {
+      sent,
+      fn: async (msg) => {
+        sent.push(msg);
+      },
+    };
+  }
+
+  const baseDeps = (sendEmail: SendEmailFn = async () => {}) => ({
+    sendEmail,
+    appBaseUrl: "https://app.test",
+  });
+
+  async function seedOpenInvitation(opts?: {
+    email?: string;
+    expiresAt?: Date;
+    acceptedAt?: Date | null;
+  }) {
+    const owner = await seedUser();
+    const tenant = await seedTenant(owner.id);
+    const [inv] = await testDb
+      .insert(invitations)
+      .values({
+        tenantId: tenant.id,
+        email: opts?.email ?? "invitee@example.com",
+        invitedByUserId: owner.id,
+        expiresAt: opts?.expiresAt ?? new Date(Date.now() + 7 * 24 * 60 * 60_000),
+        acceptedAt: opts?.acceptedAt ?? null,
+        role: "member",
+      })
+      .returning();
+    if (!inv) throw new Error("seed: invitation insert failed");
+    return { tenant, owner, invitation: inv };
+  }
+
+  test("happy path: extends expiresAt by 24h and triggers email send", async () => {
+    const { tenant, invitation } = await seedOpenInvitation({
+      email: "resend@example.com",
+      // Original expiry well in the past so we can verify it was bumped to ~now+24h.
+      expiresAt: new Date(Date.now() - 60_000),
+    });
+    const cap = captureEmails();
+    const fixedNow = Date.parse("2026-05-07T00:00:00.000Z");
+    const result = await resendTenantInvitation(db, tenant.id, invitation.id, {
+      ...baseDeps(cap.fn),
+      now: () => fixedNow,
+    });
+
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.expiresAt.getTime()).toBe(fixedNow + 24 * 60 * 60_000);
+
+    // DB row was updated
+    const [row] = await testDb
+      .select({ expiresAt: invitations.expiresAt })
+      .from(invitations)
+      .where(eq(invitations.id, invitation.id));
+    expect(row?.expiresAt.getTime()).toBe(fixedNow + 24 * 60 * 60_000);
+
+    // One email captured, body carries the original token + accept link
+    expect(cap.sent.length).toBe(1);
+    expect(cap.sent[0]?.to).toBe("resend@example.com");
+    expect(cap.sent[0]?.text).toContain(invitation.token);
+    expect(cap.sent[0]?.text).toContain("https://app.test/invite/");
+  });
+
+  test("not_found when the invitation id does not exist for the tenant", async () => {
+    const owner = await seedUser();
+    const tenant = await seedTenant(owner.id);
+    const cap = captureEmails();
+    const result = await resendTenantInvitation(
+      db,
+      tenant.id,
+      `01J${randomUUID()}`.slice(0, 26),
+      baseDeps(cap.fn),
+    );
+    expect(result.kind).toBe("not_found");
+    expect(cap.sent.length).toBe(0);
+  });
+
+  test("not_found when the invitation belongs to a different tenant (cross-tenant probe)", async () => {
+    const { invitation } = await seedOpenInvitation();
+    // Issue from the perspective of an unrelated tenant.
+    const otherOwner = await seedUser();
+    const otherTenant = await seedTenant(otherOwner.id);
+    const cap = captureEmails();
+    const result = await resendTenantInvitation(
+      db,
+      otherTenant.id,
+      invitation.id,
+      baseDeps(cap.fn),
+    );
+    expect(result.kind).toBe("not_found");
+    expect(cap.sent.length).toBe(0);
+  });
+
+  test("already_accepted when invitation has been accepted (row preserved for audit)", async () => {
+    const { tenant, invitation } = await seedOpenInvitation({ acceptedAt: new Date() });
+    const originalExpiresAt = invitation.expiresAt;
+    const cap = captureEmails();
+    const result = await resendTenantInvitation(db, tenant.id, invitation.id, baseDeps(cap.fn));
+    expect(result.kind).toBe("already_accepted");
+    expect(cap.sent.length).toBe(0);
+
+    // Row must be untouched.
+    const [row] = await testDb
+      .select({ expiresAt: invitations.expiresAt })
+      .from(invitations)
+      .where(eq(invitations.id, invitation.id));
+    expect(row?.expiresAt.getTime()).toBe(originalExpiresAt.getTime());
+  });
+
+  test("commits expiry extension even if email send throws (best-effort delivery)", async () => {
+    const { tenant, invitation } = await seedOpenInvitation();
+    const fixedNow = Date.parse("2026-05-07T12:00:00.000Z");
+    const result = await resendTenantInvitation(db, tenant.id, invitation.id, {
+      sendEmail: async () => {
+        throw new Error("smtp down");
+      },
+      appBaseUrl: "https://app.test",
+      now: () => fixedNow,
+    });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.expiresAt.getTime()).toBe(fixedNow + 24 * 60 * 60_000);
+
+    const [row] = await testDb
+      .select({ expiresAt: invitations.expiresAt })
+      .from(invitations)
+      .where(eq(invitations.id, invitation.id));
+    expect(row?.expiresAt.getTime()).toBe(fixedNow + 24 * 60 * 60_000);
+  });
+
+  test("expired (but unaccepted) invitation can still be resent — bumps expiresAt forward", async () => {
+    // Pin the original past-expiry to verify we always overwrite to now+24h.
+    const { tenant, invitation } = await seedOpenInvitation({
+      expiresAt: new Date(Date.now() - 30 * 60_000),
+    });
+    const fixedNow = Date.parse("2026-05-07T00:00:00.000Z");
+    const result = await resendTenantInvitation(db, tenant.id, invitation.id, {
+      ...baseDeps(),
+      now: () => fixedNow,
+    });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.expiresAt.getTime()).toBe(fixedNow + 24 * 60 * 60_000);
   });
 });

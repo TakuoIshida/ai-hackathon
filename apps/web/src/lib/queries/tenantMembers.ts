@@ -73,3 +73,25 @@ export function useRevokeTenantInvitationMutation() {
     },
   });
 }
+
+/**
+ * ISH-261: resend a still-open tenant invitation. Owner-only. Bumps the
+ * server-side `expiresAt` by 24h and re-delivers the invitation email.
+ * Calls `POST /tenant/invitations/:invitationId/resend`.
+ *
+ * Like the revoke mutation, the FE strips the `inv:` prefix from the
+ * listing row id before passing the bare invitationId here.
+ */
+export function useResendTenantInvitationMutation() {
+  const { getToken } = auth.useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (invitationId: string) =>
+      api.resendTenantInvitation(invitationId, () => getToken()),
+    onSuccess: () => {
+      // Refresh the listing so the bumped `expiresAt` (and the "残り N 時間"
+      // expiresIn label derived from it) updates immediately.
+      qc.invalidateQueries({ queryKey: queryKeys.tenant.all() });
+    },
+  });
+}

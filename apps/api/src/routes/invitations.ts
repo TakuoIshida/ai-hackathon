@@ -1,8 +1,14 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono, type MiddlewareHandler } from "hono";
+import { config } from "@/config";
 import { db } from "@/db/client";
 import { acceptInvitationParamsSchema, createInvitationBodySchema } from "@/invitations/schemas";
-import { acceptInvitation, createInvitation, revokeTenantInvitation } from "@/invitations/usecase";
+import {
+  acceptInvitation,
+  createInvitation,
+  resendTenantInvitation,
+  revokeTenantInvitation,
+} from "@/invitations/usecase";
 import {
   type AuthVars,
   attachDbUser,
@@ -12,6 +18,8 @@ import {
   getTenantRole,
   requireAuth,
 } from "@/middleware/auth";
+import { createResendSender } from "@/notifications/sender";
+import { noopSendEmail, type SendEmailFn } from "@/notifications/types";
 import { findInvitationByToken, findWorkspaceById } from "@/workspaces/repo";
 
 /**
@@ -34,10 +42,20 @@ import { findInvitationByToken, findWorkspaceById } from "@/workspaces/repo";
 export type TenantInvitationsRouteDeps = {
   /** Test escape hatch: inject fake auth middleware stack. */
   authMiddlewares?: MiddlewareHandler[];
+  /** ISH-261: injected for the resend endpoint so tests can capture mail. */
+  sendEmail?: SendEmailFn;
+  /** ISH-261: base URL used to build the accept link in the resend email. */
+  appBaseUrl?: string;
 };
+
+const productionSendEmail: SendEmailFn = config.resend
+  ? createResendSender(config.resend)
+  : noopSendEmail;
 
 // biome-ignore lint/suspicious/noExplicitAny: route factory returns a generic Hono instance
 export function createTenantInvitationsRoute(deps: TenantInvitationsRouteDeps = {}): Hono<any> {
+  const sendEmail = deps.sendEmail ?? productionSendEmail;
+  const appBaseUrl = deps.appBaseUrl ?? config.appBaseUrl;
   const route = new Hono<{ Variables: AuthVars }>();
 
   if (deps.authMiddlewares) {
@@ -122,6 +140,41 @@ export function createTenantInvitationsRoute(deps: TenantInvitationsRouteDeps = 
       return c.json({ error: "already_accepted" }, 409);
     }
     return c.json({ ok: true });
+  });
+
+  /**
+   * ISH-261: POST /tenant/invitations/:invitationId/resend
+   *
+   * Re-deliver a still-open tenant invitation, extending `expiresAt` by 24h
+   * so the recipient gets a fresh window. Owner-only. Mirrors the BE 規約 of
+   * /tenant/invitations DELETE — accepted rows are kept for audit and cannot
+   * be resent (409 already_accepted); missing / canceled rows return 404.
+   *
+   * Email delivery is best-effort: the row's `expiresAt` is committed first,
+   * so a transient mail outage doesn't roll the extension back. The operator
+   * can always click 再送 again — the only side-effect is another extension.
+   *
+   * Responses:
+   *   200 { ok: true, expiresAt: string }
+   *   401 unauthenticated
+   *   403 caller is not an owner
+   *   404 not_found (no invitation with this id in the caller's tenant)
+   *   409 already_accepted
+   */
+  route.post("/:invitationId/resend", async (c) => {
+    if (getTenantRole(c) !== "owner") return c.json({ error: "forbidden" }, 403);
+    const tenantId = getTenantId(c);
+    const invitationId = c.req.param("invitationId");
+
+    const result = await resendTenantInvitation(db, tenantId, invitationId, {
+      sendEmail,
+      appBaseUrl,
+    });
+    if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
+    if (result.kind === "already_accepted") {
+      return c.json({ error: "already_accepted" }, 409);
+    }
+    return c.json({ ok: true, expiresAt: result.expiresAt.toISOString() });
   });
 
   return route;
