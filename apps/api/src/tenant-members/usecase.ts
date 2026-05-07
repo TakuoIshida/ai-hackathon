@@ -82,8 +82,7 @@ export async function listTenantMembers(
       userId: null,
       email: inv.email,
       name: null,
-      // role は invitations 表に未保存なので acceptance 時の default に揃える。
-      role: "member",
+      role: inv.role as TenantMemberRole,
       status: expired ? "expired" : "pending",
       joinedAt: inv.createdAt.toISOString(),
       expiresIn: expired ? undefined : expiresInLabel(inv.expiresAt, now),

@@ -83,6 +83,28 @@ describe("listTenantMembers (ISH-250)", () => {
     expect(pending?.userId).toBeNull();
     expect(pending?.id).toMatch(/^inv:/);
     expect(pending?.expiresIn).toMatch(/残り/);
+    expect(pending?.role).toBe("member");
+  });
+
+  test("pending invitation issued with role=owner is surfaced as role=owner (ISH-272)", async () => {
+    const tenant = await seedTenant();
+    const inviter = await seedUserAndMembership(tenant.id, "owner");
+
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000); // +24h
+    await testDb.insert(invitations).values({
+      id: ulid(),
+      tenantId: tenant.id,
+      email: "pending-owner@x.com",
+      role: "owner",
+      invitedByUserId: inviter.id,
+      expiresAt: future,
+    });
+
+    const list = await listTenantMembers(db, tenant.id);
+    const pending = list.find((m) => m.email === "pending-owner@x.com");
+    expect(pending).toBeDefined();
+    expect(pending?.status).toBe("pending");
+    expect(pending?.role).toBe("owner");
   });
 
   test("invitations past expiresAt are returned as expired without expiresIn", async () => {
