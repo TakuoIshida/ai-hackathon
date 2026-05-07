@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { Hono, type MiddlewareHandler } from "hono";
+import postgres from "postgres";
 import { clearDbForTests, setDbForTests } from "@/db/client";
 import { tenantMembers, tenants, users } from "@/db/schema";
 import {
@@ -302,6 +303,92 @@ describe("attachTenantContext", () => {
     const body = (await res.json()) as { tenantId: string };
     expect(body.tenantId).toBe(tenantId);
   });
+
+  // ISH-276: lookup must run inside the request transaction with FOR SHARE so
+  // a concurrent revoke (DELETE FROM common.tenant_members WHERE user_id=X)
+  // is blocked until the request commits. This guards against the previous
+  // TOCTOU window where revoke would not affect the in-flight request's RLS.
+  test("ISH-276: concurrent DELETE on tenant_members blocks until request tx commits", async () => {
+    const url = process.env.TEST_DATABASE_URL;
+    if (!url) throw new Error("TEST_DATABASE_URL not set");
+
+    const { tenantId, fakeAuth } = await seedUserWithTenant();
+
+    // Independent second connection — emulates an owner-initiated revoke
+    // running on a different DB session in parallel with the in-flight request.
+    const noVerify = new URL(url).searchParams.get("sslmode") === "no-verify";
+    const sideSql = postgres(url, {
+      max: 1,
+      idle_timeout: 5,
+      prepare: false,
+      ...(noVerify ? { ssl: { rejectUnauthorized: false } } : {}),
+    });
+
+    let releaseHandler!: () => void;
+    const handlerWaiter = new Promise<void>((r) => {
+      releaseHandler = r;
+    });
+    let requestEnteredScope = false;
+    let requestExitedScope = false;
+    let deleteCompletedAt = 0;
+    let requestCompletedAt = 0;
+
+    const app = new Hono<{ Variables: AuthVars }>();
+    app.use("*", fakeAuth);
+    app.use("*", attachTenantContext);
+    app.get("/probe", async (c) => {
+      requestEnteredScope = true;
+      // Hold the request transaction open until the test releases us. The
+      // FOR SHARE lock acquired by attachTenantContext on the
+      // tenant_members row is held for the duration of this transaction.
+      await handlerWaiter;
+      requestExitedScope = true;
+      return c.json({ tenantId: c.get("tenantId") });
+    });
+    app.onError((err, c) => c.json({ error: String(err) }, 500));
+
+    try {
+      // Kick off the request — it will block inside the handler holding the lock.
+      const requestPromise = (async () => {
+        const res = await app.request("/probe");
+        requestCompletedAt = Date.now();
+        return res;
+      })();
+
+      // Wait for the handler to actually be in-flight (lock acquired).
+      while (!requestEnteredScope) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+
+      // Now race a DELETE on a separate connection. Because the request tx
+      // holds FOR SHARE on the tenant_members row, the DELETE must wait until
+      // the request tx commits.
+      const deletePromise = sideSql`
+        DELETE FROM common.tenant_members WHERE tenant_id = ${tenantId}
+      `.then(() => {
+        deleteCompletedAt = Date.now();
+      });
+
+      // Give the DELETE a beat to attempt — it should be blocked, not progress.
+      await new Promise((r) => setTimeout(r, 200));
+      expect(deleteCompletedAt).toBe(0);
+      expect(requestExitedScope).toBe(false);
+
+      // Release the request handler — the request tx commits, the FOR SHARE
+      // lock releases, and the DELETE proceeds.
+      releaseHandler();
+
+      const res = await requestPromise;
+      await deletePromise;
+
+      expect(res.status).toBe(200);
+      expect(requestExitedScope).toBe(true);
+      // DELETE must complete strictly after the request tx commits.
+      expect(deleteCompletedAt).toBeGreaterThanOrEqual(requestCompletedAt);
+    } finally {
+      await sideSql.end({ timeout: 5 });
+    }
+  }, 15_000);
 
   test("returns 403 when user has no tenant_members row", async () => {
     const externalId = `clerk_notenant_${randomUUID()}`;

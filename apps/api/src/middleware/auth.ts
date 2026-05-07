@@ -195,37 +195,34 @@ export function getDbUser(c: Context<{ Variables: AuthVars }>): User {
 export const attachTenantContext: MiddlewareHandler<{ Variables: AuthVars }> = async (c, next) => {
   const dbUser = getDbUser(c);
 
-  // Resolve tenant membership using the baseline db (outside of scope — this
-  // query hits common.tenant_members which has no RLS).
+  // Open the request transaction first, then resolve tenant membership inside
+  // it with `FOR SHARE` so a concurrent
+  // `DELETE FROM common.tenant_members WHERE user_id = X` blocks until this
+  // request commits.
   //
-  // TOCTOU note: there is a small window between this lookup and the
-  // SET LOCAL below in which the user could be removed from the tenant.
-  // RLS still scopes the request to the (now-stale) tenant they had at
-  // request entry — never to a tenant they were not a member of — so this
-  // is not a security issue. If real-time membership revocation is ever
-  // required, re-check inside the transaction before set_config.
-  const [member] = await db
-    .select({ tenantId: tenantMembers.tenantId, role: tenantMembers.role })
-    .from(tenantMembers)
-    .where(eq(tenantMembers.userId, dbUser.id))
-    .limit(1);
-
-  if (!member) {
-    throw new HTTPException(403, { message: "user not assigned to a tenant" });
-  }
-
-  const tenantId = member.tenantId;
-  // CHECK constraint on tenant_members.role enforces this set in the DB; cast
-  // is safe per common.ts schema. `as TenantRole` keeps the typed accessor
-  // exact rather than `string`.
-  const tenantRole = member.role as TenantRole;
-  c.set("tenantId", tenantId);
-  c.set("tenantRole", tenantRole);
-
-  // Open a transaction for the entire request so SET LOCAL is scoped to it.
-  // The requestScope AsyncLocalStorage makes `tx` available to the `db` proxy
-  // so all downstream queries automatically use the transaction connection.
+  // Fixed in ISH-276: lookup is now inside the same tx with FOR SHARE, closing
+  // the previous TOCTOU window between membership lookup and SET LOCAL where
+  // an owner-initiated revoke would not take effect for the in-flight request.
   await db.transaction(async (tx) => {
+    const [member] = await tx
+      .select({ tenantId: tenantMembers.tenantId, role: tenantMembers.role })
+      .from(tenantMembers)
+      .where(eq(tenantMembers.userId, dbUser.id))
+      .limit(1)
+      .for("share");
+
+    if (!member) {
+      throw new HTTPException(403, { message: "user not assigned to a tenant" });
+    }
+
+    const tenantId = member.tenantId;
+    // CHECK constraint on tenant_members.role enforces this set in the DB; cast
+    // is safe per common.ts schema. `as TenantRole` keeps the typed accessor
+    // exact rather than `string`.
+    const tenantRole = member.role as TenantRole;
+    c.set("tenantId", tenantId);
+    c.set("tenantRole", tenantRole);
+
     // set_config with localval=true is equivalent to SET LOCAL — the value is
     // reset when the transaction ends, so it cannot leak across pool connections.
     await tx.execute(sql`SELECT set_config('app.tenant_id', ${tenantId}, true)`);
