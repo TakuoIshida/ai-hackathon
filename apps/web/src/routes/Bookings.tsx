@@ -1,5 +1,13 @@
 import * as stylex from "@stylexjs/stylex";
-import { CalendarCheck, CalendarX, Clock, Download } from "lucide-react";
+import {
+  CalendarCheck,
+  CalendarX,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Download,
+  Search,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { auth } from "@/auth";
@@ -7,6 +15,15 @@ import type { AvatarStackMember } from "@/components/ui/avatar-stack";
 import { AvatarStack } from "@/components/ui/avatar-stack";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { StatCard } from "@/components/ui/stat-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiError, api } from "@/lib/api";
@@ -15,14 +32,19 @@ import type { BookingSummary } from "@/lib/types";
 import { colors, radius, space, typography } from "@/styles/tokens.stylex";
 
 // ---------------------------------------------------------------------------
-// 〔予約調整〕一覧 page (ISH-246 / B-04)
+// 〔予約調整〕一覧 page (ISH-246 / ISH-247)
 //
-// Spir 系 design に揃えた構成: H1 + sub + 右肩 CSV エクスポート → Stats row 3
-// 枚 (mint / blue / rose) → 3-state Tabs (今後の予定 / 過去 / キャンセル済) →
-// grid-based table (Settings.tsx の MembersTab pattern 踏襲)。
-//
-// 検索 / filter / pagination / 詳細 page はこの issue では実装しない。
+// Spir 系 design の構成:
+//   H1 + sub + 右肩 CSV エクスポート
+//     → Stats row 3 枚 (mint / blue / rose)
+//     → Tabs (今後の予定 / 過去 / キャンセル済)
+//     → Toolbar (search + status filter)
+//     → grid-based table (Settings.tsx の MembersTab pattern 踏襲)
+//     → Pagination (page size 25 固定; 25 件以下では非表示)
+//     → Empty state (illustration + CTA)
 // ---------------------------------------------------------------------------
+
+const PAGE_SIZE = 25;
 
 const styles = stylex.create({
   page: {
@@ -59,12 +81,33 @@ const styles = stylex.create({
   // tabs (use the in-page Tabs primitive)
   tabs: { width: "100%" },
   panel: { paddingBlock: space.lg, display: "flex", flexDirection: "column", gap: space.md },
-  // table — grid-based, Settings.tsx MembersTab pattern を踏襲
-  tableCard: {
-    padding: 0,
-    overflow: "hidden",
-    borderColor: colors.ink200,
+  // toolbar — Settings.tsx の membersToolbar pattern を踏襲
+  toolbar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: space.md,
+    paddingBlock: space.sm,
+    paddingInline: space.md,
+    borderBottom: `1px solid ${colors.ink100}`,
   },
+  toolbarTitle: {
+    fontSize: typography.fontSizeMd,
+    fontWeight: typography.fontWeightBold,
+    color: colors.blue900,
+  },
+  toolbarRight: { display: "flex", alignItems: "center", gap: space.sm },
+  searchWrap: { position: "relative" },
+  searchIcon: {
+    position: "absolute",
+    insetInlineStart: "0.625rem",
+    top: "50%",
+    transform: "translateY(-50%)",
+    color: colors.ink400,
+    pointerEvents: "none",
+  },
+  searchInput: { width: "16rem", paddingInlineStart: "2rem", height: "2.125rem" },
+  // table — grid-based, Settings.tsx MembersTab pattern を踏襲
   tableHeader: {
     display: "grid",
     gridTemplateColumns: "16rem 1fr 12rem 8rem 7rem 5rem",
@@ -152,17 +195,65 @@ const styles = stylex.create({
     color: colors.rose500,
   },
   rowActions: { display: "flex", justifyContent: "flex-end" },
+  // pagination
+  paginationBar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingBlock: space.sm,
+    paddingInline: space.md,
+    borderTop: `1px solid ${colors.ink100}`,
+    backgroundColor: colors.bg,
+    fontSize: typography.fontSizeSm,
+    color: colors.ink500,
+  },
+  paginationInfo: { fontVariantNumeric: "tabular-nums" },
+  paginationControls: { display: "flex", alignItems: "center", gap: space.xs },
   // states
   errorMsg: { color: colors.destructive, fontSize: typography.fontSizeSm, margin: 0 },
-  empty: {
-    padding: "2rem",
-    textAlign: "center",
-    color: colors.ink500,
-    fontSize: typography.fontSizeSm,
+  // empty state — illustration 風
+  emptyCard: {
+    padding: 0,
+    overflow: "hidden",
+    borderColor: colors.ink200,
   },
+  emptyState: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: space.sm,
+    paddingBlock: "3rem",
+    paddingInline: space.lg,
+    textAlign: "center",
+  },
+  emptyIconCircle: {
+    width: "3.5rem",
+    height: "3.5rem",
+    borderRadius: radius.full,
+    backgroundColor: colors.blue50,
+    color: colors.blue700,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBlockEnd: "0.25rem",
+  },
+  emptyHeading: {
+    margin: 0,
+    fontSize: typography.fontSizeMd,
+    fontWeight: typography.fontWeightBold,
+    color: colors.blue900,
+  },
+  emptySub: {
+    margin: 0,
+    maxWidth: "28rem",
+    fontSize: typography.fontSizeSm,
+    color: colors.ink500,
+  },
+  emptyCta: { marginBlockStart: space.sm },
 });
 
 type Tab = "upcoming" | "past" | "canceled";
+type StatusFilter = "all" | "confirmed" | "canceled";
 
 type LoadState =
   | { status: "loading" }
@@ -211,10 +302,24 @@ function isCurrentMonth(iso: string, now: Date): boolean {
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
 }
 
+function matchesSearch(b: BookingSummary, q: string): boolean {
+  if (!q) return true;
+  const needle = q.trim().toLowerCase();
+  if (!needle) return true;
+  return (
+    b.guestName.toLowerCase().includes(needle) ||
+    b.guestEmail.toLowerCase().includes(needle) ||
+    b.linkTitle.toLowerCase().includes(needle)
+  );
+}
+
 export default function Bookings() {
   const { getToken } = auth.useAuth();
   const [tab, setTab] = useState<Tab>("upcoming");
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [page, setPage] = useState(1);
   const tz = browserTz();
 
   const reload = useCallback(async () => {
@@ -250,17 +355,43 @@ export default function Bookings() {
     return { upcoming, thisMonthConfirmed, canceled };
   }, [state]);
 
-  const filtered = useMemo(() => {
+  // Tab で絞り込んだ行 (search/filter 適用前)。これが空なら「データ無し」相当。
+  const tabBookings = useMemo(() => {
     if (state.status !== "ok") return [];
     const now = Date.now();
     return state.bookings.filter((b) => {
       if (tab === "canceled") return b.status === "canceled";
       const isFuture = Date.parse(b.startAt) >= now && b.status === "confirmed";
       if (tab === "upcoming") return isFuture;
-      // past: confirmed but already started OR not future and not canceled
+      // past: confirmed but already started
       return b.status === "confirmed" && Date.parse(b.startAt) < now;
     });
   }, [state, tab]);
+
+  // search + status filter 適用後の行。
+  const filtered = useMemo(() => {
+    return tabBookings.filter((b) => {
+      if (statusFilter !== "all" && b.status !== statusFilter) return false;
+      return matchesSearch(b, search);
+    });
+  }, [tabBookings, search, statusFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * PAGE_SIZE;
+  const pageEnd = Math.min(pageStart + PAGE_SIZE, filtered.length);
+  const pageRows = filtered.slice(pageStart, pageEnd);
+  const showPagination = filtered.length > PAGE_SIZE;
+
+  // tab / search / filter が変わったら page を 1 に戻す。
+  // (state.status が ok に切り替わった瞬間も該当するため state.status を依存に
+  // 含めると無限ループになる — 値依存だけに抑える)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: page reset trigger
+  useEffect(() => {
+    setPage(1);
+  }, [tab, search, statusFilter]);
+
+  const isSearchActive = search.trim().length > 0 || statusFilter !== "all";
 
   return (
     <div {...stylex.props(styles.page)}>
@@ -274,27 +405,31 @@ export default function Bookings() {
         </Button>
       </header>
 
-      <div {...stylex.props(styles.statsGrid)}>
-        <StatCard
-          label="今後の予定"
-          value={stats.upcoming}
-          icon={<CalendarCheck size={18} />}
-          tone="mint"
-        />
-        <StatCard
-          label="今月の確定"
-          value={stats.thisMonthConfirmed}
-          icon={<Clock size={18} />}
-          tone="blue"
-        />
-        <StatCard
-          label="キャンセル"
-          value={stats.canceled}
-          sub="今月"
-          icon={<CalendarX size={18} />}
-          tone="rose"
-        />
-      </div>
+      {state.status === "loading" ? (
+        <BookingsLoadingSkeleton />
+      ) : (
+        <div {...stylex.props(styles.statsGrid)}>
+          <StatCard
+            label="今後の予定"
+            value={stats.upcoming}
+            icon={<CalendarCheck size={18} />}
+            tone="mint"
+          />
+          <StatCard
+            label="今月の確定"
+            value={stats.thisMonthConfirmed}
+            icon={<Clock size={18} />}
+            tone="blue"
+          />
+          <StatCard
+            label="キャンセル"
+            value={stats.canceled}
+            sub="今月"
+            icon={<CalendarX size={18} />}
+            tone="rose"
+          />
+        </div>
+      )}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} {...stylex.props(styles.tabs)}>
         <TabsList>
@@ -309,9 +444,7 @@ export default function Bookings() {
         {(["upcoming", "past", "canceled"] as Tab[]).map((value) => (
           <TabsContent key={value} value={value}>
             <div {...stylex.props(styles.panel)}>
-              {state.status === "loading" && (
-                <div {...stylex.props(styles.empty)}>読み込み中...</div>
-              )}
+              {state.status === "loading" && <BookingsTableSkeleton />}
 
               {state.status === "error" && (
                 <Card>
@@ -328,19 +461,46 @@ export default function Bookings() {
                 </Card>
               )}
 
-              {state.status === "ok" && filtered.length === 0 && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>{emptyTitleFor(tab)}</CardTitle>
-                    <CardDescription>
-                      リンクを公開してゲストからの予約を受け付けましょう。
-                    </CardDescription>
-                  </CardHeader>
-                </Card>
-              )}
+              {state.status === "ok" && (
+                <Card style={{ padding: 0, overflow: "hidden", borderColor: colors.ink200 }}>
+                  <BookingsToolbar
+                    search={search}
+                    onSearchChange={setSearch}
+                    statusFilter={statusFilter}
+                    onStatusFilterChange={setStatusFilter}
+                  />
 
-              {state.status === "ok" && filtered.length > 0 && (
-                <BookingsTable bookings={filtered} tz={tz} />
+                  {filtered.length === 0 ? (
+                    <BookingsEmptyState
+                      mode={
+                        tabBookings.length === 0
+                          ? "no-data"
+                          : isSearchActive
+                            ? "search-miss"
+                            : "no-data"
+                      }
+                      tab={tab}
+                    />
+                  ) : (
+                    <>
+                      <BookingsTableHeader />
+                      {pageRows.map((b) => (
+                        <BookingRow key={b.id} booking={b} tz={tz} />
+                      ))}
+                      {showPagination && (
+                        <PaginationBar
+                          page={safePage}
+                          totalPages={totalPages}
+                          pageStart={pageStart}
+                          pageEnd={pageEnd}
+                          total={filtered.length}
+                          onPrev={() => setPage((p) => Math.max(1, p - 1))}
+                          onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
+                        />
+                      )}
+                    </>
+                  )}
+                </Card>
               )}
             </div>
           </TabsContent>
@@ -350,25 +510,183 @@ export default function Bookings() {
   );
 }
 
+function BookingsToolbar({
+  search,
+  onSearchChange,
+  statusFilter,
+  onStatusFilterChange,
+}: {
+  search: string;
+  onSearchChange: (v: string) => void;
+  statusFilter: StatusFilter;
+  onStatusFilterChange: (v: StatusFilter) => void;
+}) {
+  return (
+    <div {...stylex.props(styles.toolbar)}>
+      <span {...stylex.props(styles.toolbarTitle)}>予約一覧</span>
+      <div {...stylex.props(styles.toolbarRight)}>
+        <div {...stylex.props(styles.searchWrap)}>
+          <span {...stylex.props(styles.searchIcon)}>
+            <Search size={14} />
+          </span>
+          <Input
+            {...stylex.props(styles.searchInput)}
+            placeholder="ゲスト名 / メール / タイトルで検索"
+            aria-label="予約を検索"
+            value={search}
+            onChange={(e) => onSearchChange(e.target.value)}
+          />
+        </div>
+        <Select value={statusFilter} onValueChange={(v) => onStatusFilterChange(v as StatusFilter)}>
+          <SelectTrigger
+            aria-label="ステータスで絞り込み"
+            style={{ width: "9rem", height: "2.125rem" }}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">すべて</SelectItem>
+            <SelectItem value="confirmed">確定</SelectItem>
+            <SelectItem value="canceled">キャンセル済</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  );
+}
+
+function BookingsTableHeader() {
+  return (
+    <div {...stylex.props(styles.tableHeader)}>
+      <div>日時</div>
+      <div>タイトル</div>
+      <div>主催者</div>
+      <div>参加者</div>
+      <div>ステータス</div>
+      <div />
+    </div>
+  );
+}
+
+function BookingsEmptyState({ mode, tab }: { mode: "no-data" | "search-miss"; tab: Tab }) {
+  if (mode === "search-miss") {
+    return (
+      <div {...stylex.props(styles.emptyState)} data-testid="bookings-empty-search">
+        <span {...stylex.props(styles.emptyIconCircle)} aria-hidden>
+          <Search size={22} />
+        </span>
+        <h2 {...stylex.props(styles.emptyHeading)}>該当する予約がありません</h2>
+        <p {...stylex.props(styles.emptySub)}>検索条件やステータス絞り込みを見直してください。</p>
+      </div>
+    );
+  }
+
+  return (
+    <div {...stylex.props(styles.emptyState)} data-testid="bookings-empty-no-data">
+      <span {...stylex.props(styles.emptyIconCircle)} aria-hidden>
+        <CalendarX size={22} />
+      </span>
+      <h2 {...stylex.props(styles.emptyHeading)}>{emptyTitleFor(tab)}</h2>
+      <p {...stylex.props(styles.emptySub)}>リンクを公開してゲストからの予約を受け付けましょう。</p>
+      <div {...stylex.props(styles.emptyCta)}>
+        <Button asChild>
+          <Link to="/availability-sharings">リンクを作成</Link>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function emptyTitleFor(tab: Tab): string {
-  if (tab === "upcoming") return "今後の予定はありません";
+  if (tab === "upcoming") return "予約はまだありません";
   if (tab === "past") return "過去の予定はありません";
   return "キャンセル済の予定はありません";
 }
 
-function BookingsTable({ bookings, tz }: { bookings: BookingSummary[]; tz: string }) {
+function PaginationBar({
+  page,
+  totalPages,
+  pageStart,
+  pageEnd,
+  total,
+  onPrev,
+  onNext,
+}: {
+  page: number;
+  totalPages: number;
+  pageStart: number;
+  pageEnd: number;
+  total: number;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
   return (
-    <Card style={{ padding: 0, overflow: "hidden", borderColor: colors.ink200 }}>
-      <div {...stylex.props(styles.tableHeader)}>
-        <div>日時</div>
-        <div>タイトル</div>
-        <div>主催者</div>
-        <div>参加者</div>
-        <div>ステータス</div>
-        <div />
+    <div {...stylex.props(styles.paginationBar)} data-testid="bookings-pagination">
+      <span {...stylex.props(styles.paginationInfo)}>
+        全 {total} 件中 {pageStart + 1}–{pageEnd} 件
+      </span>
+      <div {...stylex.props(styles.paginationControls)}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onPrev}
+          disabled={page <= 1}
+          aria-label="前のページ"
+          leftIcon={<ChevronLeft size={14} />}
+        >
+          前へ
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onNext}
+          disabled={page >= totalPages}
+          aria-label="次のページ"
+          rightIcon={<ChevronRight size={14} />}
+        >
+          次へ
+        </Button>
       </div>
-      {bookings.map((b) => (
-        <BookingRow key={b.id} booking={b} tz={tz} />
+    </div>
+  );
+}
+
+function BookingsLoadingSkeleton() {
+  return (
+    <div {...stylex.props(styles.statsGrid)} role="status" aria-label="読み込み中">
+      {[0, 1, 2].map((i) => (
+        <Skeleton key={i} style={{ height: "5.5rem", borderRadius: "0.75rem" }} />
+      ))}
+    </div>
+  );
+}
+
+function BookingsTableSkeleton() {
+  return (
+    <Card
+      style={{ padding: 0, overflow: "hidden", borderColor: colors.ink200 }}
+      data-testid="bookings-table-skeleton"
+    >
+      <div {...stylex.props(styles.toolbar)}>
+        <Skeleton style={{ height: "1rem", width: "6rem" }} />
+        <div {...stylex.props(styles.toolbarRight)}>
+          <Skeleton style={{ height: "2.125rem", width: "16rem" }} />
+          <Skeleton style={{ height: "2.125rem", width: "9rem" }} />
+        </div>
+      </div>
+      <BookingsTableHeader />
+      {[0, 1, 2, 3, 4].map((i) => (
+        <div key={i} {...stylex.props(styles.tableRow)} aria-hidden>
+          <div {...stylex.props(styles.dateCol)}>
+            <Skeleton style={{ height: "0.875rem", width: "8rem" }} />
+            <Skeleton style={{ height: "0.75rem", width: "10rem" }} />
+          </div>
+          <Skeleton style={{ height: "0.875rem", width: "12rem" }} />
+          <Skeleton style={{ height: "1rem", width: "8rem" }} />
+          <Skeleton style={{ height: "1.5rem", width: "5rem" }} />
+          <Skeleton style={{ height: "1.25rem", width: "3rem" }} />
+          <Skeleton style={{ height: "1.75rem", width: "3rem" }} />
+        </div>
       ))}
     </Card>
   );
