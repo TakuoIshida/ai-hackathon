@@ -179,6 +179,64 @@ export async function findBookingsByOwnerPaged(
 }
 
 /**
+ * ISH-271: CSV export variant of `findBookingsByOwnerPaged`. Same JOIN +
+ * filter shape, but without limit/offset and without the window-function
+ * `total` (the export endpoint streams every matching row in one shot).
+ *
+ * Kept as a sibling helper instead of widening the paged signature so the
+ * existing GET /bookings call site is unchanged and the export path's
+ * "no pagination" intent is obvious at the type level. Export volumes are
+ * expected to stay small (per-owner bookings count is the natural cap),
+ * so a bounded-but-unpaginated read is fine here.
+ */
+export type FindOwnerBookingsForExportParams = {
+  q?: string;
+  status?: BookingStatus;
+};
+
+export async function findBookingsByOwnerForExport(
+  database: Database,
+  ownerId: string,
+  params: FindOwnerBookingsForExportParams,
+): Promise<OwnerBooking[]> {
+  const filters: SQL[] = [eq(availabilityLinks.userId, ownerId)];
+  if (params.status) {
+    filters.push(eq(bookings.status, params.status));
+  }
+  if (params.q && params.q.trim().length > 0) {
+    const needle = `%${params.q.trim()}%`;
+    const search = or(
+      ilike(bookings.guestName, needle),
+      ilike(bookings.guestEmail, needle),
+      ilike(availabilityLinks.title, needle),
+    );
+    if (search) filters.push(search);
+  }
+
+  const rows = await database
+    .select({
+      booking: bookings,
+      linkSlug: availabilityLinks.slug,
+      linkTitle: availabilityLinks.title,
+      hostName: users.name,
+      hostEmail: users.email,
+    })
+    .from(bookings)
+    .innerJoin(availabilityLinks, eq(bookings.linkId, availabilityLinks.id))
+    .innerJoin(users, eq(bookings.hostUserId, users.id))
+    .where(and(...filters))
+    .orderBy(desc(bookings.startAt));
+
+  return rows.map((r) => ({
+    ...toBookingDomain(r.booking),
+    linkSlug: r.linkSlug,
+    linkTitle: r.linkTitle,
+    hostName: r.hostName ?? r.hostEmail.split("@")[0] ?? r.hostEmail,
+    hostEmail: r.hostEmail,
+  }));
+}
+
+/**
  * Returns a single booking by id IFF its parent link is owned by `ownerId`,
  * joined with the link's slug + title (same shape as `findBookingsByOwnerPaged`).
  * Used by GET /bookings/:id (ISH-254) so the detail screen can fetch one row

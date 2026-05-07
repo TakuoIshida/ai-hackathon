@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { ListBookingsResponse } from "@/lib/api";
 import type { BookingSummary } from "@/lib/types";
 
@@ -19,6 +19,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     api: {
       listBookings: vi.fn(),
+      exportBookingsCsv: vi.fn(),
     },
   };
 });
@@ -108,7 +109,7 @@ function canceledBooking(overrides: Partial<BookingSummary> = {}): BookingSummar
 }
 
 describe("<Bookings />", () => {
-  test("renders the page header (H1 + sub + CSV エクスポート button)", async () => {
+  test("renders the page header (H1 + sub + CSV エクスポート button enabled)", async () => {
     mockedApi.listBookings.mockResolvedValue(pagedResponse([futureBooking()]));
 
     renderBookings();
@@ -117,7 +118,9 @@ describe("<Bookings />", () => {
       await screen.findByRole("heading", { name: "確定済の予定", level: 1 }),
     ).toBeInTheDocument();
     expect(screen.getByText("確定した予約を一覧で確認できます")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /CSV エクスポート/ })).toBeDisabled();
+    // ISH-271: button is no longer disabled — clicking triggers the CSV
+    // download path (covered separately below).
+    expect(screen.getByRole("button", { name: /CSV エクスポート/ })).toBeEnabled();
   });
 
   test("renders 3 stat cards with mint / blue / rose tones", async () => {
@@ -385,6 +388,117 @@ describe("<Bookings />", () => {
     });
     expect(screen.getByText("該当する予約がありません")).toBeInTheDocument();
     expect(screen.queryByTestId("bookings-empty-no-data")).not.toBeInTheDocument();
+  });
+
+  describe("CSV エクスポート — ISH-271", () => {
+    // happy-dom does not implement URL.createObjectURL / revokeObjectURL by
+    // default. We stub them per-test so the click handler can run end to end.
+    let createObjectUrlSpy: ReturnType<typeof vi.fn> | undefined;
+    let revokeObjectUrlSpy: ReturnType<typeof vi.fn> | undefined;
+    let originalCreate: ((blob: Blob | MediaSource) => string) | undefined;
+    let originalRevoke: ((url: string) => void) | undefined;
+
+    beforeEach(() => {
+      originalCreate = URL.createObjectURL as ((blob: Blob | MediaSource) => string) | undefined;
+      originalRevoke = URL.revokeObjectURL as ((url: string) => void) | undefined;
+      createObjectUrlSpy = vi.fn(() => "blob:fake-url");
+      revokeObjectUrlSpy = vi.fn();
+      // assignments are intentional — happy-dom leaves these unset, and the
+      // SUT requires them to drive the download path.
+      Object.defineProperty(URL, "createObjectURL", {
+        configurable: true,
+        value: createObjectUrlSpy,
+      });
+      Object.defineProperty(URL, "revokeObjectURL", {
+        configurable: true,
+        value: revokeObjectUrlSpy,
+      });
+    });
+
+    afterEach(() => {
+      Object.defineProperty(URL, "createObjectURL", {
+        configurable: true,
+        value: originalCreate,
+      });
+      Object.defineProperty(URL, "revokeObjectURL", {
+        configurable: true,
+        value: originalRevoke,
+      });
+    });
+
+    test("clicking the button calls exportBookingsCsv with the current filters and triggers a download", async () => {
+      mockedApi.listBookings.mockResolvedValue(pagedResponse([futureBooking()]));
+      const blob = new Blob(["﻿開始日時\r\n"], { type: "text/csv" });
+      mockedApi.exportBookingsCsv.mockResolvedValue(blob);
+
+      renderBookings();
+
+      // Wait for first list fetch so we know the page is interactive.
+      await waitFor(() => expect(mockedApi.listBookings).toHaveBeenCalled());
+
+      // Type a search term so we can assert it propagates to the export call.
+      fireEvent.change(screen.getByLabelText("予約を検索"), { target: { value: "alice" } });
+      // Wait for the debounce + refetch to settle.
+      await waitFor(() => {
+        const last =
+          mockedApi.listBookings.mock.calls[mockedApi.listBookings.mock.calls.length - 1]?.[0];
+        expect(last?.q).toBe("alice");
+      });
+
+      const btn = screen.getByRole("button", { name: /CSV エクスポート/ });
+      fireEvent.click(btn);
+
+      await waitFor(() => expect(mockedApi.exportBookingsCsv).toHaveBeenCalledTimes(1));
+      const args = mockedApi.exportBookingsCsv.mock.calls[0]?.[0];
+      expect(args?.q).toBe("alice");
+      expect(args?.status).toBe("confirmed");
+
+      // Object URL was created from the returned Blob and revoked again.
+      await waitFor(() => expect(createObjectUrlSpy).toHaveBeenCalledWith(blob));
+      expect(revokeObjectUrlSpy).toHaveBeenCalledWith("blob:fake-url");
+    });
+
+    test("button shows loading state and rejects re-clicks while in flight", async () => {
+      mockedApi.listBookings.mockResolvedValue(pagedResponse([futureBooking()]));
+      let resolveExport: ((b: Blob) => void) | undefined;
+      mockedApi.exportBookingsCsv.mockImplementation(
+        () =>
+          new Promise<Blob>((resolve) => {
+            resolveExport = resolve;
+          }),
+      );
+
+      renderBookings();
+
+      const btn = await screen.findByRole("button", { name: /CSV エクスポート/ });
+      fireEvent.click(btn);
+      // Second click while still loading — the SUT short-circuits via the
+      // `exporting` ref, so the API is hit exactly once.
+      fireEvent.click(btn);
+
+      await waitFor(() => expect(btn).toHaveAttribute("aria-busy", "true"));
+      await waitFor(() => expect(btn).toBeDisabled());
+
+      // Resolve so the test doesn't leak a pending promise.
+      resolveExport?.(new Blob([""], { type: "text/csv" }));
+      await waitFor(() => expect(btn).not.toBeDisabled());
+      expect(mockedApi.exportBookingsCsv).toHaveBeenCalledTimes(1);
+    });
+
+    test("API failure does not crash the page — the loading state is cleared", async () => {
+      mockedApi.listBookings.mockResolvedValue(pagedResponse([futureBooking()]));
+      mockedApi.exportBookingsCsv.mockRejectedValue(new Error("boom"));
+
+      renderBookings();
+
+      const btn = await screen.findByRole("button", { name: /CSV エクスポート/ });
+      fireEvent.click(btn);
+
+      await waitFor(() => expect(mockedApi.exportBookingsCsv).toHaveBeenCalled());
+      // Even though the call rejected, the button comes back to its idle
+      // state so the user can retry.
+      await waitFor(() => expect(btn).not.toBeDisabled());
+    });
   });
 
   test("loading state renders a skeleton (role=status) instead of plain text", async () => {

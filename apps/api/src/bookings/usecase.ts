@@ -1,6 +1,10 @@
 import type { db as DbClient } from "@/db/client";
 import type { BookingStatus } from "./domain";
-import { findBookingsByOwnerPaged, findOwnerBookingById } from "./repo";
+import {
+  findBookingsByOwnerForExport,
+  findBookingsByOwnerPaged,
+  findOwnerBookingById,
+} from "./repo";
 
 type Database = typeof DbClient;
 
@@ -106,6 +110,47 @@ export async function listOwnerBookingsPaged(
     page: params.page,
     pageSize: params.pageSize,
   };
+}
+
+/**
+ * ISH-271: CSV export listing — same `q` / `status` semantics as
+ * `listOwnerBookingsPaged` but returns every matching row (no pagination).
+ * The route layer turns this into a CSV file. Volumes are bounded by
+ * per-owner booking counts so a single shot read is acceptable here.
+ */
+export type ListOwnerBookingsForExportParams = {
+  q?: string;
+  status?: BookingStatus;
+};
+
+export async function listOwnerBookingsForExport(
+  database: Database,
+  ownerId: string,
+  params: ListOwnerBookingsForExportParams,
+): Promise<OwnerBookingView[]> {
+  const rows = await findBookingsByOwnerForExport(database, ownerId, {
+    q: params.q,
+    status: params.status,
+  });
+  return rows.map((b) => ({
+    id: b.id,
+    linkId: b.linkId,
+    linkTitle: b.linkTitle,
+    linkSlug: b.linkSlug,
+    hostUserId: b.hostUserId,
+    hostName: b.hostName,
+    hostEmail: b.hostEmail,
+    startAt: b.startAt,
+    endAt: b.endAt,
+    guestName: b.guestName,
+    guestEmail: b.guestEmail,
+    status: b.status,
+    meetUrl: b.meetUrl,
+    googleEventId: b.googleEventId,
+    googleHtmlLink: b.googleHtmlLink,
+    canceledAt: b.canceledAt,
+    createdAt: b.createdAt,
+  }));
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   attachGoogleEvent,
   findActiveBookingsForLink,
   findBookingById,
+  findBookingsByOwnerForExport,
   findBookingsByOwnerPaged,
   findBookingsDueForReminder,
   markBookingCanceled,
@@ -548,6 +549,105 @@ describe("bookings/repo", () => {
       });
       expect(result.total).toBe(0);
       expect(result.bookings).toEqual([]);
+    });
+  });
+
+  // ---------- ISH-271: CSV export — non-paginated owner read ----------
+
+  describe("findBookingsByOwnerForExport", () => {
+    /**
+     * Mirrors the helper in `findBookingsByOwnerPaged` block, but only used
+     * here. Inserting via the repo's own helper so the cancellationToken /
+     * status flow matches production.
+     */
+    async function seedManyBookings(
+      seed: { tenantId: string; linkId: string; userId: string },
+      n: number,
+      overridesByIndex: (i: number) => Partial<NewBookingRow> = () => ({}),
+    ): Promise<void> {
+      const base = SLOT_START.getTime();
+      for (let i = 0; i < n; i++) {
+        const startAt = new Date(base + i * 60 * 60 * 1000);
+        const endAt = new Date(startAt.getTime() + 30 * 60 * 1000);
+        const created = await tryInsertConfirmedBooking(db, {
+          tenantId: seed.tenantId,
+          linkId: seed.linkId,
+          hostUserId: seed.userId,
+          startAt,
+          endAt,
+          guestName: `Guest ${i}`,
+          guestEmail: `guest${i}@example.com`,
+          guestNote: null,
+          guestTimeZone: null,
+          ...overridesByIndex(i),
+        } as Omit<NewBookingRow, "id" | "status" | "createdAt"> & { status?: never });
+        if (!created) throw new Error(`seed booking #${i} failed`);
+      }
+    }
+
+    test("returns every owner row, ordered by startAt desc, no pagination", async () => {
+      const seed = await seedLink();
+      await seedManyBookings(seed, 30);
+
+      const rows = await findBookingsByOwnerForExport(db, seed.userId, {});
+      expect(rows.length).toBe(30);
+      // Ordered by startAt desc — first row is the latest seeded.
+      expect(rows[0]?.guestEmail).toBe("guest29@example.com");
+      expect(rows[29]?.guestEmail).toBe("guest0@example.com");
+      // Joined link/host fields are present.
+      expect(rows[0]?.linkSlug).toBeTruthy();
+      expect(rows[0]?.linkTitle).toBe("30 min meeting");
+      expect(rows[0]?.hostEmail).toBe("owner@example.com");
+    });
+
+    test("status filter narrows to confirmed / canceled", async () => {
+      const seed = await seedLink();
+      await seedManyBookings(seed, 4);
+      const all = await findBookingsByOwnerForExport(db, seed.userId, {});
+      const ids = all.map((b) => b.id);
+      await markBookingCanceled(db, ids[0] ?? "");
+      await markBookingCanceled(db, ids[2] ?? "");
+
+      const confirmedOnly = await findBookingsByOwnerForExport(db, seed.userId, {
+        status: "confirmed",
+      });
+      expect(confirmedOnly.length).toBe(2);
+      expect(confirmedOnly.every((b) => b.status === "confirmed")).toBe(true);
+
+      const canceledOnly = await findBookingsByOwnerForExport(db, seed.userId, {
+        status: "canceled",
+      });
+      expect(canceledOnly.length).toBe(2);
+      expect(canceledOnly.every((b) => b.status === "canceled")).toBe(true);
+    });
+
+    test("q matches case-insensitively against guestName / guestEmail / linkTitle", async () => {
+      const seed = await seedLink();
+      await seedManyBookings(seed, 3, (i) => {
+        if (i === 0) return { guestName: "Alice Anderson", guestEmail: "a@example.com" };
+        if (i === 1) return { guestName: "Bob Brown", guestEmail: "bob@acme.com" };
+        return { guestName: "Charlie", guestEmail: "charlie@example.com" };
+      });
+
+      const byName = await findBookingsByOwnerForExport(db, seed.userId, { q: "ALICE" });
+      expect(byName.length).toBe(1);
+      expect(byName[0]?.guestName).toBe("Alice Anderson");
+
+      const byEmail = await findBookingsByOwnerForExport(db, seed.userId, { q: "acme" });
+      expect(byEmail.length).toBe(1);
+      expect(byEmail[0]?.guestEmail).toBe("bob@acme.com");
+    });
+
+    test("scopes to ownerId — bookings under another owner's link are excluded", async () => {
+      const me = await seedLink();
+      const other = await seedLink();
+      await seedManyBookings(me, 2);
+      await seedManyBookings(other, 5);
+
+      const mine = await findBookingsByOwnerForExport(db, me.userId, {});
+      expect(mine.length).toBe(2);
+      const theirs = await findBookingsByOwnerForExport(db, other.userId, {});
+      expect(theirs.length).toBe(5);
     });
   });
 });

@@ -2,7 +2,12 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import { type CancelBookingPorts, cancelBookingByOwner } from "@/bookings/cancel";
-import { getOwnerBooking, listOwnerBookingsPaged } from "@/bookings/usecase";
+import { buildBookingsCsvFilename, formatBookingsCsv } from "@/bookings/csv";
+import {
+  getOwnerBooking,
+  listOwnerBookingsForExport,
+  listOwnerBookingsPaged,
+} from "@/bookings/usecase";
 import { config } from "@/config";
 import { db } from "@/db/client";
 import {
@@ -83,6 +88,35 @@ export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): H
         pageSize,
       });
       return c.json(result);
+    },
+  );
+
+  // ISH-271: CSV export. Same `q` / `status` semantics as GET /bookings, but
+  // returns every matching row in one shot (no pagination) as a `text/csv`
+  // attachment. Volumes are bounded by per-owner booking counts so a single
+  // shot read is acceptable here. Mounted BEFORE `/:id` so the literal
+  // `export.csv` segment doesn't get captured as an id.
+  route.get(
+    "/export.csv",
+    zValidator(
+      "query",
+      z.object({
+        q: z.string().trim().max(200).optional(),
+        status: z.enum(["all", "confirmed", "canceled"]).optional().default("all"),
+      }),
+    ),
+    async (c) => {
+      const dbUser = getDbUser(c);
+      const { q, status } = c.req.valid("query");
+      const rows = await listOwnerBookingsForExport(db, dbUser.id, {
+        q: q && q.length > 0 ? q : undefined,
+        status: status === "all" ? undefined : status,
+      });
+      const body = formatBookingsCsv(rows);
+      const filename = buildBookingsCsvFilename(new Date());
+      c.header("Content-Type", "text/csv; charset=utf-8");
+      c.header("Content-Disposition", `attachment; filename="${filename}"`);
+      return c.body(body);
     },
   );
 

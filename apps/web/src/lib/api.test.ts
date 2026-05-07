@@ -114,6 +114,53 @@ describe("api.checkSlugAvailable", () => {
   });
 });
 
+describe("api.exportBookingsCsv", () => {
+  it("includes q + status query params and returns the response Blob", async () => {
+    let calledUrl = "";
+    setHandler(async (url) => {
+      calledUrl = url;
+      const blob = new Blob(["﻿header\r\n"], { type: "text/csv; charset=utf-8" });
+      return new Response(blob, {
+        status: 200,
+        headers: { "Content-Type": "text/csv; charset=utf-8" },
+      });
+    });
+    const blob = await api.exportBookingsCsv({ q: "alice", status: "canceled" }, noToken);
+    expect(blob).toBeInstanceOf(Blob);
+    expect(calledUrl).toContain("/bookings/export.csv");
+    expect(calledUrl).toContain("q=alice");
+    expect(calledUrl).toContain("status=canceled");
+  });
+
+  it("omits status=all and empty q from the query string", async () => {
+    let calledUrl = "";
+    setHandler(async (url) => {
+      calledUrl = url;
+      return new Response(new Blob([""]), { status: 200 });
+    });
+    await api.exportBookingsCsv({ q: "", status: "all" }, noToken);
+    expect(calledUrl).toContain("/bookings/export.csv");
+    // Neither filter survives because both are at-default.
+    expect(calledUrl).not.toContain("q=");
+    expect(calledUrl).not.toContain("status=");
+  });
+
+  it("attaches the bearer token when getToken returns a string", async () => {
+    let authHeader: string | null = null;
+    setHandler(async (_url, init) => {
+      authHeader = new Headers(init?.headers).get("Authorization");
+      return new Response(new Blob([""]), { status: 200 });
+    });
+    await api.exportBookingsCsv(undefined, async () => "csv-jwt");
+    expect(authHeader).toBe("Bearer csv-jwt");
+  });
+
+  it("throws ApiError on non-2xx responses", async () => {
+    setHandler(async () => new Response(JSON.stringify({ error: "forbidden" }), { status: 403 }));
+    await expect(api.exportBookingsCsv(undefined, noToken)).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
 describe("api.createLink", () => {
   it("posts JSON body with the input payload", async () => {
     let body: string | undefined;

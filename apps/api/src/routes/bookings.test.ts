@@ -395,6 +395,136 @@ describe("GET /bookings (owner list)", () => {
   });
 });
 
+describe("GET /bookings/export.csv — ISH-271", () => {
+  test("401 when no auth header is present", async () => {
+    const app = buildApp();
+    const res = await app.request("/bookings/export.csv");
+    expect(res.status).toBe(401);
+  });
+
+  test("200 returns CSV body with BOM, headers, and Content-Disposition attachment", async () => {
+    const tenantId = await seedTenant();
+    const owner = await seedUser("owner");
+    const link = await seedLink(tenantId, owner.userId, "owner-link", "Sales Demo");
+    await seedConfirmedBooking(tenantId, link.linkId, {
+      startAt: new Date("2026-12-14T05:00:00.000Z"),
+      guestEmail: "alice@example.com",
+    });
+    await seedConfirmedBooking(tenantId, link.linkId, {
+      startAt: new Date("2026-12-15T05:00:00.000Z"),
+      guestEmail: "bob@example.com",
+    });
+
+    const app = buildApp();
+    const res = await app.request("/bookings/export.csv", {
+      headers: { "x-test-clerk-id": owner.externalId },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/csv; charset=utf-8");
+    const dispo = res.headers.get("Content-Disposition") ?? "";
+    expect(dispo).toContain("attachment");
+    expect(dispo).toMatch(/filename="bookings-\d{8}\.csv"/);
+
+    const body = await res.text();
+    // Leading BOM (U+FEFF) for Excel compat.
+    expect(body.charCodeAt(0)).toBe(0xfeff);
+    const lines = body.slice(1).split("\r\n");
+    // header + 2 rows
+    expect(lines.length).toBe(3);
+    expect(lines[0]).toContain("開始日時");
+    expect(lines[0]).toContain("ステータス");
+    // Latest first (sorted by startAt desc)
+    expect(lines[1]).toContain("bob@example.com");
+    expect(lines[2]).toContain("alice@example.com");
+  });
+
+  test("respects ?status=canceled and ?q= filters (mirrors GET /bookings)", async () => {
+    const tenantId = await seedTenant();
+    const owner = await seedUser("owner");
+    const link = await seedLink(tenantId, owner.userId, "owner-link", "Sales Demo");
+    const confirmedId = await seedConfirmedBooking(tenantId, link.linkId, {
+      startAt: new Date("2026-12-14T05:00:00.000Z"),
+      guestEmail: "stay@example.com",
+    });
+    const canceledId = await seedConfirmedBooking(tenantId, link.linkId, {
+      startAt: new Date("2026-12-15T05:00:00.000Z"),
+      guestEmail: "canc@example.com",
+    });
+    await testDb
+      .update(bookings)
+      .set({ status: "canceled", canceledAt: new Date() })
+      .where(eq(bookings.id, canceledId));
+
+    const app = buildApp();
+
+    // status=canceled — only the canceled row.
+    const cancelOnly = await app.request("/bookings/export.csv?status=canceled", {
+      headers: { "x-test-clerk-id": owner.externalId },
+    });
+    expect(cancelOnly.status).toBe(200);
+    const cancelBody = (await cancelOnly.text()).slice(1);
+    const cancelLines = cancelBody.split("\r\n");
+    expect(cancelLines.length).toBe(2); // header + 1 row
+    expect(cancelLines[1]).toContain("canc@example.com");
+    expect(cancelLines[1]).toContain("キャンセル済");
+    expect(cancelBody).not.toContain("stay@example.com");
+    // Suppress unused-var lint on confirmedId (still asserts the seed worked).
+    expect(confirmedId).toBeTruthy();
+
+    // q=stay — partial match against guestEmail.
+    const qRes = await app.request("/bookings/export.csv?q=stay", {
+      headers: { "x-test-clerk-id": owner.externalId },
+    });
+    expect(qRes.status).toBe(200);
+    const qBody = (await qRes.text()).slice(1);
+    const qLines = qBody.split("\r\n");
+    expect(qLines.length).toBe(2);
+    expect(qLines[1]).toContain("stay@example.com");
+  });
+
+  test("returns header-only CSV when the user has no bookings", async () => {
+    const owner = await seedUser("owner");
+    const app = buildApp();
+    const res = await app.request("/bookings/export.csv", {
+      headers: { "x-test-clerk-id": owner.externalId },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    // BOM + header row only — no record separator.
+    expect(body.charCodeAt(0)).toBe(0xfeff);
+    expect(body.slice(1).split("\r\n").length).toBe(1);
+    expect(body).toContain("開始日時");
+  });
+
+  test("tenant isolation: another owner's bookings are excluded", async () => {
+    const tenantId = await seedTenant();
+    const me = await seedUser("me");
+    const other = await seedUser("other");
+    const myLink = await seedLink(tenantId, me.userId, "my-link");
+    const otherLink = await seedLink(tenantId, other.userId, "other-link");
+    await seedConfirmedBooking(tenantId, myLink.linkId, { guestEmail: "mine@example.com" });
+    await seedConfirmedBooking(tenantId, otherLink.linkId, { guestEmail: "theirs@example.com" });
+
+    const app = buildApp();
+    const res = await app.request("/bookings/export.csv", {
+      headers: { "x-test-clerk-id": me.externalId },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("mine@example.com");
+    expect(body).not.toContain("theirs@example.com");
+  });
+
+  test("400 on invalid status value", async () => {
+    const owner = await seedUser("owner");
+    const app = buildApp();
+    const res = await app.request("/bookings/export.csv?status=banana", {
+      headers: { "x-test-clerk-id": owner.externalId },
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe("GET /bookings/:id (owner detail) — ISH-254", () => {
   test("401 when no auth header is present", async () => {
     const app = buildApp();
