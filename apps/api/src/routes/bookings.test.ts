@@ -210,8 +210,14 @@ describe("GET /bookings (owner list)", () => {
     expect(res.status).toBe(200);
     const json = (await res.json()) as {
       bookings: Array<{ linkSlug: string; guestEmail: string }>;
+      total: number;
+      page: number;
+      pageSize: number;
     };
     expect(json.bookings.length).toBe(2);
+    expect(json.total).toBe(2);
+    expect(json.page).toBe(1);
+    expect(json.pageSize).toBe(25);
     // sorted by startAt desc per route
     expect(json.bookings[0]?.guestEmail).toBe("second@example.com");
     expect(json.bookings[1]?.guestEmail).toBe("guest@example.com");
@@ -236,8 +242,10 @@ describe("GET /bookings (owner list)", () => {
     expect(res.status).toBe(200);
     const json = (await res.json()) as {
       bookings: Array<{ guestEmail: string; linkSlug: string }>;
+      total: number;
     };
     expect(json.bookings.length).toBe(1);
+    expect(json.total).toBe(1);
     expect(json.bookings[0]?.guestEmail).toBe("mine@example.com");
     expect(json.bookings[0]?.linkSlug).toBe("my-link");
   });
@@ -249,8 +257,141 @@ describe("GET /bookings (owner list)", () => {
       headers: { "x-test-clerk-id": me.externalId },
     });
     expect(res.status).toBe(200);
-    const json = (await res.json()) as { bookings: unknown[] };
+    const json = (await res.json()) as { bookings: unknown[]; total: number };
     expect(json.bookings).toEqual([]);
+    expect(json.total).toBe(0);
+  });
+
+  // ---------- ISH-268: server-side search / status / pagination ----------
+
+  test("?q= filters by guestName / guestEmail / linkTitle (case-insensitive)", async () => {
+    const tenantId = await seedTenant();
+    const owner = await seedUser("owner");
+    const link = await seedLink(tenantId, owner.userId, "owner-link", "Sales Demo");
+    await seedConfirmedBooking(tenantId, link.linkId, {
+      guestEmail: "alice@example.com",
+      startAt: new Date("2026-12-14T05:00:00.000Z"),
+    });
+    await seedConfirmedBooking(tenantId, link.linkId, {
+      guestEmail: "bob@acme.com",
+      startAt: new Date("2026-12-15T05:00:00.000Z"),
+    });
+
+    const app = buildApp();
+    const res = await app.request("/bookings?q=acme", {
+      headers: { "x-test-clerk-id": owner.externalId },
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      bookings: Array<{ guestEmail: string }>;
+      total: number;
+    };
+    expect(json.total).toBe(1);
+    expect(json.bookings[0]?.guestEmail).toBe("bob@acme.com");
+  });
+
+  test("?status=canceled narrows to canceled rows; ?status=all returns everything", async () => {
+    const tenantId = await seedTenant();
+    const owner = await seedUser("owner");
+    const link = await seedLink(tenantId, owner.userId, "owner-link");
+    const confirmedId = await seedConfirmedBooking(tenantId, link.linkId, {
+      startAt: new Date("2026-12-14T05:00:00.000Z"),
+    });
+    const canceledId = await seedConfirmedBooking(tenantId, link.linkId, {
+      startAt: new Date("2026-12-15T05:00:00.000Z"),
+      guestEmail: "canc@example.com",
+    });
+    await testDb
+      .update(bookings)
+      .set({ status: "canceled", canceledAt: new Date() })
+      .where(eq(bookings.id, canceledId));
+
+    const app = buildApp();
+
+    const cancelOnly = await app.request("/bookings?status=canceled", {
+      headers: { "x-test-clerk-id": owner.externalId },
+    });
+    const cancelJson = (await cancelOnly.json()) as {
+      bookings: Array<{ id: string; status: string }>;
+      total: number;
+    };
+    expect(cancelJson.total).toBe(1);
+    expect(cancelJson.bookings[0]?.id).toBe(canceledId);
+    expect(cancelJson.bookings[0]?.status).toBe("canceled");
+
+    const allRes = await app.request("/bookings?status=all", {
+      headers: { "x-test-clerk-id": owner.externalId },
+    });
+    const allJson = (await allRes.json()) as { total: number; bookings: Array<{ id: string }> };
+    expect(allJson.total).toBe(2);
+    const ids = allJson.bookings.map((b) => b.id).sort();
+    expect(ids).toEqual([confirmedId, canceledId].sort());
+  });
+
+  test("?page= / ?pageSize= slice the result and total reflects the unsliced match", async () => {
+    const tenantId = await seedTenant();
+    const owner = await seedUser("owner");
+    const link = await seedLink(tenantId, owner.userId, "owner-link");
+    // 5 bookings spaced 1 hour apart starting from a stable far-future moment.
+    const base = new Date("2026-12-14T05:00:00.000Z").getTime();
+    for (let i = 0; i < 5; i++) {
+      await seedConfirmedBooking(tenantId, link.linkId, {
+        startAt: new Date(base + i * 60 * 60 * 1000),
+        guestEmail: `g${i}@example.com`,
+      });
+    }
+
+    const app = buildApp();
+
+    const page1 = await app.request("/bookings?page=1&pageSize=2", {
+      headers: { "x-test-clerk-id": owner.externalId },
+    });
+    const j1 = (await page1.json()) as {
+      bookings: Array<{ guestEmail: string }>;
+      total: number;
+      page: number;
+      pageSize: number;
+    };
+    expect(j1.total).toBe(5);
+    expect(j1.page).toBe(1);
+    expect(j1.pageSize).toBe(2);
+    expect(j1.bookings.length).toBe(2);
+    // Ordered by startAt desc: latest two first.
+    expect(j1.bookings[0]?.guestEmail).toBe("g4@example.com");
+    expect(j1.bookings[1]?.guestEmail).toBe("g3@example.com");
+
+    const page3 = await app.request("/bookings?page=3&pageSize=2", {
+      headers: { "x-test-clerk-id": owner.externalId },
+    });
+    const j3 = (await page3.json()) as {
+      bookings: Array<{ guestEmail: string }>;
+      total: number;
+      page: number;
+    };
+    expect(j3.total).toBe(5);
+    expect(j3.page).toBe(3);
+    expect(j3.bookings.length).toBe(1);
+    expect(j3.bookings[0]?.guestEmail).toBe("g0@example.com");
+  });
+
+  test("400 on invalid query (status not in enum, pageSize > 100, page < 1)", async () => {
+    const owner = await seedUser("owner");
+    const app = buildApp();
+
+    const badStatus = await app.request("/bookings?status=banana", {
+      headers: { "x-test-clerk-id": owner.externalId },
+    });
+    expect(badStatus.status).toBe(400);
+
+    const tooLarge = await app.request("/bookings?pageSize=999", {
+      headers: { "x-test-clerk-id": owner.externalId },
+    });
+    expect(tooLarge.status).toBe(400);
+
+    const zeroPage = await app.request("/bookings?page=0", {
+      headers: { "x-test-clerk-id": owner.externalId },
+    });
+    expect(zeroPage.status).toBe(400);
   });
 });
 

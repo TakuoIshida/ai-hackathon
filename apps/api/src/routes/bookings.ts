@@ -1,6 +1,8 @@
+import { zValidator } from "@hono/zod-validator";
 import { Hono, type MiddlewareHandler } from "hono";
+import { z } from "zod";
 import { type CancelBookingPorts, cancelBookingByOwner } from "@/bookings/cancel";
-import { getOwnerBooking, listOwnerBookings } from "@/bookings/usecase";
+import { getOwnerBooking, listOwnerBookingsPaged } from "@/bookings/usecase";
 import { config } from "@/config";
 import { db } from "@/db/client";
 import {
@@ -50,12 +52,39 @@ export function createBookingsRoute(deps: BookingsRouteDeps = productionDeps): H
     route.use("*", mw);
   }
 
-  // List all bookings owned by the authed user.
-  route.get("/", async (c) => {
-    const dbUser = getDbUser(c);
-    const list = await listOwnerBookings(db, dbUser.id);
-    return c.json({ bookings: list });
-  });
+  // List all bookings owned by the authed user. ISH-268: search/status/pagination
+  // moved server-side. The previous "return everything, filter on the FE" path
+  // does not scale past a few hundred bookings.
+  //
+  // - `q`: case-insensitive partial match on guestName / guestEmail / linkTitle
+  // - `status`: "all" (default) | "confirmed" | "canceled"; "all" is encoded
+  //   on the wire so the FE state can round-trip cleanly, but the SQL layer
+  //   only narrows when status !== "all".
+  // - `page`: 1-based (default 1)
+  // - `pageSize`: default 25, clamped to [1, 100] to bound payload size.
+  route.get(
+    "/",
+    zValidator(
+      "query",
+      z.object({
+        q: z.string().trim().max(200).optional(),
+        status: z.enum(["all", "confirmed", "canceled"]).optional().default("all"),
+        page: z.coerce.number().int().min(1).optional().default(1),
+        pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+      }),
+    ),
+    async (c) => {
+      const dbUser = getDbUser(c);
+      const { q, status, page, pageSize } = c.req.valid("query");
+      const result = await listOwnerBookingsPaged(db, dbUser.id, {
+        q: q && q.length > 0 ? q : undefined,
+        status: status === "all" ? undefined : status,
+        page,
+        pageSize,
+      });
+      return c.json(result);
+    },
+  );
 
   // ISH-254: dedicated detail endpoint. Returns 404 for both missing and
   // foreign booking ids — see `getOwnerBooking` for rationale.

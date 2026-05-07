@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, isNull, lt, or, type SQL, sql } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
 import { type Booking as BookingTableRow, bookings } from "@/db/schema/bookings";
 import { users } from "@/db/schema/common";
@@ -95,19 +95,52 @@ export async function findActiveBookingsForLink(
 }
 
 /**
- * Returns all bookings whose parent link is owned by `ownerId`, joined with
- * the link's slug + title for response rendering. Sorted by `startAt` desc
- * so the list view shows newest first.
+ * ISH-268: server-side search / status filter / pagination for the owner
+ * "My bookings" list. The route handler had previously fetched the full
+ * unfiltered set and the FE filtered + sliced it client-side; that does not
+ * scale past a few hundred bookings.
  *
- * NOTE: ISH-112 introduces co-owners via the `link_owners` table, but this
- * query intentionally only follows `availability_links.user_id` (the primary
- * owner) to preserve existing behavior — the previous route handler also
- * scoped only to `availabilityLinks.userId`.
+ * `q` does a case-insensitive OR match against guestName / guestEmail /
+ * linkTitle (drizzle `ilike` → Postgres ILIKE with `%q%`). `status` filters
+ * the booking row directly.
+ *
+ * `total` is computed via a window function (`count(*) OVER()`) so it runs
+ * in the same plan as the page slice — avoids the round-trip + connection
+ * overhead of a separate COUNT(*) query, and we don't hit serialization
+ * skew between the two.
  */
-export async function findBookingsByOwner(
+export type FindOwnerBookingsParams = {
+  q?: string;
+  status?: BookingStatus;
+  /** 0-based offset (already converted from 1-based page in the usecase). */
+  offset: number;
+  limit: number;
+};
+
+export type FindOwnerBookingsPage = {
+  bookings: OwnerBooking[];
+  total: number;
+};
+
+export async function findBookingsByOwnerPaged(
   database: Database,
   ownerId: string,
-): Promise<OwnerBooking[]> {
+  params: FindOwnerBookingsParams,
+): Promise<FindOwnerBookingsPage> {
+  const filters: SQL[] = [eq(availabilityLinks.userId, ownerId)];
+  if (params.status) {
+    filters.push(eq(bookings.status, params.status));
+  }
+  if (params.q && params.q.trim().length > 0) {
+    const needle = `%${params.q.trim()}%`;
+    const search = or(
+      ilike(bookings.guestName, needle),
+      ilike(bookings.guestEmail, needle),
+      ilike(availabilityLinks.title, needle),
+    );
+    if (search) filters.push(search);
+  }
+
   const rows = await database
     .select({
       booking: bookings,
@@ -119,13 +152,20 @@ export async function findBookingsByOwner(
       // RESTRICT (a host user cannot be deleted while their bookings exist).
       hostName: users.name,
       hostEmail: users.email,
+      // ISH-268: window-function count over the filtered set, computed in the
+      // same plan as the page slice.
+      total: sql<number>`count(*) OVER()`.mapWith(Number),
     })
     .from(bookings)
     .innerJoin(availabilityLinks, eq(bookings.linkId, availabilityLinks.id))
     .innerJoin(users, eq(bookings.hostUserId, users.id))
-    .where(eq(availabilityLinks.userId, ownerId))
-    .orderBy(desc(bookings.startAt));
-  return rows.map((r) => ({
+    .where(and(...filters))
+    .orderBy(desc(bookings.startAt))
+    .limit(params.limit)
+    .offset(params.offset);
+
+  const total = rows[0]?.total ?? 0;
+  const items = rows.map((r) => ({
     ...toBookingDomain(r.booking),
     linkSlug: r.linkSlug,
     linkTitle: r.linkTitle,
@@ -135,11 +175,12 @@ export async function findBookingsByOwner(
     hostName: r.hostName ?? r.hostEmail.split("@")[0] ?? r.hostEmail,
     hostEmail: r.hostEmail,
   }));
+  return { bookings: items, total };
 }
 
 /**
  * Returns a single booking by id IFF its parent link is owned by `ownerId`,
- * joined with the link's slug + title (same shape as `findBookingsByOwner`).
+ * joined with the link's slug + title (same shape as `findBookingsByOwnerPaged`).
  * Used by GET /bookings/:id (ISH-254) so the detail screen can fetch one row
  * directly instead of paging the whole list and filtering client-side.
  *

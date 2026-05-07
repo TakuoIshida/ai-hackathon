@@ -24,8 +24,11 @@ test.describe("signin → dashboard", () => {
     await page.route("**/links", (route) =>
       route.fulfill({ status: 200, body: JSON.stringify({ links: [] }) }),
     );
-    await page.route("**/bookings", (route) =>
-      route.fulfill({ status: 200, body: JSON.stringify({ bookings: [] }) }),
+    await page.route("**/bookings*", (route) =>
+      route.fulfill({
+        status: 200,
+        body: JSON.stringify({ bookings: [], total: 0, page: 1, pageSize: 25 }),
+      }),
     );
 
     await page.goto("/");

@@ -1,12 +1,13 @@
 import type { db as DbClient } from "@/db/client";
-import { findBookingsByOwner, findOwnerBookingById } from "./repo";
+import type { BookingStatus } from "./domain";
+import { findBookingsByOwnerPaged, findOwnerBookingById } from "./repo";
 
 type Database = typeof DbClient;
 
 /**
- * Domain shape returned by `listOwnerBookings`. Intentionally a thin
- * mapping of the joined repo row — keeps route handlers free of Drizzle
- * row internals while preserving the existing GET /bookings response
+ * Domain shape returned by the bookings list/detail use cases. Intentionally
+ * a thin mapping of the joined repo row — keeps route handlers free of
+ * Drizzle row internals while preserving the existing GET /bookings response
  * contract (field names + types unchanged).
  */
 export type OwnerBookingView = {
@@ -41,53 +42,75 @@ export type OwnerBookingView = {
   createdAt: Date;
 };
 
-export type ListOwnerBookingsFilter = {
-  /** When true, only return bookings whose `startAt` is >= now. */
-  upcomingOnly?: boolean;
+/**
+ * ISH-268: server-side paged listing of bookings owned by `ownerId` (i.e.
+ * bookings under links whose `userId === ownerId`), sorted by start time
+ * descending. Replaces the previous "fetch all, filter+slice on the FE"
+ * pattern with a single SQL round trip that already applies search / status
+ * / pagination at the DB, so first-paint payload stays bounded as the
+ * booking count grows.
+ *
+ * `page` is 1-based (matches the typical UI control); we translate to
+ * `offset = (page - 1) * pageSize` here so the repo layer stays SQL-shaped.
+ *
+ * `total` is the matching count BEFORE limit/offset — used by the FE to
+ * render "全 N 件中 a–b 件" and disable next/prev appropriately.
+ */
+export type ListOwnerBookingsPagedParams = {
+  q?: string;
+  status?: BookingStatus;
+  page: number;
+  pageSize: number;
 };
 
-/**
- * Lists all bookings owned by `ownerId` (i.e. bookings under links whose
- * `userId === ownerId`), sorted by start time descending.
- *
- * The `filter.upcomingOnly` flag is wired in but currently a no-op pass-through
- * applied in-memory — the repo returns all rows and we slice here. This keeps
- * the SQL surface small while letting future callers opt-in without another
- * round trip.
- */
-export async function listOwnerBookings(
+export type ListOwnerBookingsPagedResult = {
+  bookings: OwnerBookingView[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export async function listOwnerBookingsPaged(
   database: Database,
   ownerId: string,
-  filter: ListOwnerBookingsFilter = {},
-): Promise<OwnerBookingView[]> {
-  const rows = await findBookingsByOwner(database, ownerId);
-  const filtered = filter.upcomingOnly
-    ? rows.filter((b) => b.startAt.getTime() >= Date.now())
-    : rows;
-  return filtered.map((b) => ({
-    id: b.id,
-    linkId: b.linkId,
-    linkTitle: b.linkTitle,
-    linkSlug: b.linkSlug,
-    hostUserId: b.hostUserId,
-    hostName: b.hostName,
-    hostEmail: b.hostEmail,
-    startAt: b.startAt,
-    endAt: b.endAt,
-    guestName: b.guestName,
-    guestEmail: b.guestEmail,
-    status: b.status,
-    meetUrl: b.meetUrl,
-    googleEventId: b.googleEventId,
-    googleHtmlLink: b.googleHtmlLink,
-    canceledAt: b.canceledAt,
-    createdAt: b.createdAt,
-  }));
+  params: ListOwnerBookingsPagedParams,
+): Promise<ListOwnerBookingsPagedResult> {
+  const offset = (params.page - 1) * params.pageSize;
+  const { bookings: rows, total } = await findBookingsByOwnerPaged(database, ownerId, {
+    q: params.q,
+    status: params.status,
+    offset,
+    limit: params.pageSize,
+  });
+  return {
+    bookings: rows.map((b) => ({
+      id: b.id,
+      linkId: b.linkId,
+      linkTitle: b.linkTitle,
+      linkSlug: b.linkSlug,
+      hostUserId: b.hostUserId,
+      hostName: b.hostName,
+      hostEmail: b.hostEmail,
+      startAt: b.startAt,
+      endAt: b.endAt,
+      guestName: b.guestName,
+      guestEmail: b.guestEmail,
+      status: b.status,
+      meetUrl: b.meetUrl,
+      googleEventId: b.googleEventId,
+      googleHtmlLink: b.googleHtmlLink,
+      canceledAt: b.canceledAt,
+      createdAt: b.createdAt,
+    })),
+    total,
+    page: params.page,
+    pageSize: params.pageSize,
+  };
 }
 
 /**
  * Returns a single owner-scoped booking view (same projection as
- * `listOwnerBookings`) or null if no booking with `bookingId` exists OR the
+ * `listOwnerBookingsPaged`) or null if no booking with `bookingId` exists OR the
  * booking's parent link is not owned by `ownerId`. Collapsing "missing" and
  * "foreign" into a single null is intentional — the route maps both to 404
  * to avoid leaking the existence of foreign booking ids (ISH-183).
