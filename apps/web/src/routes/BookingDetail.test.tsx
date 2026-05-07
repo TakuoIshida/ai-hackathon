@@ -19,10 +19,25 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       getBooking: vi.fn(),
       cancelBooking: vi.fn(),
+      // ISH-270: BookingDetail now triggers reschedule via api.rescheduleBooking
+      // when the user picks a slot in the modal. Tests don't drive the modal
+      // end-to-end (that's covered in RescheduleModal.test.tsx + the e2e spec)
+      // so the mock is enough to satisfy the import surface.
+      rescheduleBooking: vi.fn(),
     },
   };
 });
 
+// ISH-270: BookingDetail wraps reschedule confirmation with `useToast()`.
+// The test render mounts a real ToastProvider so the hook resolves.
+vi.mock("@/components/booking/RescheduleModal", () => ({
+  // The modal is exercised in its own sidecar test; replace with a stub here
+  // so BookingDetail tests focus on button wiring + state transitions.
+  RescheduleModal: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="reschedule-modal-stub" /> : null,
+}));
+
+import { ToastProvider } from "@/components/ui/toast";
 import { ApiError, api } from "@/lib/api";
 import BookingDetail from "./BookingDetail";
 
@@ -55,11 +70,13 @@ function futureBooking(overrides: Partial<BookingSummary> = {}): BookingSummary 
 
 function renderAt(id: string) {
   return render(
-    <MemoryRouter initialEntries={[`/confirmed-list/${id}`]}>
-      <Routes>
-        <Route path="/confirmed-list/:id" element={<BookingDetail />} />
-      </Routes>
-    </MemoryRouter>,
+    <ToastProvider>
+      <MemoryRouter initialEntries={[`/confirmed-list/${id}`]}>
+        <Routes>
+          <Route path="/confirmed-list/:id" element={<BookingDetail />} />
+        </Routes>
+      </MemoryRouter>
+    </ToastProvider>,
   );
 }
 
@@ -127,9 +144,21 @@ describe("<BookingDetail />", () => {
       "https://www.google.com/calendar/event?eid=evt-google-abc",
     );
 
-    // 5. アクション Footer — リスケ placeholder is disabled, cancel is active.
-    expect(screen.getByRole("button", { name: "リスケ" })).toBeDisabled();
+    // 5. アクション Footer — ISH-270: リスケ button is now enabled and opens
+    // the slot-picker modal. Cancel stays active.
+    expect(screen.getByRole("button", { name: "リスケ" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "予約をキャンセル" })).toBeEnabled();
+  });
+
+  test("ISH-270: clicking リスケ opens the RescheduleModal", async () => {
+    mockedApi.getBooking.mockResolvedValue({ booking: futureBooking({ id: "b1" }) });
+
+    renderAt("b1");
+
+    const rescheduleBtn = await screen.findByRole("button", { name: "リスケ" });
+    expect(screen.queryByTestId("reschedule-modal-stub")).toBeNull();
+    fireEvent.click(rescheduleBtn);
+    expect(screen.getByTestId("reschedule-modal-stub")).toBeInTheDocument();
   });
 
   test("ISH-269: hides 「Google Calendar で開く」 button when googleHtmlLink is null", async () => {

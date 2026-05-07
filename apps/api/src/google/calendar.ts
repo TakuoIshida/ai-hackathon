@@ -190,3 +190,56 @@ export async function deleteEvent(input: {
     throw new Error(`events.delete ${res.status}: ${text}`);
   }
 }
+
+// ISH-270: events.patch — used by reschedule to bump start/end on an existing
+// Google Calendar event. We send only the time fields (PATCH semantics) so any
+// edits the host made to summary / attendees stay intact. `sendUpdates=all` so
+// guests receive the calendar update notification.
+export type EventPatchInput = {
+  accessToken: string;
+  calendarId: string;
+  eventId: string;
+  startMs: number;
+  endMs: number;
+  timeZone: string;
+  fetchImpl?: FetchLike;
+};
+
+export type PatchedEvent = {
+  id: string;
+  htmlLink?: string;
+};
+
+export async function patchEvent(input: EventPatchInput): Promise<PatchedEvent> {
+  const {
+    accessToken,
+    calendarId,
+    eventId,
+    startMs,
+    endMs,
+    timeZone,
+    fetchImpl = httpFetch,
+  } = input;
+  const url = new URL(
+    `${CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+  );
+  url.searchParams.set("sendUpdates", "all");
+  const body = {
+    start: { dateTime: new Date(startMs).toISOString(), timeZone },
+    end: { dateTime: new Date(endMs).toISOString(), timeZone },
+  };
+  const res = await fetchImpl(url.toString(), {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`events.patch ${res.status}: ${text}`);
+  }
+  const raw = (await res.json()) as RawEvent;
+  return { id: raw.id, htmlLink: raw.htmlLink };
+}

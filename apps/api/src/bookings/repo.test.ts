@@ -14,6 +14,8 @@ import {
   markBookingCanceled,
   markReminderSent,
   type NewBookingRow,
+  refreshGoogleHtmlLink,
+  rescheduleConfirmedBooking,
   tryInsertConfirmedBooking,
 } from "./repo";
 
@@ -648,6 +650,86 @@ describe("bookings/repo", () => {
       expect(mine.length).toBe(2);
       const theirs = await findBookingsByOwnerForExport(db, other.userId, {});
       expect(theirs.length).toBe(5);
+    });
+  });
+
+  // ---------- ISH-270: reschedule helpers ----------
+
+  describe("rescheduleConfirmedBooking", () => {
+    test("updates start/end and returns the row when status='confirmed' AND startAt >= now", async () => {
+      const seed = await seedLink();
+      const created = await tryInsertConfirmedBooking(db, bookingInput(seed));
+      if (!created) throw new Error("precondition: insert");
+
+      const newStart = new Date("2026-12-14T07:00:00.000Z");
+      const newEnd = new Date("2026-12-14T07:30:00.000Z");
+      const updated = await rescheduleConfirmedBooking(
+        db,
+        created.id,
+        newStart,
+        newEnd,
+        // "now" before the original slot.
+        new Date("2026-01-01T00:00:00Z"),
+      );
+      expect(updated?.id).toBe(created.id);
+      expect(updated?.startAt.toISOString()).toBe(newStart.toISOString());
+      expect(updated?.endAt.toISOString()).toBe(newEnd.toISOString());
+
+      const [row] = await testDb.select().from(bookings).where(eq(bookings.id, created.id));
+      expect(row?.startAt.toISOString()).toBe(newStart.toISOString());
+    });
+
+    test("returns null when booking is canceled (no row update)", async () => {
+      const seed = await seedLink();
+      const created = await tryInsertConfirmedBooking(db, bookingInput(seed));
+      if (!created) throw new Error("precondition: insert");
+      await markBookingCanceled(db, created.id);
+
+      const result = await rescheduleConfirmedBooking(
+        db,
+        created.id,
+        new Date("2026-12-14T07:00:00.000Z"),
+        new Date("2026-12-14T07:30:00.000Z"),
+        new Date("2026-01-01T00:00:00Z"),
+      );
+      expect(result).toBeNull();
+    });
+
+    test("returns null when current startAt is in the past (now > original startAt)", async () => {
+      const seed = await seedLink();
+      const created = await tryInsertConfirmedBooking(db, bookingInput(seed));
+      if (!created) throw new Error("precondition: insert");
+
+      const result = await rescheduleConfirmedBooking(
+        db,
+        created.id,
+        new Date("2027-12-14T07:00:00.000Z"),
+        new Date("2027-12-14T07:30:00.000Z"),
+        // "now" is far past the seeded slot (which is 2026-12-14).
+        new Date("2027-01-01T00:00:00Z"),
+      );
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("refreshGoogleHtmlLink", () => {
+    test("updates only googleHtmlLink, preserving googleEventId / meetUrl", async () => {
+      const seed = await seedLink();
+      const created = await tryInsertConfirmedBooking(db, bookingInput(seed));
+      if (!created) throw new Error("precondition: insert");
+      await attachGoogleEvent(
+        db,
+        created.id,
+        "evt-1",
+        "https://meet.google.com/abc",
+        "https://example.com/old",
+      );
+
+      await refreshGoogleHtmlLink(db, created.id, "https://example.com/new");
+      const [row] = await testDb.select().from(bookings).where(eq(bookings.id, created.id));
+      expect(row?.googleEventId).toBe("evt-1");
+      expect(row?.meetUrl).toBe("https://meet.google.com/abc");
+      expect(row?.googleHtmlLink).toBe("https://example.com/new");
     });
   });
 });

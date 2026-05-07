@@ -113,6 +113,14 @@ export type CancelNotificationContext = BookingNotificationContext & {
   reason?: string;
 };
 
+// ISH-270: reschedule notification context. Carries the *previous* start/end so
+// the templates can render "旧 → 新" lines. The booking-side fields (`startAt`
+// / `endAt`) reflect the NEW slot.
+export type RescheduleNotificationContext = BookingNotificationContext & {
+  previousStartAt: Date;
+  previousEndAt: Date;
+};
+
 export function ownerCancelEmail(ctx: CancelNotificationContext): EmailMessage {
   const when = fmt(ctx.startAt, ctx.ownerTimeZone);
   const actor = ctx.canceledBy === "owner" ? "あなた" : "ゲスト";
@@ -133,6 +141,77 @@ export function guestCancelEmail(ctx: CancelNotificationContext): EmailMessage {
     subject: `[予約キャンセル] ${ctx.linkTitle} — ${when}`,
     text: `${actor} が予約をキャンセルしました。\n\n${ctx.linkTitle}\n${when} (${tz})`,
     html: `<p>${escapeHtml(actor)} が予約をキャンセルしました。</p><p><strong>${escapeHtml(ctx.linkTitle)}</strong><br/>${escapeHtml(when)} (${escapeHtml(tz)})</p>`,
+  };
+}
+
+// ISH-270: reschedule emails — fired by `rescheduleBooking` after the start/end
+// move. We render the previous and new slot side by side so the recipient can
+// see what changed without comparing two separate mails.
+
+export function ownerRescheduleEmail(ctx: RescheduleNotificationContext): EmailMessage {
+  const newWhen = fmt(ctx.startAt, ctx.ownerTimeZone);
+  const oldWhen = fmt(ctx.previousStartAt, ctx.ownerTimeZone);
+  const guestLine = `${ctx.guestName} <${ctx.guestEmail}>`;
+  const text = [
+    `予約が変更されました — ${ctx.linkTitle}`,
+    "",
+    `旧日時: ${oldWhen} (${ctx.ownerTimeZone})`,
+    `新日時: ${newWhen} (${ctx.ownerTimeZone})`,
+    `ゲスト: ${guestLine}`,
+    ctx.meetUrl ? `Google Meet: ${ctx.meetUrl}` : null,
+    "",
+    `キャンセル: ${ctx.cancelUrl}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const html = `<!doctype html><html><body style="font-family:sans-serif">
+<h1 style="font-size:1.25rem">予約が変更されました</h1>
+<p><strong>${escapeHtml(ctx.linkTitle)}</strong></p>
+<p>旧日時: ${escapeHtml(oldWhen)} (${escapeHtml(ctx.ownerTimeZone)})</p>
+<p>新日時: ${escapeHtml(newWhen)} (${escapeHtml(ctx.ownerTimeZone)})</p>
+<p>ゲスト: ${escapeHtml(guestLine)}</p>
+${ctx.meetUrl ? `<p>Google Meet: <a href="${escapeHtml(ctx.meetUrl)}">${escapeHtml(ctx.meetUrl)}</a></p>` : ""}
+<p style="font-size:0.875rem;color:#666">キャンセル: <a href="${escapeHtml(ctx.cancelUrl)}">${escapeHtml(ctx.cancelUrl)}</a></p>
+</body></html>`;
+  return {
+    to: ctx.ownerEmail,
+    subject: `[予約変更] ${ctx.linkTitle} — ${newWhen}`,
+    text,
+    html,
+  };
+}
+
+export function guestRescheduleEmail(ctx: RescheduleNotificationContext): EmailMessage {
+  const tz = ctx.guestTimeZone ?? ctx.ownerTimeZone;
+  const newWhen = fmt(ctx.startAt, tz);
+  const oldWhen = fmt(ctx.previousStartAt, tz);
+  const ownerLine = ctx.ownerName ? `${ctx.ownerName} <${ctx.ownerEmail}>` : ctx.ownerEmail;
+  const text = [
+    `予約が変更されました — ${ctx.linkTitle}`,
+    "",
+    `旧日時: ${oldWhen} (${tz})`,
+    `新日時: ${newWhen} (${tz})`,
+    `主催者: ${ownerLine}`,
+    ctx.meetUrl ? `Google Meet: ${ctx.meetUrl}` : null,
+    "",
+    `キャンセルする場合: ${ctx.cancelUrl}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const html = `<!doctype html><html><body style="font-family:sans-serif">
+<h1 style="font-size:1.25rem">予約が変更されました</h1>
+<p><strong>${escapeHtml(ctx.linkTitle)}</strong></p>
+<p>旧日時: ${escapeHtml(oldWhen)} (${escapeHtml(tz)})</p>
+<p>新日時: ${escapeHtml(newWhen)} (${escapeHtml(tz)})</p>
+<p>主催者: ${escapeHtml(ownerLine)}</p>
+${ctx.meetUrl ? `<p>Google Meet: <a href="${escapeHtml(ctx.meetUrl)}">${escapeHtml(ctx.meetUrl)}</a></p>` : ""}
+<p style="font-size:0.875rem;color:#666">キャンセル: <a href="${escapeHtml(ctx.cancelUrl)}">${escapeHtml(ctx.cancelUrl)}</a></p>
+</body></html>`;
+  return {
+    to: ctx.guestEmail,
+    subject: `[予約変更] ${ctx.linkTitle} — ${newWhen}`,
+    text,
+    html,
   };
 }
 

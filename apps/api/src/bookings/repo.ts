@@ -306,6 +306,49 @@ export async function markBookingCanceled(
   return row ? toBookingDomain(row) : null;
 }
 
+/**
+ * ISH-270: atomic reschedule. Updates start_at / end_at on a confirmed booking
+ * IFF the booking is still confirmed AND its current start_at is in the future.
+ * Returns null otherwise so the caller can map to a 422 `not_reschedulable`.
+ *
+ * Concurrency: the existing partial unique index `uniq_bookings_active_slot`
+ * (link_id, start_at) WHERE status='confirmed' kicks in if another booking
+ * already occupies the new slot — postgres raises a unique-violation that the
+ * caller can map to a 409. We don't `onConflictDoNothing` here because an
+ * UPDATE that would violate the partial index is genuinely a conflict the
+ * caller needs to learn about; swallowing it would silently leave the row
+ * unchanged.
+ */
+export async function rescheduleConfirmedBooking(
+  database: Database,
+  bookingId: string,
+  newStartAt: Date,
+  newEndAt: Date,
+  now: Date,
+): Promise<Booking | null> {
+  const [row] = await database
+    .update(bookings)
+    .set({ startAt: newStartAt, endAt: newEndAt })
+    .where(
+      and(eq(bookings.id, bookingId), eq(bookings.status, "confirmed"), gte(bookings.startAt, now)),
+    )
+    .returning();
+  return row ? toBookingDomain(row) : null;
+}
+
+/**
+ * ISH-270: refresh the Google `htmlLink` after `events.patch`. Kept separate
+ * from `attachGoogleEvent` (insert path) because reschedule must NOT clobber
+ * `googleEventId` / `meetUrl` even if the patch response omits them.
+ */
+export async function refreshGoogleHtmlLink(
+  database: Database,
+  bookingId: string,
+  googleHtmlLink: string | null,
+): Promise<void> {
+  await database.update(bookings).set({ googleHtmlLink }).where(eq(bookings.id, bookingId));
+}
+
 // ---------- ISH-98: reminder cron ----------
 
 /**

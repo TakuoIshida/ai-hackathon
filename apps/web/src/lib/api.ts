@@ -205,6 +205,22 @@ export const api = {
       getToken,
     }),
 
+  // ISH-270: owner-side reschedule. Body carries the new (startAt, endAt)
+  // ISO strings. Server re-checks ownership / state / availability and may
+  // respond 422 (`not_reschedulable` / `availability_violation`) or 409
+  // (`slot_already_booked`). On 200 the updated BookingSummary projection
+  // comes back so the FE can refresh detail/list caches in one round trip.
+  rescheduleBooking: (
+    id: string,
+    body: { startAt: string; endAt: string },
+    getToken: AuthTokenGetter,
+  ) =>
+    request<{ booking: BookingSummary }>(`/bookings/${id}/reschedule`, {
+      method: "POST",
+      body: JSON.stringify(body),
+      getToken,
+    }),
+
   getGoogleConnection: (getToken: AuthTokenGetter) =>
     request<GoogleConnection>("/google/calendars", { getToken }),
 

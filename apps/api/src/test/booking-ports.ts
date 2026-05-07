@@ -64,6 +64,7 @@ export function buildTestGooglePort(
     ...(overrides.listUserCalendars ? { listUserCalendars: overrides.listUserCalendars } : {}),
     ...(overrides.createEvent ? { createEvent: overrides.createEvent } : {}),
     ...(overrides.deleteEvent ? { deleteEvent: overrides.deleteEvent } : {}),
+    ...(overrides.patchEvent ? { patchEvent: overrides.patchEvent } : {}),
   };
 }
 

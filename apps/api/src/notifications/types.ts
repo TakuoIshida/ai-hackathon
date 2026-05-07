@@ -53,7 +53,20 @@ export type BookingCanceledEvent = {
   canceledBy: "owner" | "guest";
 };
 
-export type BookingEvent = BookingConfirmedEvent | BookingCanceledEvent;
+// ISH-270: reschedule event. The `booking` payload reflects the NEW slot;
+// `previousStartAt` / `previousEndAt` carry the slot that was just vacated so
+// the email template can render "旧 → 新" lines.
+export type BookingRescheduledEvent = {
+  kind: "booking_rescheduled";
+  booking: Booking;
+  link: BookingEventLink;
+  owner: BookingEventOwner;
+  cancellationToken: string;
+  previousStartAt: Date;
+  previousEndAt: Date;
+};
+
+export type BookingEvent = BookingConfirmedEvent | BookingCanceledEvent | BookingRescheduledEvent;
 
 /**
  * Presentation port: usecases publish a domain event; the adapter decides
