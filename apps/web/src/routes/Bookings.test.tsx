@@ -263,7 +263,13 @@ describe("<Bookings />", () => {
     const firstCall = mockedApi.listBookings.mock.calls[0]?.[0];
     expect(firstCall?.q).toBeUndefined();
 
-    fireEvent.change(screen.getByLabelText("予約を検索"), { target: { value: "deep" } });
+    // findBy waits for the toolbar to appear (state.status === "ok"). Using
+    // getBy here was racy under coverage instrumentation: the mock-call
+    // assertion above resolves the moment the function is invoked, but the
+    // resulting Promise.resolve → tanstack-query state update happens in a
+    // later microtask, so the toolbar might not be in the DOM yet.
+    const searchInput = await screen.findByLabelText("予約を検索");
+    fireEvent.change(searchInput, { target: { value: "deep" } });
 
     // Debounced — wait until the second call materializes.
     await waitFor(
@@ -433,11 +439,14 @@ describe("<Bookings />", () => {
 
       renderBookings();
 
-      // Wait for first list fetch so we know the page is interactive.
-      await waitFor(() => expect(mockedApi.listBookings).toHaveBeenCalled());
+      // Wait for the toolbar to render. waitFor on the mock would resolve the
+      // moment the function is invoked, before tanstack-query has had a chance
+      // to flip state to "ok" — under coverage instrumentation, that race lost
+      // often enough to flake. findBy waits for the actual element.
+      const searchInput = await screen.findByLabelText("予約を検索");
 
       // Type a search term so we can assert it propagates to the export call.
-      fireEvent.change(screen.getByLabelText("予約を検索"), { target: { value: "alice" } });
+      fireEvent.change(searchInput, { target: { value: "alice" } });
       // Wait for the debounce + refetch to settle.
       await waitFor(() => {
         const last =
