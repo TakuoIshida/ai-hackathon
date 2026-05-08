@@ -1,3 +1,9 @@
+/* StyleX 生成 CSS の差し込みポイント。vite-plugin-stylex がこの directive を
+   見つけて、stylex.create で収集したルールをここに展開する。これが無いと
+   コンポーネント側でいくら stylex を使っても DOM に届かない。 */
+/* biome-ignore lint/suspicious/noUnknownAtRules: vite-plugin-stylex directive */
+@stylex stylesheet;
+
 /* Minimal global reset — primary styling lives in StyleX. */
 *,
 *::before,
