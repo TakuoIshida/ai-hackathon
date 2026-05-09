@@ -123,14 +123,17 @@ app_deployer_service_accounts = {
 }
 ```
 
-これは秘密ではないので Linear comment に貼って共有して構いません。
+技術的にはこれらは「鍵」ではなく、WIF + attribute_condition により別 repo
+からは impersonate 不可なので、漏洩しても直接の損害はありません。とはい
+え public repo の **最小情報原則** に従い、これらは Linear / Slack の
+private channel で共有し、GitHub には Secrets として登録します (下記)。
 
-### 5. GitHub の env / variables を設定
+### 5. GitHub の Environments / Secrets を設定
 
 GitHub の `Settings → Environments` に `dev` / `stg` / `prod` を作り、
-それぞれに **Repository variables** ではなく **Environment variables** で:
+それぞれに **Environment secrets** として以下を登録:
 
-| Variable name | 値 |
+| Secret name | 値 |
 |---|---|
 | `GCP_PROJECT_ID` | 各 env の project_id |
 | `GCP_REGION` | `asia-northeast1` |
@@ -139,13 +142,19 @@ GitHub の `Settings → Environments` に `dev` / `stg` / `prod` を作り、
 | `GCP_APP_DEPLOYER_SA` | `app_deployer_service_accounts` の値 |
 
 prod env には **Required reviewers** で承認者を設定 (人間 approval の
-gate)。Secrets ではなく Variables で OK (= 公開しても問題ない値)。
+gate)。
+
+**メモ**: 本来 GitHub の taxonomy ではこれらは Variables 相当の値だが、
+public repo であることを踏まえ、defense in depth として Secrets に格納
+する方針。Actions log では `***` で mask されるので、debug の際は
+auth 結果を「コマンドが成功したか」で判定する (smoke workflow 参照)。
 
 ### 6. WIF smoke test
 
 `.github/workflows/wif-smoke.yml` を `workflow_dispatch` で env=dev に
-対して走らせ、`gcloud auth list` が `terraform-ci@...` で auth 済になっ
-ていれば疎通完了。stg / prod も同じく確認してください。
+対して走らせ、`gcloud storage buckets list` が成功して `tfstate-*` bucket
+が表示されれば疎通完了。stg / prod も同じく確認してください。SA email
+そのものは Secret なので log では mask されます。
 
 ## トラブルシュート
 

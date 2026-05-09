@@ -30,14 +30,15 @@ jobs:
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_TERRAFORM_CI_SA }}
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_TERRAFORM_CI_SA }}
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Show authenticated identity
+      # Secret に入れた値 (SA email / project_id) は GitHub が log で mask する
+      # ため、`gcloud auth list` の出力は ***  表記になる。疎通確認は
+      # 「auth が要る gcloud コマンドが通る」事実をもって行うのが最も簡潔。
+      - name: Verify auth (run an authenticated gcloud command)
         run: |
-          gcloud auth list
-          gcloud config list project
           gcloud storage buckets list --filter="name~^tfstate-" --format="value(name,location)"
