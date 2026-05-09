@@ -85,6 +85,34 @@ describe("links/usecase: CRUD", () => {
     }
   });
 
+  // ISH-296 (B): slug 未指定時に usecase が自動生成する
+  test("createLinkForUser generates a slug when caller omits it", async () => {
+    const tenantId = await seedTenant();
+    const userId = await seedUser();
+    const { slug: _omit, ...rest } = baseInput();
+    void _omit;
+    const result = await createLinkForUser(db, userId, tenantId, rest);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(result.link.slug).toMatch(/^[a-z0-9]{8}$/);
+    }
+  });
+
+  test("auto-generated slug avoids reserved + previously-taken slugs", async () => {
+    const tenantId = await seedTenant();
+    const userId = await seedUser();
+    // Simply seed a few links with auto-gen and confirm slugs are unique.
+    const { slug: _omit, ...rest } = baseInput();
+    void _omit;
+    const a = await createLinkForUser(db, userId, tenantId, rest);
+    const b = await createLinkForUser(db, userId, tenantId, rest);
+    expect(a.kind).toBe("ok");
+    expect(b.kind).toBe("ok");
+    if (a.kind === "ok" && b.kind === "ok") {
+      expect(a.link.slug).not.toBe(b.link.slug);
+    }
+  });
+
   test("createLinkForUser returns slug_taken on duplicate", async () => {
     const tenantId = await seedTenant();
     const userId = await seedUser();

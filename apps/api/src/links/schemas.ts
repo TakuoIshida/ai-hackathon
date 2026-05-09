@@ -21,7 +21,9 @@ export const slugSchema = z
   .regex(/^[a-z0-9-]+$/, "lowercase letters, digits, and hyphens only");
 
 export const linkInputSchema = z.object({
-  slug: slugSchema,
+  // ISH-296 (B): FE は slug を渡さない。usecase 側で衝突回避付きで自動生成する。
+  // 既存の caller / e2e は引き続き任意の slug を渡せる (互換性維持)。
+  slug: slugSchema.optional(),
   title: z.string().min(1).max(200),
   description: z.string().max(2000).nullable().optional(),
   durationMinutes: z
@@ -46,10 +48,12 @@ type LinkUpdateInput = z.infer<typeof linkUpdateSchema>;
  * Convert the parsed wire format from `linkInputSchema` to a domain command.
  * Normalizes the `nullable + optional` `description` to a strict `T | null` so
  * the repo never sees `undefined` for the nullable column (ISH-124).
+ *
+ * `slug` may be undefined here (ISH-296 B); the usecase generates one when
+ * the caller omits it.
  */
 export function toCreateLinkCommand(input: LinkInput): CreateLinkCommand {
-  return {
-    slug: input.slug,
+  const out: CreateLinkCommand = {
     title: input.title,
     description: input.description ?? null,
     durationMinutes: input.durationMinutes,
@@ -57,6 +61,8 @@ export function toCreateLinkCommand(input: LinkInput): CreateLinkCommand {
     timeZone: input.timeZone,
     rules: input.rules,
   };
+  if (input.slug !== undefined) out.slug = input.slug;
+  return out;
 }
 
 /**

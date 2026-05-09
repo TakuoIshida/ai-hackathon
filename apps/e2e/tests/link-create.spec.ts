@@ -13,24 +13,13 @@ import { expect, test } from "@playwright/test";
 
 test.describe("link create → public URL renders slots", () => {
   test("create a link from the dashboard, then see slots on the public URL", async ({ page }) => {
+    // ISH-296 (B): slug は BE が auto-generate するため FE では入力しない。
+    // E2E では POST mock が固定 slug を返すことで public URL の遷移を制御する。
     const SLUG = "intro-30min-e2e";
     const TITLE = "Intro 30 min (E2E)";
 
-    // Slug-availability endpoint: anything matching the path prefix returns
-    // available=true. Registered FIRST so it has lowest priority — Playwright
-    // matches in reverse registration order, so the more specific routes
-    // below take precedence.
     let createdLink: Record<string, unknown> | null = null;
-    await page.route("**/links/slug-available**", (route, req) => {
-      const url = new URL(req.url());
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ slug: url.searchParams.get("slug") ?? SLUG, available: true }),
-      });
-    });
-    // Collection: GET → list, POST → create. Registered AFTER slug-available
-    // so this catch-all doesn't shadow it.
+    // Collection: GET → list, POST → create.
     await page.route("**/links", async (route, req) => {
       if (req.method() === "GET") {
         return route.fulfill({
@@ -40,10 +29,10 @@ test.describe("link create → public URL renders slots", () => {
         });
       }
       if (req.method() === "POST") {
-        const body = req.postDataJSON() as { slug: string; title: string };
+        const body = req.postDataJSON() as { title: string };
         createdLink = {
           id: "link-e2e-1",
-          slug: body.slug,
+          slug: SLUG,
           title: body.title,
           description: null,
           durationMinutes: 30,
@@ -103,17 +92,10 @@ test.describe("link create → public URL renders slots", () => {
 
     // Drive the form.
     await page.goto("/availability-sharings/new");
-    // ISH-238: <h1>新規リンク</h1> was replaced by the LinkCreateLayout
-    // breadcrumb ("空き時間リンク › 新規作成"); assert the breadcrumb tail
-    // text instead. The submit button moved into the subnav and was renamed
-    // to "リンクを発行".
     await expect(page.getByText("新規作成", { exact: true })).toBeVisible();
-    await page.getByLabel("スラッグ (URL)").fill(SLUG);
+    // ISH-296: スラッグ / タイムゾーン / 公開トグルは UI から削除済み。
+    // タイトルだけ入れて発行ボタンを押せば BE 自動生成 slug で作成される。
     await page.getByLabel("タイトル").fill(TITLE);
-    // Wait for slug availability check to settle so the submit isn't blocked.
-    await expect(page.getByText("✓ 利用可能")).toBeVisible();
-    // Make sure the link is published so the public URL doesn't 404.
-    await page.getByLabel("このリンクを公開する").check();
     await page.getByRole("button", { name: "リンクを発行" }).click();
 
     // After create the form navigates to /availability-sharings — the row we just

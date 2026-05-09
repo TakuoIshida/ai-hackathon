@@ -451,79 +451,97 @@ export function CalendarDragGrid({
     };
 
     const onUp = () => {
-      setDrag((prev) => {
-        if (prev.kind === "idle") return prev;
-        if (prev.kind === "create") {
-          const startMin = Math.min(prev.anchorMin, prev.currentMin);
-          const endMin = Math.max(prev.anchorMin, prev.currentMin);
-          if (endMin - startMin < MIN_DURATION_MIN) return { kind: "idle" };
-          const conflict = findOverlap({ weekDay: prev.weekDay, startMin, endMin });
-          if (conflict) {
-            toast({
-              title: "重なっています",
-              description:
-                conflict.kind === "busy"
-                  ? "既存の予定と重なる時間帯には候補を作成できません。"
-                  : "他の候補時間と重なります。",
-              variant: "destructive",
-            });
-            return { kind: "idle" };
-          }
-          onCandidatesChange([
-            ...candidates,
-            { id: genId(), weekDay: prev.weekDay, startMin, endMin },
-          ]);
-          return { kind: "idle" };
+      // ISH-296 (A): conflict 判定 / toast() / onCandidatesChange は setDrag の
+      // updater の外で行う。React 18 StrictMode では updater が dev 中に 2 回
+      // 実行されるため、updater 内で副作用 (toast 等) を起こすと duplicate snackbar
+      // が出る。updater は純粋に "idle に戻す" だけにし、effect は事前に確定させる。
+      // (`drag.kind === "idle"` はこの effect の入口で early-return してあり、
+      //  `prev` には "idle" 以外しか入らない。)
+      const prev = drag;
+
+      if (prev.kind === "create") {
+        const startMin = Math.min(prev.anchorMin, prev.currentMin);
+        const endMin = Math.max(prev.anchorMin, prev.currentMin);
+        if (endMin - startMin < MIN_DURATION_MIN) {
+          setDrag({ kind: "idle" });
+          return;
         }
-        if (prev.kind === "move") {
-          const conflict = findOverlap(
-            { weekDay: prev.weekDay, startMin: prev.startMin, endMin: prev.endMin },
-            prev.id,
-          );
-          if (conflict) {
-            toast({
-              title: "重なっています",
-              description:
-                conflict.kind === "busy"
-                  ? "既存の予定と重なる位置には移動できません。"
-                  : "他の候補時間と重なります。",
-              variant: "destructive",
-            });
-            return { kind: "idle" };
-          }
-          onCandidatesChange(
-            candidates.map((c) =>
-              c.id === prev.id ? { ...c, startMin: prev.startMin, endMin: prev.endMin } : c,
-            ),
-          );
-          return { kind: "idle" };
+        const conflict = findOverlap({ weekDay: prev.weekDay, startMin, endMin });
+        if (conflict) {
+          toast({
+            title: "重なっています",
+            description:
+              conflict.kind === "busy"
+                ? "既存の予定と重なる時間帯には候補を作成できません。"
+                : "他の候補時間と重なります。",
+            variant: "destructive",
+          });
+          setDrag({ kind: "idle" });
+          return;
         }
-        if (prev.kind === "resize") {
-          if (prev.endMin - prev.startMin < MIN_DURATION_MIN) return { kind: "idle" };
-          const conflict = findOverlap(
-            { weekDay: prev.weekDay, startMin: prev.startMin, endMin: prev.endMin },
-            prev.id,
-          );
-          if (conflict) {
-            toast({
-              title: "重なっています",
-              description:
-                conflict.kind === "busy"
-                  ? "既存の予定と重なるリサイズはできません。"
-                  : "他の候補時間と重なります。",
-              variant: "destructive",
-            });
-            return { kind: "idle" };
-          }
-          onCandidatesChange(
-            candidates.map((c) =>
-              c.id === prev.id ? { ...c, startMin: prev.startMin, endMin: prev.endMin } : c,
-            ),
-          );
-          return { kind: "idle" };
+        onCandidatesChange([
+          ...candidates,
+          { id: genId(), weekDay: prev.weekDay, startMin, endMin },
+        ]);
+        setDrag({ kind: "idle" });
+        return;
+      }
+
+      if (prev.kind === "move") {
+        const conflict = findOverlap(
+          { weekDay: prev.weekDay, startMin: prev.startMin, endMin: prev.endMin },
+          prev.id,
+        );
+        if (conflict) {
+          toast({
+            title: "重なっています",
+            description:
+              conflict.kind === "busy"
+                ? "既存の予定と重なる位置には移動できません。"
+                : "他の候補時間と重なります。",
+            variant: "destructive",
+          });
+          setDrag({ kind: "idle" });
+          return;
         }
-        return { kind: "idle" };
-      });
+        onCandidatesChange(
+          candidates.map((c) =>
+            c.id === prev.id ? { ...c, startMin: prev.startMin, endMin: prev.endMin } : c,
+          ),
+        );
+        setDrag({ kind: "idle" });
+        return;
+      }
+
+      if (prev.kind === "resize") {
+        if (prev.endMin - prev.startMin < MIN_DURATION_MIN) {
+          setDrag({ kind: "idle" });
+          return;
+        }
+        const conflict = findOverlap(
+          { weekDay: prev.weekDay, startMin: prev.startMin, endMin: prev.endMin },
+          prev.id,
+        );
+        if (conflict) {
+          toast({
+            title: "重なっています",
+            description:
+              conflict.kind === "busy"
+                ? "既存の予定と重なるリサイズはできません。"
+                : "他の候補時間と重なります。",
+            variant: "destructive",
+          });
+          setDrag({ kind: "idle" });
+          return;
+        }
+        onCandidatesChange(
+          candidates.map((c) =>
+            c.id === prev.id ? { ...c, startMin: prev.startMin, endMin: prev.endMin } : c,
+          ),
+        );
+        setDrag({ kind: "idle" });
+        return;
+      }
     };
 
     window.addEventListener("mousemove", onMove);
@@ -532,7 +550,7 @@ export function CalendarDragGrid({
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, [drag.kind, candidates, findOverlap, onCandidatesChange, toast]);
+  }, [drag, candidates, findOverlap, onCandidatesChange, toast]);
 
   // ----- handlers -----
   const onDayColMouseDown = (e: React.MouseEvent<HTMLDivElement>, weekDay: number) => {

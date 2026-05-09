@@ -15,15 +15,14 @@ import { WeekdayHoursEditor } from "@/components/availability-link/WeekdayHoursE
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useToast } from "@/components/ui/toast";
 import { ApiError, api } from "@/lib/api";
 import { DEFAULT_RANGE_DAYS, type LinkInput } from "@/lib/types";
 import { colors, radius, space, typography } from "@/styles/tokens.stylex";
 
-const browserTimeZone =
-  typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "Asia/Tokyo";
-
-/** Mock busy events for the calendar mode preview. ISH-245 では mock のみ。
- *  実 freebusy 連携は別 issue で BE schema 拡張と合わせて行う。 */
+/** Mock busy events for the calendar mode preview.
+ *  TODO(ISH-296 E / 別 issue): BE freebusy 連携。今は mock のみ。
+ *  実装は GooglePort.getFreeBusy を /links/{id}/freebusy 等で参照する形を想定。 */
 const MOCK_BUSY: BusySlot[] = [
   { weekDay: 0, startMin: 9 * 60, endMin: 10 * 60, title: "朝会" },
   { weekDay: 1, startMin: 13 * 60, endMin: 14 * 60, title: "1on1 / 田中" },
@@ -41,13 +40,19 @@ function startOfWeekMonday(d: Date): Date {
   return out;
 }
 
+// ISH-296 (C): TZ は MVP では Asia/Tokyo 固定。UI から非表示。BE schema は
+// `timeZone` を引き続き受領するので将来的な拡張余地は残す。
+const FIXED_TIME_ZONE = "Asia/Tokyo";
+
 const emptyInput: LinkInput = {
+  // ISH-296 (B): slug は BE 側で auto-generate される。FE は空のまま渡し、
+  // request payload からは `slug` を落として送る。
   slug: "",
   title: "",
   description: "",
   durationMinutes: 30,
   rangeDays: DEFAULT_RANGE_DAYS,
-  timeZone: browserTimeZone,
+  timeZone: FIXED_TIME_ZONE,
   rules: [
     { weekday: 1, startMinute: 9 * 60, endMinute: 17 * 60 },
     { weekday: 2, startMinute: 9 * 60, endMinute: 17 * 60 },
@@ -86,8 +91,6 @@ const styles = stylex.create({
     fontSize: typography.fontSizeXs,
     color: colors.blue800,
   },
-  // ISH-245 (C-03): calendarPlaceholder は CalendarDragGrid に置き換わった
-  // ので削除済み。
 });
 
 function todayLocal(): string {
@@ -121,17 +124,37 @@ function diffDays(fromStr: string, toStr: string): number | null {
   return Math.round((b - a) / 86400000);
 }
 
+/**
+ * ISH-296 (B/C/D): create / update payload を組み立てる。
+ *  - slug は FE が空のまま渡してきても BE が auto-generate するよう undefined で送る
+ *  - timeZone は FIXED_TIME_ZONE で送る (UI 非表示)
+ *  - description が空文字なら null に正規化
+ *  - ISH-298 で削除済みフィールドは元から含めない (LinkInput type からも削除済み)
+ */
+function buildLinkPayload(form: LinkInput): Omit<LinkInput, "slug"> & { slug?: string } {
+  const payload: Omit<LinkInput, "slug"> & { slug?: string } = {
+    title: form.title,
+    description: form.description?.length ? form.description : null,
+    durationMinutes: form.durationMinutes,
+    rangeDays: form.rangeDays,
+    timeZone: FIXED_TIME_ZONE,
+    rules: form.rules,
+  };
+  if (form.slug && form.slug.length > 0) payload.slug = form.slug;
+  return payload;
+}
+
 export default function LinkForm() {
   const navigate = useNavigate();
   const { getToken } = auth.useAuth();
   const { id } = useParams<{ id: string }>();
+  const { toast } = useToast();
   const isEdit = Boolean(id);
 
   const [form, setForm] = useState<LinkInput>(emptyInput);
   const [loading, setLoading] = useState(isEdit);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [slugStatus, setSlugStatus] = useState<"idle" | "checking" | "available" | "taken">("idle");
   // ISH-238 scaffolding: mode 切替の UI のみ実装。
   // ISH-245 (C-03): mode === 'calendar' で <CalendarDragGrid /> を render する。
   const [mode, setMode] = useState<LinkMode>("form");
@@ -175,25 +198,6 @@ export default function LinkForm() {
     };
   }, [id, getToken]);
 
-  // slug uniqueness debounce
-  useEffect(() => {
-    if (isEdit) return; // edit mode tolerates current slug
-    if (!/^[a-z0-9-]+$/.test(form.slug) || form.slug.length === 0) {
-      setSlugStatus("idle");
-      return;
-    }
-    setSlugStatus("checking");
-    const handle = setTimeout(async () => {
-      try {
-        const res = await api.checkSlugAvailable(form.slug, () => getToken());
-        setSlugStatus(res.available ? "available" : "taken");
-      } catch {
-        setSlugStatus("idle");
-      }
-    }, 300);
-    return () => clearTimeout(handle);
-  }, [form.slug, isEdit, getToken]);
-
   const onPatchForm = (patch: Partial<LinkInput>) => setForm((f) => ({ ...f, ...patch }));
 
   // 公開期間 derived: `to` = from + rangeDays。preset 押下で from/rangeDays を同時更新。
@@ -221,16 +225,41 @@ export default function LinkForm() {
     }
   };
 
-  const submitNow = async () => {
+  /**
+   * ISH-296 (D) + ISH-297: 共通 submit。
+   *  - publish: 成功で /availability-sharings に navigate
+   *  - draft: 成功で同ページに留まり toast 表示。新規作成時は /availability-sharings/{id}/edit
+   *           に置換 navigate して edit mode に切り替える (以後の draft 保存は update に乗る)。
+   */
+  const submitNow = async (intent: "publish" | "draft" = "publish") => {
     setError(null);
     setSubmitting(true);
     try {
+      const payload = buildLinkPayload(form);
       if (isEdit && id) {
-        await api.updateLink(id, form, () => getToken());
+        await api.updateLink(id, payload, () => getToken());
       } else {
-        await api.createLink(form, () => getToken());
+        const { link } = await api.createLink(payload as LinkInput, () => getToken());
+        if (intent === "draft") {
+          // 新規 → 作成成功後 edit 画面へ。stay-in-place な感覚を維持しつつ
+          // 以後の draft 保存は update API に乗るようにする。
+          setForm({
+            slug: link.slug,
+            title: link.title,
+            description: link.description ?? "",
+            durationMinutes: link.durationMinutes,
+            rangeDays: link.rangeDays,
+            timeZone: link.timeZone,
+            rules: link.rules,
+          });
+          navigate(`/availability-sharings/${link.id}/edit`, { replace: true });
+        }
       }
-      navigate("/availability-sharings");
+      if (intent === "draft") {
+        toast({ title: "下書きを保存しました", variant: "success" });
+      } else {
+        navigate("/availability-sharings");
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         setError(`${err.status}: ${err.code}`);
@@ -244,17 +273,24 @@ export default function LinkForm() {
 
   const onFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await submitNow();
+    await submitNow("publish");
   };
 
   const onPublishClick = () => {
     // Trigger native form validation (required attrs) before submitting via submitNow().
     const el = formRef.current;
     if (el && !el.reportValidity()) return;
-    void submitNow();
+    void submitNow("publish");
   };
 
-  const publishDisabled = submitting || slugStatus === "taken";
+  // ISH-297: 下書き保存。required validation だけ通せば draft でも提出できる。
+  const onSaveDraftClick = () => {
+    const el = formRef.current;
+    if (el && !el.reportValidity()) return;
+    void submitNow("draft");
+  };
+
+  const publishDisabled = submitting;
 
   if (loading) return <p>読み込み中...</p>;
 
@@ -277,49 +313,25 @@ export default function LinkForm() {
       rightPanelWidth={mode === "calendar" ? 380 : 460}
       onBack={() => navigate("/availability-sharings")}
       onPublish={onPublishClick}
+      onSaveDraft={onSaveDraftClick}
       publishing={submitting}
       publishDisabled={publishDisabled}
     >
       <form ref={formRef} {...stylex.props(styles.body)} onSubmit={onFormSubmit}>
-        {/* Basic info — slug + description + tz. タイトル / 所要時間 は SettingsPanel 側に移動済み。 */}
+        {/* ISH-296 (B/C): slug + tz は FE から削除。slug は BE 自動生成、tz は Asia/Tokyo 固定。
+            残るのは説明欄のみ。 */}
         <Card>
           <CardHeader>
             <CardTitle>基本情報</CardTitle>
-            <CardDescription>公開URL、説明、タイムゾーンを設定します。</CardDescription>
+            <CardDescription>説明文を任意で設定できます。</CardDescription>
           </CardHeader>
           <CardBody>
-            <div {...stylex.props(styles.field)}>
-              <Label htmlFor="slug">スラッグ (URL)</Label>
-              <Input
-                id="slug"
-                value={form.slug}
-                onChange={(e) => setForm({ ...form, slug: e.target.value })}
-                placeholder="intro-30min"
-                disabled={isEdit}
-                required
-              />
-              <span {...stylex.props(styles.caption)}>
-                {slugStatus === "checking" && "確認中..."}
-                {slugStatus === "available" && "✓ 利用可能"}
-                {slugStatus === "taken" && (
-                  <span {...stylex.props(styles.error)}>このスラッグは使用済みです</span>
-                )}
-              </span>
-            </div>
             <div {...stylex.props(styles.field)}>
               <Label htmlFor="description">説明（任意）</Label>
               <Input
                 id="description"
                 value={form.description ?? ""}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
-              />
-            </div>
-            <div {...stylex.props(styles.field)}>
-              <Label htmlFor="tz">タイムゾーン</Label>
-              <Input
-                id="tz"
-                value={form.timeZone}
-                onChange={(e) => setForm({ ...form, timeZone: e.target.value })}
               />
             </div>
           </CardBody>

@@ -70,7 +70,7 @@ export async function createLink(
   database: Database,
   userId: string,
   tenantId: string,
-  input: CreateLinkCommand,
+  input: CreateLinkCommand & { slug: string },
 ): Promise<LinkWithRelations> {
   const linkId = randomUUID();
   const queries: BatchQuery[] = [
