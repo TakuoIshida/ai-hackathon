@@ -47,15 +47,36 @@ async function seedTenant(ownerUserId: string) {
 // createInvitation tests
 // ---------------------------------------------------------------------------
 
+function captureEmails(): { fn: SendEmailFn; sent: EmailMessage[] } {
+  const sent: EmailMessage[] = [];
+  return {
+    sent,
+    fn: async (msg) => {
+      sent.push(msg);
+    },
+  };
+}
+
+const createDeps = (sendEmail: SendEmailFn = async () => {}) => ({
+  sendEmail,
+  appBaseUrl: "https://app.test",
+});
+
 describe("invitations/usecase: createInvitation (ISH-176)", () => {
   test("happy path: inserts invitation and returns ok with token", async () => {
     const owner = await seedUser();
     const tenant = await seedTenant(owner.id);
 
-    const result = await createInvitation(db, tenant.id, owner.id, {
-      email: "invitee@example.com",
-      role: "member",
-    });
+    const result = await createInvitation(
+      db,
+      tenant.id,
+      owner.id,
+      {
+        email: "invitee@example.com",
+        role: "member",
+      },
+      createDeps(),
+    );
 
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
@@ -73,17 +94,29 @@ describe("invitations/usecase: createInvitation (ISH-176)", () => {
     const tenant = await seedTenant(owner.id);
 
     // Issue first invitation
-    const first = await createInvitation(db, tenant.id, owner.id, {
-      email: "invitee@example.com",
-      role: "member",
-    });
+    const first = await createInvitation(
+      db,
+      tenant.id,
+      owner.id,
+      {
+        email: "invitee@example.com",
+        role: "member",
+      },
+      createDeps(),
+    );
     expect(first.kind).toBe("ok");
 
     // Attempt a second invitation for the same email
-    const second = await createInvitation(db, tenant.id, owner.id, {
-      email: "invitee@example.com",
-      role: "member",
-    });
+    const second = await createInvitation(
+      db,
+      tenant.id,
+      owner.id,
+      {
+        email: "invitee@example.com",
+        role: "member",
+      },
+      createDeps(),
+    );
     expect(second.kind).toBe("already_invited");
   });
 
@@ -91,10 +124,16 @@ describe("invitations/usecase: createInvitation (ISH-176)", () => {
     const owner = await seedUser();
     const tenant = await seedTenant(owner.id);
     // Owner's email is already a member — try to invite them
-    const result = await createInvitation(db, tenant.id, owner.id, {
-      email: owner.email,
-      role: "member",
-    });
+    const result = await createInvitation(
+      db,
+      tenant.id,
+      owner.id,
+      {
+        email: owner.email,
+        role: "member",
+      },
+      createDeps(),
+    );
     expect(result.kind).toBe("already_member");
   });
 
@@ -104,16 +143,28 @@ describe("invitations/usecase: createInvitation (ISH-176)", () => {
     const owner = await seedUser();
     const tenant = await seedTenant(owner.id);
 
-    const first = await createInvitation(db, tenant.id, owner.id, {
-      email: "Bob@Example.COM",
-      role: "member",
-    });
+    const first = await createInvitation(
+      db,
+      tenant.id,
+      owner.id,
+      {
+        email: "Bob@Example.COM",
+        role: "member",
+      },
+      createDeps(),
+    );
     expect(first.kind).toBe("ok");
 
-    const second = await createInvitation(db, tenant.id, owner.id, {
-      email: "bob@example.com",
-      role: "member",
-    });
+    const second = await createInvitation(
+      db,
+      tenant.id,
+      owner.id,
+      {
+        email: "bob@example.com",
+        role: "member",
+      },
+      createDeps(),
+    );
     expect(second.kind).toBe("already_invited");
   });
 
@@ -128,10 +179,16 @@ describe("invitations/usecase: createInvitation (ISH-176)", () => {
       .insert(tenantMembers)
       .values({ userId: member.id, tenantId: tenant.id, role: "member" });
 
-    const result = await createInvitation(db, tenant.id, owner.id, {
-      email: "CHARLIE@example.com",
-      role: "member",
-    });
+    const result = await createInvitation(
+      db,
+      tenant.id,
+      owner.id,
+      {
+        email: "CHARLIE@example.com",
+        role: "member",
+      },
+      createDeps(),
+    );
     expect(result.kind).toBe("already_member");
   });
 
@@ -142,10 +199,16 @@ describe("invitations/usecase: createInvitation (ISH-176)", () => {
     const owner = await seedUser();
     const tenant = await seedTenant(owner.id);
 
-    const result = await createInvitation(db, tenant.id, owner.id, {
-      email: "Mixed@CASE.com",
-      role: "member",
-    });
+    const result = await createInvitation(
+      db,
+      tenant.id,
+      owner.id,
+      {
+        email: "Mixed@CASE.com",
+        role: "member",
+      },
+      createDeps(),
+    );
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
 
@@ -161,10 +224,16 @@ describe("invitations/usecase: createInvitation (ISH-176)", () => {
     const owner = await seedUser();
     const tenant = await seedTenant(owner.id);
 
-    const result = await createInvitation(db, tenant.id, owner.id, {
-      email: "member-invite@example.com",
-      role: "member",
-    });
+    const result = await createInvitation(
+      db,
+      tenant.id,
+      owner.id,
+      {
+        email: "member-invite@example.com",
+        role: "member",
+      },
+      createDeps(),
+    );
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
 
@@ -180,10 +249,16 @@ describe("invitations/usecase: createInvitation (ISH-176)", () => {
     const owner = await seedUser();
     const tenant = await seedTenant(owner.id);
 
-    const result = await createInvitation(db, tenant.id, owner.id, {
-      email: "owner-invite@example.com",
-      role: "owner",
-    });
+    const result = await createInvitation(
+      db,
+      tenant.id,
+      owner.id,
+      {
+        email: "owner-invite@example.com",
+        role: "owner",
+      },
+      createDeps(),
+    );
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
 
@@ -193,6 +268,75 @@ describe("invitations/usecase: createInvitation (ISH-176)", () => {
       .where(eq(invitations.id, result.invitationId))
       .limit(1);
     expect(row[0]?.role).toBe("owner");
+  });
+
+  // -------------------------------------------------------------------------
+  // ISH-293: invitation email dispatch
+  // -------------------------------------------------------------------------
+
+  test("ISH-293: dispatches invitation email via injected sender on success", async () => {
+    const owner = await seedUser();
+    const tenant = await seedTenant(owner.id);
+    const cap = captureEmails();
+
+    const result = await createInvitation(
+      db,
+      tenant.id,
+      owner.id,
+      { email: "invitee@example.com", role: "member" },
+      { sendEmail: cap.fn, appBaseUrl: "https://app.test" },
+    );
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+
+    expect(cap.sent).toHaveLength(1);
+    expect(cap.sent[0]?.to).toBe("invitee@example.com");
+    // Accept link uses the injected base URL + the issued token.
+    expect(cap.sent[0]?.text).toContain(`https://app.test/invite/${result.token}`);
+  });
+
+  test("ISH-293: row stays committed even when sendEmail throws (best-effort delivery)", async () => {
+    const owner = await seedUser();
+    const tenant = await seedTenant(owner.id);
+
+    const result = await createInvitation(
+      db,
+      tenant.id,
+      owner.id,
+      { email: "smtp-down@example.com", role: "member" },
+      {
+        sendEmail: async () => {
+          throw new Error("smtp down");
+        },
+        appBaseUrl: "https://app.test",
+      },
+    );
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+
+    // The invitation row must be persisted regardless of the delivery error.
+    const [row] = await testDb
+      .select({ id: invitations.id })
+      .from(invitations)
+      .where(eq(invitations.id, result.invitationId))
+      .limit(1);
+    expect(row?.id).toBe(result.invitationId);
+  });
+
+  test("ISH-293: skips email when result is already_member (no row created)", async () => {
+    const owner = await seedUser();
+    const tenant = await seedTenant(owner.id);
+    const cap = captureEmails();
+
+    const result = await createInvitation(
+      db,
+      tenant.id,
+      owner.id,
+      { email: owner.email, role: "member" },
+      { sendEmail: cap.fn, appBaseUrl: "https://app.test" },
+    );
+    expect(result.kind).toBe("already_member");
+    expect(cap.sent).toHaveLength(0);
   });
 });
 

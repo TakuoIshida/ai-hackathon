@@ -106,7 +106,7 @@ const styles = stylex.create({
     color: colors.ink400,
     pointerEvents: "none",
   },
-  searchInput: { width: "16rem", paddingInlineStart: "2rem", height: "2.125rem" },
+  searchInput: { width: "24rem", paddingInlineStart: "2rem", height: "2.125rem" },
   // table — grid-based, Settings.tsx MembersTab pattern を踏襲
   tableHeader: {
     display: "grid",
