@@ -1,4 +1,4 @@
-import { Slot } from "@radix-ui/react-slot";
+import { Slot, Slottable } from "@radix-ui/react-slot";
 import * as stylex from "@stylexjs/stylex";
 import { Loader2 } from "lucide-react";
 import * as React from "react";
@@ -136,11 +136,27 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     },
     ref,
   ) => {
-    const Comp = asChild ? Slot : "button";
     const sx = stylex.props(styles.base, variantMap[variant], sizeMap[size]);
     const childrenSx = stylex.props(loading && styles.loadingChildren);
     const overlaySx = stylex.props(styles.loadingOverlay);
     const spinnerSx = stylex.props(styles.spinner);
+
+    // ISH-302: asChild 経由 (Slot) で <Link> などに styling を渡すには、
+    // Slot の children を Fragment で包んではいけない。Fragment は className/
+    // style を吸収せず Slot 内 cloneElement(Fragment, {...}) で props が捨てら
+    // れる。leftIcon / rightIcon は Slottable と並べて Slot 直下に置き、Slot
+    // 側で Slottable の中身を slot target として cloneElement してもらう。
+    // loading 状態は本来 <button> 用の semantics なので asChild 経路では非対応
+    // (Link に loading=true を渡すユースケースは無い)。
+    if (asChild) {
+      return (
+        <Slot ref={ref} {...props} className={sx.className} style={{ ...sx.style, ...style }}>
+          {leftIcon}
+          <Slottable>{children}</Slottable>
+          {rightIcon}
+        </Slot>
+      );
+    }
 
     const inner = (
       <>
@@ -151,7 +167,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     );
 
     return (
-      <Comp
+      <button
         ref={ref}
         disabled={disabled || loading}
         aria-busy={loading || undefined}
@@ -171,7 +187,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         ) : (
           inner
         )}
-      </Comp>
+      </button>
     );
   },
 );

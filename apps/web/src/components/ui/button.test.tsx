@@ -26,6 +26,34 @@ describe("<Button />", () => {
     expect(link).toHaveAttribute("href", "/somewhere");
   });
 
+  it("propagates className to the asChild element (regression: ISH-302)", () => {
+    // 以前は Button 内部で `inner` を Fragment で包んでおり、Radix Slot が
+    // Fragment を cloneElement しても className が捨てられるためボタンの見た目が
+    // 失われていた (= ただの link テキスト化)。className が <a> に届くこと。
+    render(
+      <Button asChild>
+        <a href="/x">Go</a>
+      </Button>,
+    );
+    const link = screen.getByRole("link", { name: "Go" });
+    expect(link.className).toMatch(/\S/);
+    // primary variant の background-color tokens が当たっている class を含む。
+    expect(link.className).toMatch(/backgroundColor/);
+  });
+
+  it("renders leftIcon next to children when asChild is set (regression: ISH-302)", () => {
+    render(
+      <Button asChild leftIcon={<span data-testid="lead">+</span>}>
+        <a href="/new">Create</a>
+      </Button>,
+    );
+    const link = screen.getByRole("link", { name: /Create/ });
+    expect(link).toBeInTheDocument();
+    // leftIcon が <a> の中に入って一緒に rendering される。
+    expect(link).toContainElement(screen.getByTestId("lead"));
+    expect(link.textContent).toBe("+Create");
+  });
+
   it("accepts variant and size props without crashing", () => {
     render(
       <Button variant="secondary" size="lg">
