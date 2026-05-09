@@ -43,9 +43,13 @@ import { findInvitationByToken, findWorkspaceById } from "@/workspaces/repo";
 export type TenantInvitationsRouteDeps = {
   /** Test escape hatch: inject fake auth middleware stack. */
   authMiddlewares?: MiddlewareHandler[];
-  /** ISH-261: injected for the resend endpoint so tests can capture mail. */
+  /**
+   * Injected mail port. Shared by both POST /tenant/invitations (ISH-293)
+   * and POST /tenant/invitations/:id/resend (ISH-261) so tests can capture
+   * dispatched mail in either flow.
+   */
   sendEmail?: SendEmailFn;
-  /** ISH-261: base URL used to build the accept link in the resend email. */
+  /** Base URL used to build the accept link embedded in invitation emails. */
   appBaseUrl?: string;
 };
 
@@ -96,7 +100,13 @@ export function createTenantInvitationsRoute(deps: TenantInvitationsRouteDeps = 
       return c.json({ error: "forbidden" }, 403);
     }
 
-    const result = await createInvitation(db, tenantId, dbUser.id, { email, role });
+    const result = await createInvitation(
+      db,
+      tenantId,
+      dbUser.id,
+      { email, role },
+      { sendEmail, appBaseUrl },
+    );
 
     if (result.kind === "already_member") {
       return c.json({ error: "already_member" }, 409);
