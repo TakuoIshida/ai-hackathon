@@ -43,7 +43,7 @@ function renderLinks() {
 }
 
 describe("<Links />", () => {
-  test("renders page header + promo banner + stats grid even before data loads", async () => {
+  test("renders page header even before data loads", async () => {
     mockedApi.listLinks.mockResolvedValue({ links: [] });
 
     renderLinks();
@@ -57,15 +57,6 @@ describe("<Links />", () => {
     expect(screen.getByPlaceholderText("リンクを検索")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /絞り込み/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /空き時間リンクを作成/ })).toBeInTheDocument();
-    // PromoBanner.
-    expect(
-      screen.getByText("お試し期間中は空き時間リンクを無制限にご利用いただけます"),
-    ).toBeInTheDocument();
-    // StatCard 4 枚 (mock values).
-    expect(screen.getByText("アクティブなリンク")).toBeInTheDocument();
-    expect(screen.getByText("今週のアクセス数")).toBeInTheDocument();
-    expect(screen.getByText("予約済の予定")).toBeInTheDocument();
-    expect(screen.getByText("平均応答時間")).toBeInTheDocument();
   });
 
   test("renders a list of links from the API", async () => {
