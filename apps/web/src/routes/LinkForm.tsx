@@ -15,6 +15,7 @@ import { WeekdayHoursEditor } from "@/components/availability-link/WeekdayHoursE
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/toast";
 import { ApiError, api } from "@/lib/api";
 import { DEFAULT_RANGE_DAYS, type LinkInput } from "@/lib/types";
@@ -90,6 +91,13 @@ const styles = stylex.create({
     borderRadius: radius.lg,
     fontSize: typography.fontSizeXs,
     color: colors.blue800,
+  },
+  // ISH-292: loading 状態 — 中央配置 Spinner で layout shift を抑える。
+  loadingBox: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: "240px",
   },
 });
 
@@ -292,7 +300,13 @@ export default function LinkForm() {
 
   const publishDisabled = submitting;
 
-  if (loading) return <p>読み込み中...</p>;
+  if (loading) {
+    return (
+      <div {...stylex.props(styles.loadingBox)}>
+        <Spinner size="lg" label="読み込み中" />
+      </div>
+    );
+  }
 
   const settingsPanel = (
     <SettingsPanel

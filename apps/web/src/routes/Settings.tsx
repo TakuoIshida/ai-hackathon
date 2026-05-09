@@ -35,7 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { StatCard } from "@/components/ui/stat-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
@@ -215,6 +215,19 @@ const styles = stylex.create({
     textAlign: "center",
     color: colors.ink500,
     fontSize: typography.fontSizeSm,
+  },
+  // ISH-292: loading row — テーブル行 3 行ぶんの縦幅を確保しつつ Spinner を中央配置。
+  membersLoadingRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: "240px",
+  },
+  basicLoadingRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingBlock: space.md,
   },
   // Basic info — existing layout
   innerCard: { display: "flex", flexDirection: "column", gap: space.md, maxWidth: "40rem" },
@@ -535,24 +548,11 @@ export function MembersTab({
 }
 
 function MembersTableSkeleton() {
+  // ISH-292: 3 行 Skeleton → Spinner 1 個の中央配置 row。
   return (
-    <>
-      {[0, 1, 2].map((i) => (
-        <div key={i} {...stylex.props(styles.membersTableRow)} aria-hidden>
-          <div {...stylex.props(styles.memberMeta)}>
-            <Skeleton style={{ height: "2.25rem", width: "2.25rem", borderRadius: "50%" }} />
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-              <Skeleton style={{ height: "1rem", width: "8rem" }} />
-              <Skeleton style={{ height: "0.75rem", width: "12rem" }} />
-            </div>
-          </div>
-          <Skeleton style={{ height: "1.25rem", width: "4rem" }} />
-          <Skeleton style={{ height: "1rem", width: "5rem" }} />
-          <Skeleton style={{ height: "1rem", width: "5rem" }} />
-          <Skeleton style={{ height: "1.5rem", width: "3rem" }} />
-        </div>
-      ))}
-    </>
+    <div {...stylex.props(styles.membersLoadingRow)} data-testid="members-table-loading">
+      <Spinner size="lg" label="読み込み中" />
+    </div>
   );
 }
 
@@ -1176,7 +1176,11 @@ function BasicInfoTab() {
           </CardDescription>
         </CardHeader>
         <CardBody>
-          {loading && <p {...stylex.props(styles.empty)}>読み込み中...</p>}
+          {loading && (
+            <div {...stylex.props(styles.basicLoadingRow)}>
+              <Spinner size="md" label="読み込み中" />
+            </div>
+          )}
           {error && <p {...stylex.props(styles.error)}>{error}</p>}
 
           {!loading && !error && conn && !conn.connected && (
