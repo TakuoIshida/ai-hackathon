@@ -224,6 +224,35 @@ describe("POST /tenant/invitations — validation and business logic", () => {
     expect(typeof body.expiresAt).toBe("string");
   });
 
+  test("ISH-293: 201 dispatches an invitation email via the injected sender", async () => {
+    const { owner, tenant } = await seedOwnerAndTenant();
+
+    const sent: Array<{ to: string; subject: string; text: string }> = [];
+    const testApp = new Hono();
+    testApp.route(
+      "/tenant/invitations",
+      createTenantInvitationsRoute({
+        authMiddlewares: [fakeAuthWithDbUser(owner), fakeTenantContext(tenant.id)],
+        sendEmail: async (msg) => {
+          sent.push({ to: msg.to, subject: msg.subject, text: msg.text });
+        },
+        appBaseUrl: "https://app.test",
+      }),
+    );
+
+    const res = await testApp.request("/tenant/invitations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "invitee@example.com", role: "member" }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { token: string };
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.to).toBe("invitee@example.com");
+    expect(sent[0]?.text).toContain(`https://app.test/invite/${body.token}`);
+  });
+
   test("ISH-252: 201 persists role='owner' from request body to tenant.invitations.role", async () => {
     const { owner, tenant } = await seedOwnerAndTenant();
 
