@@ -106,7 +106,7 @@ const styles = stylex.create({
     color: colors.ink400,
     pointerEvents: "none",
   },
-  searchInput: { width: "16rem", paddingInlineStart: "2rem", height: "2.125rem" },
+  searchInput: { width: "24rem", paddingInlineStart: "2rem", height: "2.125rem" },
   // table — grid-based, Settings.tsx MembersTab pattern を踏襲
   tableHeader: {
     display: "grid",
@@ -751,7 +751,7 @@ function BookingsTableSkeleton() {
       <div {...stylex.props(styles.toolbar)}>
         <Skeleton style={{ height: "1rem", width: "6rem" }} />
         <div {...stylex.props(styles.toolbarRight)}>
-          <Skeleton style={{ height: "2.125rem", width: "16rem" }} />
+          <Skeleton style={{ height: "2.125rem", width: "24rem" }} />
           <Skeleton style={{ height: "2.125rem", width: "9rem" }} />
         </div>
       </div>

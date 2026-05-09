@@ -89,6 +89,10 @@ const styles = stylex.create({
     borderColor: colors.blue500,
     borderWidth: "1.5px",
   },
+  locationItemDisabled: {
+    opacity: 0.5,
+    cursor: "not-allowed",
+  },
   locationBody: {
     flex: 1,
     display: "flex",
@@ -127,23 +131,29 @@ const LOCATION_OPTIONS: ReadonlyArray<{
   description?: string;
   icon: React.ReactNode;
   optional?: boolean;
+  disabled?: boolean;
 }> = [
   {
     value: "meet",
     label: "Google Meet",
     description: "予約確定時に自動でURLを発行",
     icon: <Video size={16} aria-hidden="true" />,
+    disabled: false,
   },
   {
     value: "in-person",
     label: "対面 / 場所を指定",
+    description: "(近日対応)",
     icon: <UserIcon size={16} aria-hidden="true" />,
+    disabled: true,
   },
   {
     value: "custom",
     label: "カスタムURL (Zoom等)",
+    description: "(近日対応)",
     icon: <LinkIcon size={16} aria-hidden="true" />,
     optional: true,
+    disabled: true,
   },
 ];
 
@@ -170,7 +180,7 @@ export function SettingsPanel({
           id={titleId}
           value={form.title}
           onChange={(e) => onChange({ title: e.target.value })}
-          placeholder="プロダクトデモ"
+          placeholder="タイトルを入力してください"
         />
       </div>
 
@@ -197,11 +207,19 @@ export function SettingsPanel({
           <div {...stylex.props(styles.locationGroup)}>
             {LOCATION_OPTIONS.map((opt) => {
               const active = opt.value === location;
-              const itemSx = stylex.props(styles.locationItem, active && styles.locationItemActive);
+              const itemSx = stylex.props(
+                styles.locationItem,
+                active && styles.locationItemActive,
+                opt.disabled && styles.locationItemDisabled,
+              );
               return (
                 // biome-ignore lint/a11y/noLabelWithoutControl: label wraps the RadioGroupItem button below
                 <label key={opt.value} className={itemSx.className} style={itemSx.style}>
-                  <RadioGroupItem value={opt.value} aria-label={opt.label} />
+                  <RadioGroupItem
+                    value={opt.value}
+                    aria-label={opt.label}
+                    disabled={opt.disabled}
+                  />
                   {opt.icon}
                   <div {...stylex.props(styles.locationBody)}>
                     <span {...stylex.props(styles.locationTitle)}>{opt.label}</span>
