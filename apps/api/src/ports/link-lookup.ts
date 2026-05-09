@@ -11,7 +11,7 @@ export type { Link, LinkWithRelations };
  * to the actual repo functions.
  */
 export type LinkLookupPort = {
-  /** Plain row by id, no rules/excludes. Returns null when not found. */
+  /** Plain row by id, no rules. Returns null when not found. */
   findLinkById(linkId: string): Promise<Link | null>;
   /**
    * Co-owner user IDs for a link. Primary owner (`link.userId`) is implicit

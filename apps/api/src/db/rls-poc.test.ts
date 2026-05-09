@@ -51,7 +51,6 @@ beforeEach(async () => {
   await testDb.$client.exec(`
     TRUNCATE TABLE
       tenant.bookings,
-      tenant.availability_excludes,
       tenant.availability_rules,
       tenant.link_owners,
       tenant.availability_links,
@@ -116,12 +115,11 @@ describe("0003_rls migration", () => {
     expect(rows[0]?.rolbypassrls).toBe(false);
   });
 
-  test("tenant_isolation policy exists on all 8 tenant tables", async () => {
+  test("tenant_isolation policy exists on all tenant tables", async () => {
     const tables = [
       "invitations",
       "availability_links",
       "availability_rules",
-      "availability_excludes",
       "bookings",
       "link_owners",
       "google_oauth_accounts",

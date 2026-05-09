@@ -49,13 +49,8 @@ describe("linkInputSchema", () => {
 
   test("applies defaults", () => {
     const parsed = linkInputSchema.parse(minimal);
-    expect(parsed.bufferBeforeMinutes).toBe(0);
-    expect(parsed.bufferAfterMinutes).toBe(0);
-    expect(parsed.leadTimeHours).toBe(0);
     expect(parsed.rangeDays).toBe(60);
-    expect(parsed.isPublished).toBe(false);
     expect(parsed.rules).toEqual([]);
-    expect(parsed.excludes).toEqual([]);
   });
 
   test("rejects invalid duration", () => {
@@ -63,28 +58,16 @@ describe("linkInputSchema", () => {
     expect(() => linkInputSchema.parse({ ...minimal, durationMinutes: -10 })).toThrow();
   });
 
-  test("rejects malformed exclude date", () => {
-    expect(() => linkInputSchema.parse({ ...minimal, excludes: ["2026/04/27"] })).toThrow();
-    expect(() => linkInputSchema.parse({ ...minimal, excludes: ["2026-4-27"] })).toThrow();
-  });
-
   test("accepts valid full payload", () => {
     expect(() =>
       linkInputSchema.parse({
         ...minimal,
         description: "30 min meeting",
-        bufferBeforeMinutes: 15,
-        bufferAfterMinutes: 15,
-        slotIntervalMinutes: 30,
-        maxPerDay: 5,
-        leadTimeHours: 2,
         rangeDays: 30,
-        isPublished: true,
         rules: [
           { weekday: 1, startMinute: 540, endMinute: 720 },
           { weekday: 1, startMinute: 780, endMinute: 1020 },
         ],
-        excludes: ["2026-04-29", "2026-05-03"],
       }),
     ).not.toThrow();
   });
@@ -106,58 +89,42 @@ describe("toCreateLinkCommand", () => {
     timeZone: "Asia/Tokyo",
   });
 
-  test("normalizes nullable+optional fields to null", () => {
-    // omitting description / slotIntervalMinutes / maxPerDay → undefined on the
-    // wire shape, but the command should always have null in those slots so the
-    // repo never has to deal with `undefined` for nullable columns.
+  test("normalizes nullable+optional description to null", () => {
+    // Omitting description → undefined on the wire shape, but the command
+    // should always have null so the repo never has to deal with `undefined`
+    // for the nullable column.
     const cmd = toCreateLinkCommand(baseWire);
     expect(cmd.description).toBeNull();
-    expect(cmd.slotIntervalMinutes).toBeNull();
-    expect(cmd.maxPerDay).toBeNull();
   });
 
   test("preserves explicit nulls", () => {
     const cmd = toCreateLinkCommand({
       ...baseWire,
       description: null,
-      slotIntervalMinutes: null,
-      maxPerDay: null,
     });
     expect(cmd.description).toBeNull();
-    expect(cmd.slotIntervalMinutes).toBeNull();
-    expect(cmd.maxPerDay).toBeNull();
   });
 
   test("forwards all defaulted scalar fields", () => {
     const cmd = toCreateLinkCommand(baseWire);
-    expect(cmd.bufferBeforeMinutes).toBe(0);
-    expect(cmd.bufferAfterMinutes).toBe(0);
-    expect(cmd.leadTimeHours).toBe(0);
     expect(cmd.rangeDays).toBe(60);
-    expect(cmd.isPublished).toBe(false);
     expect(cmd.rules).toEqual([]);
-    expect(cmd.excludes).toEqual([]);
   });
 });
 
 describe("toUpdateLinkCommand", () => {
   // NOTE: `linkUpdateSchema = linkInputSchema.partial()` keeps the inner
   // `.default(...)` annotations, so Zod still fills defaults for fields like
-  // `bufferBeforeMinutes` even when the user omitted them in PATCH. The mapper
-  // forwards every key whose value is not `undefined`, so those defaults flow
-  // through. This is the existing PATCH behaviour (unchanged by ISH-124) —
+  // `rangeDays` even when the user omitted them in PATCH. The mapper forwards
+  // every key whose value is not `undefined`, so those defaults flow through.
+  // This is the existing PATCH behaviour (unchanged by ISH-124 / ISH-298) —
   // the tests below pin it so any future change is intentional.
 
   test("only-default fields are filled by Zod and forwarded", () => {
     const cmd = toUpdateLinkCommand(linkUpdateSchema.parse({}));
     expect(cmd).toEqual({
-      bufferBeforeMinutes: 0,
-      bufferAfterMinutes: 0,
-      leadTimeHours: 0,
       rangeDays: 60,
-      isPublished: false,
       rules: [],
-      excludes: [],
     });
   });
 
@@ -179,6 +146,5 @@ describe("toUpdateLinkCommand", () => {
   test("genuinely missing keys do not appear in the output (post-Zod contract)", () => {
     const cmd = toUpdateLinkCommand({ title: "renamed" });
     expect("rangeDays" in cmd).toBe(false);
-    expect("isPublished" in cmd).toBe(false);
   });
 });

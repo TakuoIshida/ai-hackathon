@@ -8,7 +8,7 @@ import type { CreateLinkCommand } from "./domain";
 import {
   createLink,
   deleteLink,
-  findPublishedLinkBySlug,
+  findLinkBySlug,
   getLinkForUser,
   isSlugTaken,
   listLinkCoOwnerUserIds,
@@ -31,7 +31,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(`
-    TRUNCATE TABLE tenant.bookings, tenant.link_owners, tenant.availability_excludes,
+    TRUNCATE TABLE tenant.bookings, tenant.link_owners,
     tenant.availability_rules, tenant.availability_links, common.tenants, common.users
     RESTART IDENTITY CASCADE;
   `);
@@ -57,27 +57,19 @@ const baseInput = (overrides: Partial<CreateLinkCommand> = {}): CreateLinkComman
   title: "30 min",
   description: null,
   durationMinutes: 30,
-  bufferBeforeMinutes: 0,
-  bufferAfterMinutes: 0,
-  slotIntervalMinutes: null,
-  maxPerDay: null,
-  leadTimeHours: 0,
   rangeDays: 60,
   timeZone: "Asia/Tokyo",
-  isPublished: false,
   rules: [{ weekday: 1, startMinute: 540, endMinute: 1020 }],
-  excludes: ["2026-12-31"],
   ...overrides,
 });
 
 describe("links/repo", () => {
-  test("createLink persists link, rules, and excludes; getLinkForUser returns relations", async () => {
+  test("createLink persists link and rules; getLinkForUser returns relations", async () => {
     const tenantId = await seedTenant();
     const userId = await seedUser();
     const created = await createLink(db, userId, tenantId, baseInput());
     expect(created.slug).toBe("intro-30");
     expect(created.rules.length).toBe(1);
-    expect(created.excludes).toEqual(["2026-12-31"]);
 
     const reloaded = await getLinkForUser(db, userId, created.id);
     expect(reloaded?.id).toBe(created.id);
@@ -119,18 +111,16 @@ describe("links/repo", () => {
     expect(await isSlugTaken(db, "intro-30")).toBe(true);
   });
 
-  test("updateLink replaces rules and excludes", async () => {
+  test("updateLink replaces rules", async () => {
     const tenantId = await seedTenant();
     const userId = await seedUser();
     const created = await createLink(db, userId, tenantId, baseInput());
     const updated = await updateLink(db, userId, created.id, {
       title: "Renamed",
       rules: [{ weekday: 2, startMinute: 600, endMinute: 660 }],
-      excludes: [],
     });
     expect(updated?.title).toBe("Renamed");
     expect(updated?.rules).toEqual([{ weekday: 2, startMinute: 600, endMinute: 660 }]);
-    expect(updated?.excludes).toEqual([]);
   });
 
   test("updateLink returns null when link is not owned by user", async () => {
@@ -147,19 +137,13 @@ describe("links/repo", () => {
     expect(await getLinkForUser(db, userId, link.id)).toBeNull();
   });
 
-  test("findPublishedLinkBySlug requires isPublished=true", async () => {
+  test("findLinkBySlug returns the link by slug regardless of publish state (ISH-298)", async () => {
     const tenantId = await seedTenant();
     const userId = await seedUser();
-    const draft = await createLink(
-      db,
-      userId,
-      tenantId,
-      baseInput({ slug: "draft", isPublished: false }),
-    );
-    expect(await findPublishedLinkBySlug(db, "draft")).toBeNull();
-    await updateLink(db, userId, draft.id, { isPublished: true });
-    const found = await findPublishedLinkBySlug(db, "draft");
-    expect(found?.id).toBe(draft.id);
+    const created = await createLink(db, userId, tenantId, baseInput({ slug: "draft" }));
+    const found = await findLinkBySlug(db, "draft");
+    expect(found?.id).toBe(created.id);
+    expect(await findLinkBySlug(db, "missing")).toBeNull();
   });
 });
 

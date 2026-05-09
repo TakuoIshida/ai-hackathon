@@ -47,7 +47,6 @@ test.describe("link create → public URL renders slots", () => {
           title: body.title,
           description: null,
           durationMinutes: 30,
-          isPublished: true,
           timeZone: "Asia/Tokyo",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -113,8 +112,7 @@ test.describe("link create → public URL renders slots", () => {
     await page.getByLabel("タイトル").fill(TITLE);
     // Wait for slug availability check to settle so the submit isn't blocked.
     await expect(page.getByText("✓ 利用可能")).toBeVisible();
-    // Make sure the link is published so the public URL doesn't 404.
-    await page.getByLabel("このリンクを公開する").check();
+    // ISH-298: 公開設定 Card は廃止 (作成 = 公開) のため published checkbox はもう存在しない。
     await page.getByRole("button", { name: "リンクを発行" }).click();
 
     // After create the form navigates to /availability-sharings — the row we just

@@ -83,14 +83,8 @@ export const availabilityLinks = tenantSchema.table(
     title: text("title").notNull(),
     description: text("description"),
     durationMinutes: integer("duration_minutes").notNull(),
-    bufferBeforeMinutes: integer("buffer_before_minutes").notNull().default(0),
-    bufferAfterMinutes: integer("buffer_after_minutes").notNull().default(0),
-    slotIntervalMinutes: integer("slot_interval_minutes"),
-    maxPerDay: integer("max_per_day"),
-    leadTimeHours: integer("lead_time_hours").notNull().default(0),
     rangeDays: integer("range_days").notNull().default(60),
     timeZone: text("time_zone").notNull(),
-    isPublished: boolean("is_published").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -134,30 +128,6 @@ export const availabilityRules = tenantSchema.table(
 
 export type AvailabilityRule = typeof availabilityRules.$inferSelect;
 export type NewAvailabilityRule = typeof availabilityRules.$inferInsert;
-
-// ---------------------------------------------------------------------------
-// tenant.availability_excludes
-// Moved from public.availability_excludes (ISH-169).
-// ---------------------------------------------------------------------------
-export const availabilityExcludes = tenantSchema.table(
-  "availability_excludes",
-  {
-    id: ulidPk(),
-    tenantId: tenantId().references(() => tenants.id, { onDelete: "cascade" }),
-    linkId: text("link_id")
-      .notNull()
-      .references(() => availabilityLinks.id, { onDelete: "cascade" }),
-    localDate: varchar("local_date", { length: 10 }).notNull(),
-  },
-  (t) => [
-    index("availability_excludes_tenant_id_idx").on(t.tenantId),
-    uniqueIndex("uniq_link_date").on(t.linkId, t.localDate),
-    check("local_date_format", sql`${t.localDate} ~ '^\\d{4}-\\d{2}-\\d{2}$'`),
-  ],
-);
-
-export type AvailabilityExclude = typeof availabilityExcludes.$inferSelect;
-export type NewAvailabilityExclude = typeof availabilityExcludes.$inferInsert;
 
 // ---------------------------------------------------------------------------
 // tenant.bookings

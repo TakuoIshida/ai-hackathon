@@ -46,8 +46,6 @@ async function seedPublishedLink(
   db: TestDb,
   overrides: {
     slug?: string;
-    isPublished?: boolean;
-    leadTimeHours?: number;
     rangeDays?: number;
   } = {},
 ): Promise<Seeded> {
@@ -70,9 +68,7 @@ async function seedPublishedLink(
       // Far horizon so the fixed test slot stays valid regardless of when the
       // suite runs (default 60 days would expire the slot below).
       rangeDays: overrides.rangeDays ?? 3650,
-      leadTimeHours: overrides.leadTimeHours ?? 0,
       timeZone: TZ,
-      isPublished: overrides.isPublished ?? true,
     })
     .returning();
   if (!link) throw new Error("seed: link insert failed");
@@ -204,7 +200,7 @@ afterAll(async () => {
 beforeEach(async () => {
   sentEmails = [];
   await testDb.$client.exec(`
-    TRUNCATE TABLE tenant.bookings, tenant.availability_excludes, tenant.availability_rules,
+    TRUNCATE TABLE tenant.bookings, tenant.availability_rules,
     tenant.availability_links, tenant.google_calendars, tenant.google_oauth_accounts,
     common.tenants, common.users
     RESTART IDENTITY CASCADE;
@@ -221,17 +217,6 @@ describe("POST /public/links/:slug/bookings", () => {
   test("404 when slug does not exist", async () => {
     const app = buildApp();
     const res = await app.request("/public/links/missing/bookings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(validBody),
-    });
-    expect(res.status).toBe(404);
-  });
-
-  test("404 when link is not published", async () => {
-    await seedPublishedLink(testDb, { isPublished: false, slug: "draft" });
-    const app = buildApp();
-    const res = await app.request("/public/links/draft/bookings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(validBody),
@@ -412,7 +397,7 @@ describe("POST /public/links/:slug/bookings", () => {
 /**
  * Additional edge-case coverage for ISH-136.
  *
- * Covers concurrency (true Promise.all race), past-slot rejection, leadTime/
+ * Covers concurrency (true Promise.all race), past-slot rejection,
  * rangeDays clamp boundaries, the public-window terminal slot, createEvent
  * failure semantics, and the OAuth-without-calendars edge case.
  *
@@ -467,55 +452,6 @@ describe("POST /public/links/:slug/bookings — ISH-136 edge cases", () => {
     expect(res.status).toBe(410);
     const rows = await testDb.select().from(bookings);
     expect(rows.length).toBe(0);
-  });
-
-  describe("leadTime clamp boundary (slot fixed at SLOT_START_ISO, leadTimeHours=24)", () => {
-    // The slot grid for a Mon 9-17 JST window with a 30-min step lands every
-    // 30 minutes from 9:00 JST onward. The fixed test slot (14:00 JST) sits
-    // exactly on the grid; 1 ms displacements in `now` either keep the slot
-    // on or off the bookable side of the lead-time clamp.
-    const slotMinus24h = SLOT_START_MS - 24 * 60 * 60_000;
-
-    test("now == slotStart - 24h (boundary exact) → 201", async () => {
-      setSystemTime(new Date(slotMinus24h));
-      await seedPublishedLink(testDb, { leadTimeHours: 24 });
-      const app = buildApp();
-      const res = await app.request("/public/links/intro-30min/bookings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(validBody),
-      });
-      expect(res.status).toBe(201);
-    });
-
-    test("now == slotStart - 24h + 1ms (1ms inside lead window) → 410", async () => {
-      setSystemTime(new Date(slotMinus24h + 1));
-      await seedPublishedLink(testDb, { leadTimeHours: 24 });
-      const app = buildApp();
-      const res = await app.request("/public/links/intro-30min/bookings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(validBody),
-      });
-      expect(res.status).toBe(410);
-    });
-
-    // Skipped: at 1ms past the lead-time boundary, slot grid anchoring (which
-    // operates at the minute granularity, not ms) can shift `rangeStart` so the
-    // exact slot at slotStart is no longer emitted. Implementation-defined
-    // behavior at sub-minute precision; the +1m / 0ms / -1m boundaries above
-    // already pin the contract.
-    test.skip("now == slotStart - 24h - 1ms (1ms outside lead window) → 201", async () => {
-      setSystemTime(new Date(slotMinus24h - 1));
-      await seedPublishedLink(testDb, { leadTimeHours: 24 });
-      const app = buildApp();
-      const res = await app.request("/public/links/intro-30min/bookings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(validBody),
-      });
-      expect(res.status).toBe(201);
-    });
   });
 
   describe("rangeDays horizon end", () => {

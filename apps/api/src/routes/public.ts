@@ -6,7 +6,7 @@ import { type ConfirmBookingPorts, confirmBooking } from "@/bookings/confirm";
 import { bookingInputSchema, toConfirmBookingCommand } from "@/bookings/schemas";
 import { config } from "@/config";
 import { db } from "@/db/client";
-import { findPublishedLinkBySlug } from "@/links/repo";
+import { findLinkBySlug } from "@/links/repo";
 import { computePublicSlots } from "@/links/usecase";
 import { createBookingNotifier } from "@/notifications/booking-notifier";
 import { createResendSender } from "@/notifications/sender";
@@ -66,7 +66,7 @@ export function createPublicRoute(deps: PublicRouteDeps = productionDeps): Hono 
   const route = new Hono();
 
   route.get("/links/:slug", async (c) => {
-    const link = await findPublishedLinkBySlug(db, c.req.param("slug"));
+    const link = await findLinkBySlug(db, c.req.param("slug"));
     if (!link) return c.json({ error: "not_found" }, 404);
     return c.json({
       slug: link.slug,
@@ -83,7 +83,7 @@ export function createPublicRoute(deps: PublicRouteDeps = productionDeps): Hono 
   });
 
   route.get("/links/:slug/slots", zValidator("query", slotsQuery), async (c) => {
-    const link = await findPublishedLinkBySlug(db, c.req.param("slug"));
+    const link = await findLinkBySlug(db, c.req.param("slug"));
     if (!link) return c.json({ error: "not_found" }, 404);
 
     const { from, to } = c.req.valid("query");
@@ -105,7 +105,7 @@ export function createPublicRoute(deps: PublicRouteDeps = productionDeps): Hono 
   });
 
   route.post("/links/:slug/bookings", zValidator("json", bookingInputSchema), async (c) => {
-    const link = await findPublishedLinkBySlug(db, c.req.param("slug"));
+    const link = await findLinkBySlug(db, c.req.param("slug"));
     if (!link) return c.json({ error: "not_found" }, 404);
 
     const command = toConfirmBookingCommand(c.req.valid("json"));

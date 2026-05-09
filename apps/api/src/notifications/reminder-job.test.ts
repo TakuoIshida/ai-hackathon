@@ -29,7 +29,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(`
-    TRUNCATE TABLE tenant.bookings, tenant.availability_excludes, tenant.availability_rules,
+    TRUNCATE TABLE tenant.bookings, tenant.availability_rules,
     tenant.availability_links, tenant.google_calendars, tenant.google_oauth_accounts,
     common.tenants, common.users
     RESTART IDENTITY CASCADE;
@@ -61,7 +61,6 @@ async function seedOwnerAndLink(): Promise<SeedFixture> {
       title: "30 min meeting",
       durationMinutes: 30,
       timeZone: TZ,
-      isPublished: true,
     })
     .returning();
   if (!link) throw new Error("seed link");

@@ -63,12 +63,11 @@ describe("<DashboardLayout />", () => {
     expect(screen.queryByText("Links Page")).toBeNull();
   });
 
-  it("renders help / feedback / invite buttons and the team picker on the right", () => {
+  it("renders the invite button and the team picker on the right", () => {
     renderAt("/availability-sharings");
-    expect(screen.getByTestId("topnav-help")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "ヘルプ" })).toBeInTheDocument();
-    expect(screen.getByTestId("topnav-feedback")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "フィードバック" })).toBeInTheDocument();
+    // ISH-298: ヘルプ / フィードバック ボタンは削除済み
+    expect(screen.queryByRole("button", { name: "ヘルプ" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "フィードバック" })).toBeNull();
     const invite = screen.getByTestId("topnav-invite");
     expect(invite).toBeInTheDocument();
     expect(invite).toHaveTextContent("招待");

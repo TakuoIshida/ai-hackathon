@@ -45,7 +45,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await testDb.$client.exec(`
-    TRUNCATE TABLE tenant.bookings, tenant.availability_excludes, tenant.availability_rules,
+    TRUNCATE TABLE tenant.bookings, tenant.availability_rules,
     tenant.availability_links, tenant.google_calendars, tenant.google_oauth_accounts,
     tenant.invitations, tenant.link_owners,
     common.tenant_members, common.tenants, common.users
@@ -108,7 +108,6 @@ async function seedTwoTenants(): Promise<{
       title: "Link A",
       durationMinutes: 30,
       timeZone: "Asia/Tokyo",
-      isPublished: true,
     },
     {
       id: linkB,
@@ -118,7 +117,6 @@ async function seedTwoTenants(): Promise<{
       title: "Link B",
       durationMinutes: 30,
       timeZone: "Asia/Tokyo",
-      isPublished: true,
     },
   ]);
 
