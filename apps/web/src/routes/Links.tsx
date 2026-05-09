@@ -285,8 +285,8 @@ export default function Links() {
             <CardDescription>新規リンクを作って公開URLを発行できます。</CardDescription>
           </CardHeader>
           <CardBody>
-            <Button asChild>
-              <Link to="/availability-sharings/new">+ 空き時間リンクを作成</Link>
+            <Button asChild leftIcon={<Plus size={16} />}>
+              <Link to="/availability-sharings/new">空き時間リンクを作成</Link>
             </Button>
           </CardBody>
         </Card>
