@@ -168,9 +168,9 @@ describe("<Bookings />", () => {
 
     renderBookings();
 
-    // Wait for at least one row to render before checking column headers —
-    // the header text appears in both the loading skeleton and the populated
-    // table, so anchoring on a row title removes the race.
+    // Wait for at least one row to render before checking column headers.
+    // ISH-292: skeleton は Spinner 中央配置に変わったので header text 衝突は
+    // 発生しないが、データ到着まで待つ意味で row title アンカーは維持。
     expect(await screen.findByText("Deep dive")).toBeInTheDocument();
     // Column headers
     expect(screen.getByText("日時")).toBeInTheDocument();
@@ -510,7 +510,7 @@ describe("<Bookings />", () => {
     });
   });
 
-  test("loading state renders a skeleton (role=status) instead of plain text", async () => {
+  test("loading state renders a centered Spinner instead of plain text", async () => {
     let resolveFn: ((v: ListBookingsResponse) => void) | undefined;
     mockedApi.listBookings.mockImplementation(
       () =>
@@ -521,9 +521,11 @@ describe("<Bookings />", () => {
 
     renderBookings();
 
-    // Stats skeleton — role=status with aria-label
-    expect(screen.getByRole("status", { name: "読み込み中" })).toBeInTheDocument();
-    // Table skeleton (placeholder) replaces the previous "読み込み中..." text.
+    // ISH-292: stats と table の双方で Spinner (role=status, aria-label=読み込み中)
+    // を中央配置している。getAllByRole で 2 つ検出することを確認する。
+    const statuses = screen.getAllByRole("status", { name: "読み込み中" });
+    expect(statuses.length).toBeGreaterThanOrEqual(2);
+    // Table skeleton (placeholder) は data-testid を維持。
     expect(screen.getByTestId("bookings-table-skeleton")).toBeInTheDocument();
     expect(screen.queryByText("読み込み中...")).not.toBeInTheDocument();
 

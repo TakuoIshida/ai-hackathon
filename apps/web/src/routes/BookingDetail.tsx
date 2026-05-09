@@ -26,6 +26,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/toast";
 import { ApiError, api } from "@/lib/api";
 import { formatLocalDate, formatLocalTime } from "@/lib/local-date";
@@ -132,6 +133,13 @@ const styles = stylex.create({
   },
   meetActions: { display: "flex", gap: space.sm, flexWrap: "wrap" },
   error: { color: colors.destructive, fontSize: typography.fontSizeSm, margin: 0 },
+  // ISH-292: loading 状態 — 中央配置の Spinner で layout shift を抑える。
+  loadingBox: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: "240px",
+  },
 });
 
 function browserTz(): string {
@@ -197,7 +205,13 @@ export default function BookingDetail() {
     void load();
   }, [load]);
 
-  if (state.status === "loading") return <p>読み込み中...</p>;
+  if (state.status === "loading") {
+    return (
+      <div {...stylex.props(styles.loadingBox)}>
+        <Spinner size="lg" label="読み込み中" />
+      </div>
+    );
+  }
   if (state.status === "not_found") {
     return (
       <Card>

@@ -187,9 +187,13 @@ describe("<BookingDetail />", () => {
 
     renderAt("b1");
 
-    // Banner shows up
-    const banner = await screen.findByRole("status");
-    expect(banner.textContent).toMatch(/キャンセル済/);
+    // Banner shows up. ISH-292 後は loading 中の Spinner も role=status を持つ
+    // ため、データ到着後 (キャンセル済 badge 表示後) の status を取得する。
+    await screen.findAllByText("キャンセル済");
+    const statuses = screen.getAllByRole("status");
+    const banner = statuses.find((el) => el.textContent && /キャンセル済/.test(el.textContent));
+    expect(banner).toBeDefined();
+    expect(banner?.textContent).toMatch(/キャンセル済/);
 
     // 「キャンセル済」 badge sits next to the heading too.
     expect(screen.getAllByText("キャンセル済").length).toBeGreaterThan(0);
