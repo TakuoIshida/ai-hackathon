@@ -12,7 +12,7 @@ import {
   users,
 } from "@/db/schema";
 import type { LinkWithRelations } from "@/links/domain";
-import { findPublishedLinkBySlug } from "@/links/repo";
+import { findLinkBySlug } from "@/links/repo";
 import {
   type BookingTestSinks,
   buildBookingTestSinks,
@@ -68,7 +68,6 @@ async function seedPublishedLink(
       // suite runs (default 60 days would expire the slot below).
       rangeDays: 3650,
       timeZone: TZ,
-      isPublished: true,
     })
     .returning();
   if (!linkRow) throw new Error("seed: link insert failed");
@@ -85,7 +84,7 @@ async function seedPublishedLink(
   // Use the @/db/client singleton (already swapped via setDbForTests) so the
   // Database type matches usecase signatures.
   const { db: clientDb } = await import("@/db/client");
-  const link = await findPublishedLinkBySlug(clientDb, slug);
+  const link = await findLinkBySlug(clientDb, slug);
   if (!link) throw new Error("seed: published link not found after insert");
   return { tenantId, userId: user.id, link };
 }
@@ -141,7 +140,7 @@ afterAll(async () => {
 beforeEach(async () => {
   sinks = buildBookingTestSinks(db);
   await testDb.$client.exec(`
-    TRUNCATE TABLE tenant.bookings, tenant.availability_excludes, tenant.availability_rules,
+    TRUNCATE TABLE tenant.bookings, tenant.availability_rules,
     tenant.availability_links, tenant.google_calendars, tenant.google_oauth_accounts,
     common.tenants, common.users
     RESTART IDENTITY CASCADE;

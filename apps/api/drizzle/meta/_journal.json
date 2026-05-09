@@ -50,6 +50,13 @@
       "when": 1778889600000,
       "tag": "0006_bookings-google-link",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1778976000000,
+      "tag": "0007_drop-slot-publish-and-excludes",
+      "breakpoints": true
     }
   ]
 }

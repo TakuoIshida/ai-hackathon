@@ -1248,19 +1248,6 @@ function BasicInfoTab() {
           </CardFooter>
         )}
       </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>プロフィール</CardTitle>
-        </CardHeader>
-        <CardBody>
-          <div {...stylex.props(styles.field)}>
-            <Label htmlFor="tz">タイムゾーン</Label>
-            <Input id="tz" defaultValue="Asia/Tokyo" />
-          </div>
-          <p {...stylex.props(styles.empty)}>※ 現在は表示のみ。保存は v1.5 で対応予定 (ISH-57)。</p>
-        </CardBody>
-      </Card>
     </div>
   );
 }

@@ -32,18 +32,11 @@ const stubLink: LinkDetail = {
   title: "Intro 30",
   description: null,
   durationMinutes: 30,
-  isPublished: false,
   timeZone: "Asia/Tokyo",
   createdAt: "2026-04-01T00:00:00Z",
   updatedAt: "2026-04-01T00:00:00Z",
-  bufferBeforeMinutes: 0,
-  bufferAfterMinutes: 0,
-  slotIntervalMinutes: null,
-  maxPerDay: null,
-  leadTimeHours: 0,
   rangeDays: 60,
   rules: [],
-  excludes: [],
 };
 
 const mockedApi = vi.mocked(api);

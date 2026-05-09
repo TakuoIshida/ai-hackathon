@@ -1,5 +1,5 @@
 import type { db as DbClient } from "@/db/client";
-import { findLinkById as findLinkByIdRepo, findPublishedLinkBySlug } from "@/links/repo";
+import { findLinkById as findLinkByIdRepo, findLinkBySlug } from "@/links/repo";
 import type {
   GooglePort,
   Link,
@@ -111,26 +111,21 @@ export async function rescheduleBooking(
 
 /**
  * Hydrate a `Link` into `LinkWithRelations` for the availability re-check.
- * The lookup port only exposes the plain row — `findPublishedLinkBySlug` does
- * the JOIN on (rules + excludes) we need. Since reschedule is owner-only and
- * we already have the full Link in hand, we reuse that path.
- *
- * If the link has been unpublished since the booking was created, fall back
- * to fetching relations explicitly so we can still validate the new slot.
+ * The lookup port only exposes the plain row — `findLinkBySlug` does the
+ * JOIN on rules we need. Since reschedule is owner-only and we already have
+ * the full Link in hand, we reuse that path.
  */
 async function loadLinkWithRelations(
   database: Database,
   link: Link,
 ): Promise<LinkWithRelations | null> {
-  const hydrated = await findPublishedLinkBySlug(database, link.slug);
+  const hydrated = await findLinkBySlug(database, link.slug);
   if (hydrated) return hydrated;
-  // Link is not currently published — re-fetch the row and load relations
-  // through a public helper. We pre-loaded the row already, so just stitch
-  // in empty rules + excludes if the helper isn't available; this mirrors
-  // links/usecase's defensive empty-windows posture.
+  // Slug-based lookup miss is unexpected (we have the link in hand) — fall
+  // back to id lookup with empty rules so the availability check fails closed.
   const reloaded = await findLinkByIdRepo(database, link.id);
   if (!reloaded) return null;
-  return { ...reloaded, rules: [], excludes: [] };
+  return { ...reloaded, rules: [] };
 }
 
 async function isSlotAvailable(

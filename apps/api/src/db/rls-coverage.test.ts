@@ -51,7 +51,6 @@ beforeEach(async () => {
   await testDb.$client.exec(`
     TRUNCATE TABLE
       tenant.bookings,
-      tenant.availability_excludes,
       tenant.availability_rules,
       tenant.link_owners,
       tenant.availability_links,
@@ -166,18 +165,6 @@ const SPECS: TableSpec[] = [
     }),
     updateColumn: "start_minute",
     updateValue: "0",
-  },
-  {
-    table: "tenant.availability_excludes",
-    buildRow: (f, salt) => ({
-      id: ulid(),
-      tenant_id: f.tenantId,
-      link_id: f.linkId,
-      // unique date per salt to avoid uniq_link_date conflicts
-      local_date: `2027-01-${String((Math.abs(hashString(salt)) % 28) + 1).padStart(2, "0")}`,
-    }),
-    updateColumn: "local_date",
-    updateValue: "2099-12-31",
   },
   {
     table: "tenant.bookings",

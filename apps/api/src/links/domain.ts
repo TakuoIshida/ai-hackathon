@@ -17,14 +17,8 @@ export type Link = {
   title: string;
   description: string | null;
   durationMinutes: number;
-  bufferBeforeMinutes: number;
-  bufferAfterMinutes: number;
-  slotIntervalMinutes: number | null;
-  maxPerDay: number | null;
-  leadTimeHours: number;
   rangeDays: number;
   timeZone: string;
-  isPublished: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -37,7 +31,6 @@ export type LinkRule = {
 
 export type LinkWithRelations = Link & {
   rules: ReadonlyArray<LinkRule>;
-  excludes: ReadonlyArray<string>;
 };
 
 /**
@@ -51,16 +44,9 @@ export type CreateLinkCommand = {
   title: string;
   description: string | null;
   durationMinutes: number;
-  bufferBeforeMinutes: number;
-  bufferAfterMinutes: number;
-  slotIntervalMinutes: number | null;
-  maxPerDay: number | null;
-  leadTimeHours: number;
   rangeDays: number;
   timeZone: string;
-  isPublished: boolean;
   rules: ReadonlyArray<LinkRule>;
-  excludes: ReadonlyArray<string>;
 };
 
 /**

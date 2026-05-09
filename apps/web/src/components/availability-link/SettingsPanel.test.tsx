@@ -9,16 +9,9 @@ const baseInput: LinkInput = {
   title: "Intro 30",
   description: "",
   durationMinutes: 30,
-  bufferBeforeMinutes: 0,
-  bufferAfterMinutes: 0,
-  slotIntervalMinutes: null,
-  maxPerDay: null,
-  leadTimeHours: 0,
   rangeDays: 60,
   timeZone: "Asia/Tokyo",
-  isPublished: false,
   rules: [],
-  excludes: [],
 };
 
 function Controlled() {

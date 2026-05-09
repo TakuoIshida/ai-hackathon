@@ -47,7 +47,6 @@ test.describe("link create → public URL renders slots", () => {
           title: body.title,
           description: null,
           durationMinutes: 30,
-          isPublished: true,
           timeZone: "Asia/Tokyo",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),

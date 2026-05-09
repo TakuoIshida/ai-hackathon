@@ -12,15 +12,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Logo } from "@/components/ui/logo";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { colors, radius, space, typography } from "@/styles/tokens.stylex";
 
 /**
  * Authenticated app shell with a top-tab navigation (ISH-227 / ISH-236).
  *
  * SPIR の vocabulary に揃え、`/dashboard` prefix は無し。
- * 上部に Logo + タブ + 右側 utilities (help / feedback / 招待 / team picker /
- * UserButton) を一列で配置し、本体はその下にスクロール。
+ * 上部に Logo + タブ + 右側 utilities (招待 / team picker / UserButton) を
+ * 一列で配置し、本体はその下にスクロール。
  */
 
 const styles = stylex.create({
@@ -80,19 +79,6 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.xs,
     flexShrink: 0,
-  },
-  iconButton: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: "2rem",
-    height: "2rem",
-    padding: 0,
-    color: { default: colors.ink500, ":hover": colors.fg },
-    backgroundColor: { default: "transparent", ":hover": colors.ink100 },
-    border: "none",
-    borderRadius: radius.full,
-    cursor: "pointer",
   },
   inviteButton: {
     display: "inline-flex",
@@ -170,44 +156,6 @@ const mockTeams: ReadonlyArray<{ id: string; name: string; sub: string; initial:
 
 const ICON_STROKE = 1.6;
 
-function HelpIcon() {
-  return (
-    <svg
-      width={18}
-      height={18}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={ICON_STROKE}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="9" />
-      <path d="M9.5 9.5a2.5 2.5 0 0 1 5 0c0 1.5-2.5 2-2.5 3.5" />
-      <path d="M12 17h.01" />
-    </svg>
-  );
-}
-
-function CommentIcon() {
-  return (
-    <svg
-      width={18}
-      height={18}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={ICON_STROKE}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M21 12a8 8 0 0 1-12 7l-5 1 1-5a8 8 0 1 1 16-3Z" />
-    </svg>
-  );
-}
-
 function UserPlusIcon() {
   return (
     <svg
@@ -252,102 +200,74 @@ export function DashboardLayout() {
   const activeTeam = mockTeams[0];
 
   return (
-    <TooltipProvider delayDuration={200}>
-      <div {...stylex.props(styles.shell)}>
-        <header {...stylex.props(styles.header)}>
-          <h1 {...stylex.props(styles.brand)}>
-            <Logo size="md" />
-          </h1>
-          <nav {...stylex.props(styles.nav)}>
-            {navItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  stylex.props(styles.navLink, isActive && styles.navLinkActive).className ?? ""
-                }
-                style={({ isActive }) =>
-                  stylex.props(styles.navLink, isActive && styles.navLinkActive).style
-                }
-              >
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
-          <div {...stylex.props(styles.rightArea)}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label="ヘルプ"
-                  data-testid="topnav-help"
-                  {...stylex.props(styles.iconButton)}
-                >
-                  <HelpIcon />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>ヘルプ</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label="フィードバック"
-                  data-testid="topnav-feedback"
-                  {...stylex.props(styles.iconButton)}
-                >
-                  <CommentIcon />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>フィードバック</TooltipContent>
-            </Tooltip>
-            <button
-              type="button"
-              data-testid="topnav-invite"
-              onClick={() => setInviteOpen(true)}
-              {...stylex.props(styles.inviteButton)}
+    <div {...stylex.props(styles.shell)}>
+      <header {...stylex.props(styles.header)}>
+        <h1 {...stylex.props(styles.brand)}>
+          <Logo size="md" />
+        </h1>
+        <nav {...stylex.props(styles.nav)}>
+          {navItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) =>
+                stylex.props(styles.navLink, isActive && styles.navLinkActive).className ?? ""
+              }
+              style={({ isActive }) =>
+                stylex.props(styles.navLink, isActive && styles.navLinkActive).style
+              }
             >
-              <UserPlusIcon />
-              招待
-            </button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  data-testid="topnav-team-picker"
-                  {...stylex.props(styles.teamPicker)}
-                >
-                  <span {...stylex.props(styles.teamAvatar)}>{activeTeam?.initial ?? ""}</span>
-                  <span {...stylex.props(styles.teamLabel)}>
-                    <span {...stylex.props(styles.teamName)}>{activeTeam?.name ?? ""}</span>
-                    <span {...stylex.props(styles.teamSub)}>{activeTeam?.sub ?? ""}</span>
-                  </span>
-                  <ChevronDownIcon />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>チームを切り替え</DropdownMenuLabel>
-                {mockTeams.map((team) => (
-                  <DropdownMenuItem key={team.id}>
-                    {team.name} — {team.sub}
-                  </DropdownMenuItem>
-                ))}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem disabled>新しいチームを作成 (TODO)</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <auth.UserButton />
-          </div>
-        </header>
-        <main {...stylex.props(styles.main)}>
-          <Outlet />
-        </main>
-        <InviteMembersModal
-          open={inviteOpen}
-          onOpenChange={setInviteOpen}
-          teamName={activeTeam?.name ?? ""}
-        />
-      </div>
-    </TooltipProvider>
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
+        <div {...stylex.props(styles.rightArea)}>
+          <button
+            type="button"
+            data-testid="topnav-invite"
+            onClick={() => setInviteOpen(true)}
+            {...stylex.props(styles.inviteButton)}
+          >
+            <UserPlusIcon />
+            招待
+          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                data-testid="topnav-team-picker"
+                {...stylex.props(styles.teamPicker)}
+              >
+                <span {...stylex.props(styles.teamAvatar)}>{activeTeam?.initial ?? ""}</span>
+                <span {...stylex.props(styles.teamLabel)}>
+                  <span {...stylex.props(styles.teamName)}>{activeTeam?.name ?? ""}</span>
+                  <span {...stylex.props(styles.teamSub)}>{activeTeam?.sub ?? ""}</span>
+                </span>
+                <ChevronDownIcon />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>チームを切り替え</DropdownMenuLabel>
+              {mockTeams.map((team) => (
+                <DropdownMenuItem key={team.id}>
+                  {team.name} — {team.sub}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled>新しいチームを作成 (TODO)</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <auth.UserButton />
+        </div>
+      </header>
+      <main {...stylex.props(styles.main)}>
+        <Outlet />
+      </main>
+      <InviteMembersModal
+        open={inviteOpen}
+        onOpenChange={setInviteOpen}
+        teamName={activeTeam?.name ?? ""}
+      />
+    </div>
   );
 }

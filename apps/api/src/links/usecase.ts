@@ -23,8 +23,7 @@ export type { PublicSlotsParams, PublicSlotsResult } from "@/ports";
 
 type Database = typeof DbClient;
 
-const HOUR_MS = 3600 * 1000;
-const DAY_MS = 24 * HOUR_MS;
+const DAY_MS = 24 * 3600 * 1000;
 
 // ---------- CRUD use cases ----------
 
@@ -193,9 +192,8 @@ export async function computePublicSlots(
   google?: GooglePort | null,
 ): Promise<PublicSlotsResult> {
   const now = params.nowMs ?? Date.now();
-  const leadEnd = now + link.leadTimeHours * HOUR_MS;
   const horizonEnd = now + link.rangeDays * DAY_MS;
-  const rangeStart = Math.max(params.fromMs, leadEnd);
+  const rangeStart = Math.max(params.fromMs, now);
   const rangeEnd = Math.min(params.toMs, horizonEnd);
   if (rangeStart >= rangeEnd) {
     return { windows: [], busy: [], slots: [], effectiveRange: null };
@@ -207,7 +205,6 @@ export async function computePublicSlots(
     weekly,
     rangeStart,
     rangeEnd,
-    excludeLocalDates: link.excludes,
   });
 
   // ISH-112: merge busy across all owners (primary + co-owners). The co-owner
@@ -251,10 +248,6 @@ export async function computePublicSlots(
     windows,
     busy,
     durationMinutes: link.durationMinutes,
-    bufferBeforeMinutes: link.bufferBeforeMinutes,
-    bufferAfterMinutes: link.bufferAfterMinutes,
-    slotIntervalMinutes: link.slotIntervalMinutes ?? undefined,
-    maxPerDay: link.maxPerDay ?? undefined,
   });
 
   return {

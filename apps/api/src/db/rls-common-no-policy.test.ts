@@ -48,7 +48,6 @@ beforeEach(async () => {
   await testDb.$client.exec(`
     TRUNCATE TABLE
       tenant.bookings,
-      tenant.availability_excludes,
       tenant.availability_rules,
       tenant.link_owners,
       tenant.availability_links,

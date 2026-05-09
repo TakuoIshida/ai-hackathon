@@ -14,8 +14,6 @@ export const ruleInput = z
     message: "endMinute must be greater than startMinute",
   });
 
-export const localDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "must be YYYY-MM-DD");
-
 export const slugSchema = z
   .string()
   .min(1)
@@ -31,21 +29,9 @@ export const linkInputSchema = z.object({
     .int()
     .positive()
     .max(24 * 60),
-  bufferBeforeMinutes: z.number().int().min(0).max(240).default(0),
-  bufferAfterMinutes: z.number().int().min(0).max(240).default(0),
-  slotIntervalMinutes: z.number().int().positive().nullable().optional(),
-  maxPerDay: z.number().int().positive().nullable().optional(),
-  leadTimeHours: z
-    .number()
-    .int()
-    .min(0)
-    .max(24 * 60)
-    .default(0),
   rangeDays: z.number().int().min(1).max(365).default(60),
   timeZone: z.string().min(1),
-  isPublished: z.boolean().default(false),
   rules: z.array(ruleInput).default([]),
-  excludes: z.array(localDate).default([]),
 });
 
 export const linkUpdateSchema = linkInputSchema.partial();
@@ -58,8 +44,8 @@ type LinkUpdateInput = z.infer<typeof linkUpdateSchema>;
 
 /**
  * Convert the parsed wire format from `linkInputSchema` to a domain command.
- * Normalizes the `nullable + optional` fields to a strict `T | null` so the
- * repo never sees `undefined` for these slots (ISH-124).
+ * Normalizes the `nullable + optional` `description` to a strict `T | null` so
+ * the repo never sees `undefined` for the nullable column (ISH-124).
  */
 export function toCreateLinkCommand(input: LinkInput): CreateLinkCommand {
   return {
@@ -67,16 +53,9 @@ export function toCreateLinkCommand(input: LinkInput): CreateLinkCommand {
     title: input.title,
     description: input.description ?? null,
     durationMinutes: input.durationMinutes,
-    bufferBeforeMinutes: input.bufferBeforeMinutes,
-    bufferAfterMinutes: input.bufferAfterMinutes,
-    slotIntervalMinutes: input.slotIntervalMinutes ?? null,
-    maxPerDay: input.maxPerDay ?? null,
-    leadTimeHours: input.leadTimeHours,
     rangeDays: input.rangeDays,
     timeZone: input.timeZone,
-    isPublished: input.isPublished,
     rules: input.rules,
-    excludes: input.excludes,
   };
 }
 
@@ -91,15 +70,8 @@ export function toUpdateLinkCommand(input: LinkUpdateInput): UpdateLinkCommand {
   if (input.title !== undefined) out.title = input.title;
   if (input.description !== undefined) out.description = input.description;
   if (input.durationMinutes !== undefined) out.durationMinutes = input.durationMinutes;
-  if (input.bufferBeforeMinutes !== undefined) out.bufferBeforeMinutes = input.bufferBeforeMinutes;
-  if (input.bufferAfterMinutes !== undefined) out.bufferAfterMinutes = input.bufferAfterMinutes;
-  if (input.slotIntervalMinutes !== undefined) out.slotIntervalMinutes = input.slotIntervalMinutes;
-  if (input.maxPerDay !== undefined) out.maxPerDay = input.maxPerDay;
-  if (input.leadTimeHours !== undefined) out.leadTimeHours = input.leadTimeHours;
   if (input.rangeDays !== undefined) out.rangeDays = input.rangeDays;
   if (input.timeZone !== undefined) out.timeZone = input.timeZone;
-  if (input.isPublished !== undefined) out.isPublished = input.isPublished;
   if (input.rules !== undefined) out.rules = input.rules;
-  if (input.excludes !== undefined) out.excludes = input.excludes;
   return out;
 }
