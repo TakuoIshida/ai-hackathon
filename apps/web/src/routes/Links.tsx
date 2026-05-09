@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { PromoBanner } from "@/components/ui/promo-banner";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { StatCard } from "@/components/ui/stat-card";
 import { ApiError } from "@/lib/api";
 import { useLinksQuery } from "@/lib/queries";
@@ -216,15 +216,15 @@ const styles = stylex.create({
   emptyTitle: {
     color: colors.blue900,
   },
-  // skeleton
-  skeletonRow: {
-    display: "grid",
-    gridTemplateColumns: "90px 1fr 200px 140px 120px 110px",
-    padding: "16px 20px",
+  // loading spinner card
+  loadingCard: {
+    padding: 0,
+    overflow: "hidden",
+    borderColor: colors.ink200,
+    minHeight: "240px",
+    display: "flex",
     alignItems: "center",
-    gap: space.md,
-    borderBottom: `1px solid ${colors.ink100}`,
-    backgroundColor: colors.bg,
+    justifyContent: "center",
   },
   // primary CTA — Pastel Blue glow
   primaryCta: {
@@ -531,31 +531,11 @@ function LinkRow({ link, isLast }: { link: LinkSummary; isLast: boolean }) {
 // ---------------------------------------------------------------------------
 
 function LinksTableSkeleton() {
+  // ISH-292: 中央配置 Spinner Card に統一。min-height で行 3 行分の縦幅を確保
+  // し loading→ready 切替時の layout shift を抑える。
   return (
-    <Card style={{ padding: 0, overflow: "hidden", borderColor: colors.ink200 }}>
-      <div {...stylex.props(styles.tableHeader)} aria-hidden>
-        <div>打合せ時間</div>
-        <div>タイトル</div>
-        <div>参加者</div>
-        <div>アクセス</div>
-        <div>更新</div>
-        <div />
-      </div>
-      {[0, 1, 2].map((i) => (
-        <div
-          // biome-ignore lint/suspicious/noArrayIndexKey: skeleton placeholder rows
-          key={i}
-          {...stylex.props(styles.skeletonRow)}
-          aria-hidden
-        >
-          <Skeleton style={{ height: "1.25rem", width: "4rem" }} />
-          <Skeleton style={{ height: "1.25rem", width: "60%" }} />
-          <Skeleton style={{ height: "1.25rem", width: "8rem" }} />
-          <Skeleton style={{ height: "1.25rem", width: "4rem" }} />
-          <Skeleton style={{ height: "1rem", width: "3rem" }} />
-          <Skeleton style={{ height: "1.5rem", width: "5rem" }} />
-        </div>
-      ))}
+    <Card {...stylex.props(styles.loadingCard)} data-testid="links-table-loading">
+      <Spinner size="lg" label="読み込み中" />
     </Card>
   );
 }

@@ -15,6 +15,7 @@ import { WeekdayHoursEditor } from "@/components/availability-link/WeekdayHoursE
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
 import { ApiError, api } from "@/lib/api";
 import { DEFAULT_RANGE_DAYS, type LinkInput } from "@/lib/types";
 import { colors, radius, space, typography } from "@/styles/tokens.stylex";
@@ -88,6 +89,13 @@ const styles = stylex.create({
   },
   // ISH-245 (C-03): calendarPlaceholder は CalendarDragGrid に置き換わった
   // ので削除済み。
+  // ISH-292: loading 状態 — 中央配置 Spinner で layout shift を抑える。
+  loadingBox: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: "240px",
+  },
 });
 
 function todayLocal(): string {
@@ -256,7 +264,13 @@ export default function LinkForm() {
 
   const publishDisabled = submitting || slugStatus === "taken";
 
-  if (loading) return <p>読み込み中...</p>;
+  if (loading) {
+    return (
+      <div {...stylex.props(styles.loadingBox)}>
+        <Spinner size="lg" label="読み込み中" />
+      </div>
+    );
+  }
 
   const settingsPanel = (
     <SettingsPanel

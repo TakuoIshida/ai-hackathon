@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { StatCard } from "@/components/ui/stat-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiError, api, type ExportBookingsCsvParams, type ListBookingsParams } from "@/lib/api";
@@ -250,6 +250,22 @@ const styles = stylex.create({
     color: colors.ink500,
   },
   emptyCta: { marginBlockStart: space.sm },
+  // ISH-292: loading state — Spinner を中央配置した Card / box。
+  loadingStats: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: "5.5rem",
+  },
+  loadingCard: {
+    padding: 0,
+    overflow: "hidden",
+    borderColor: colors.ink200,
+    minHeight: "240px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });
 
 type Tab = "upcoming" | "past" | "canceled";
@@ -733,42 +749,20 @@ function PaginationBar({
 }
 
 function BookingsLoadingSkeleton() {
+  // ISH-292: stats 3 枚分の縦幅を保ちつつ Spinner 1 つを中央表示。
   return (
-    <div {...stylex.props(styles.statsGrid)} role="status" aria-label="読み込み中">
-      {[0, 1, 2].map((i) => (
-        <Skeleton key={i} style={{ height: "5.5rem", borderRadius: "0.75rem" }} />
-      ))}
+    <div {...stylex.props(styles.loadingStats)} aria-busy="true">
+      <Spinner size="lg" label="読み込み中" />
     </div>
   );
 }
 
 function BookingsTableSkeleton() {
+  // ISH-292: テーブル + toolbar Skeleton を中央 Spinner Card に置換。
+  // data-testid は既存テストと整合させるため「bookings-table-skeleton」を維持。
   return (
-    <Card
-      style={{ padding: 0, overflow: "hidden", borderColor: colors.ink200 }}
-      data-testid="bookings-table-skeleton"
-    >
-      <div {...stylex.props(styles.toolbar)}>
-        <Skeleton style={{ height: "1rem", width: "6rem" }} />
-        <div {...stylex.props(styles.toolbarRight)}>
-          <Skeleton style={{ height: "2.125rem", width: "16rem" }} />
-          <Skeleton style={{ height: "2.125rem", width: "9rem" }} />
-        </div>
-      </div>
-      <BookingsTableHeader />
-      {[0, 1, 2, 3, 4].map((i) => (
-        <div key={i} {...stylex.props(styles.tableRow)} aria-hidden>
-          <div {...stylex.props(styles.dateCol)}>
-            <Skeleton style={{ height: "0.875rem", width: "8rem" }} />
-            <Skeleton style={{ height: "0.75rem", width: "10rem" }} />
-          </div>
-          <Skeleton style={{ height: "0.875rem", width: "12rem" }} />
-          <Skeleton style={{ height: "1rem", width: "8rem" }} />
-          <Skeleton style={{ height: "1.5rem", width: "5rem" }} />
-          <Skeleton style={{ height: "1.25rem", width: "3rem" }} />
-          <Skeleton style={{ height: "1.75rem", width: "3rem" }} />
-        </div>
-      ))}
+    <Card {...stylex.props(styles.loadingCard)} data-testid="bookings-table-skeleton">
+      <Spinner size="lg" label="読み込み中" />
     </Card>
   );
 }
