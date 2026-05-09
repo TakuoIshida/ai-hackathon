@@ -1,3 +1,4 @@
+import { ulid } from "ulidx";
 import type { db as DbClient } from "@/db/client";
 import type { GooglePort, PublicSlotsParams, PublicSlotsResult } from "@/ports";
 import { computeAvailableSlots, expandWeeklyAvailability, type Interval } from "@/scheduling";
@@ -95,16 +96,54 @@ export async function checkSlugAvailability(
   return { slug, available: !taken };
 }
 
+/**
+ * ISH-296 (B): Generate a short, URL-safe slug from a fresh ULID. ULID is
+ * Crockford base32 (already lowercase-friendly) — we lowercase it and take the
+ * last 8 chars (most random portion) so the slug is short but the keyspace
+ * (32^8 ≈ 1.1e12) makes accidental collisions effectively impossible across
+ * a single tenant. Reserved slugs are filtered explicitly.
+ */
+function generateRandomSlug(): string {
+  // ulid() → 26 chars Crockford base32, mostly uppercase. Lowercase and take
+  // the random tail to avoid the timestamp-prefixed first 10 chars (which
+  // would produce visually adjacent slugs for adjacent inserts).
+  return ulid().toLowerCase().slice(-8);
+}
+
+const SLUG_GEN_MAX_RETRIES = 5;
+
 export async function createLinkForUser(
   database: Database,
   userId: string,
   tenantId: string,
   input: CreateLinkCommand,
 ): Promise<CreateLinkResult> {
-  if (isReservedSlug(input.slug) || (await isSlugTaken(database, input.slug))) {
-    return { kind: "slug_taken" };
+  let slug: string;
+  if (input.slug !== undefined) {
+    if (isReservedSlug(input.slug) || (await isSlugTaken(database, input.slug))) {
+      return { kind: "slug_taken" };
+    }
+    slug = input.slug;
+  } else {
+    // Auto-generate. Retry on collision with the reserved set or DB. Cap the
+    // loop so a buggy environment can't wedge us into an infinite retry.
+    let candidate: string | null = null;
+    for (let attempt = 0; attempt < SLUG_GEN_MAX_RETRIES; attempt++) {
+      const next = generateRandomSlug();
+      if (isReservedSlug(next)) continue;
+      // eslint-disable-next-line no-await-in-loop -- sequential by design (retry)
+      if (await isSlugTaken(database, next)) continue;
+      candidate = next;
+      break;
+    }
+    if (candidate === null) {
+      // Astronomically unlikely (32^8 keyspace); surface as the same kind so
+      // callers can treat it like a transient slug-taken error.
+      return { kind: "slug_taken" };
+    }
+    slug = candidate;
   }
-  const link = await createLink(database, userId, tenantId, input);
+  const link = await createLink(database, userId, tenantId, { ...input, slug });
   return { kind: "ok", link };
 }
 

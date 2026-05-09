@@ -38,9 +38,13 @@ export type LinkWithRelations = Link & {
  * (`linkInputSchema` in `schemas.ts`) so the repo / usecase do not depend
  * on Zod (ISH-124). The route layer parses the wire format and maps it to
  * this command via `toCreateLinkCommand`.
+ *
+ * ISH-296 (B): `slug` is optional — when omitted the usecase auto-generates a
+ * short ULID-derived slug with collision retry. Callers that pre-pick a slug
+ * (e.g. legacy paths, tests) can still pass it explicitly.
  */
 export type CreateLinkCommand = {
-  slug: string;
+  slug?: string;
   title: string;
   description: string | null;
   durationMinutes: number;

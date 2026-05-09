@@ -52,7 +52,9 @@ async function seedUser(): Promise<string> {
   return u.id;
 }
 
-const baseInput = (overrides: Partial<CreateLinkCommand> = {}): CreateLinkCommand => ({
+const baseInput = (
+  overrides: Partial<CreateLinkCommand> = {},
+): CreateLinkCommand & { slug: string } => ({
   slug: "intro-30",
   title: "30 min",
   description: null,

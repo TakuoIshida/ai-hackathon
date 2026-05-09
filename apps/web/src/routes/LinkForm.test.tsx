@@ -17,18 +17,19 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     api: {
       createLink: vi.fn(),
-      checkSlugAvailable: vi.fn(),
+      updateLink: vi.fn(),
     },
   };
 });
 
+import { ToastProvider } from "@/components/ui/toast";
 import { ApiError, api } from "@/lib/api";
 import type { LinkDetail } from "@/lib/types";
 import LinkForm from "./LinkForm";
 
 const stubLink: LinkDetail = {
   id: "new-id",
-  slug: "intro",
+  slug: "abc12345",
   title: "Intro 30",
   description: null,
   durationMinutes: 30,
@@ -43,19 +44,20 @@ const mockedApi = vi.mocked(api);
 
 function renderForm() {
   return render(
-    <MemoryRouter initialEntries={["/availability-sharings/new"]}>
-      <Routes>
-        <Route path="/availability-sharings/new" element={<LinkForm />} />
-        <Route path="/availability-sharings" element={<div>Links list page</div>} />
-      </Routes>
-    </MemoryRouter>,
+    <ToastProvider>
+      <MemoryRouter initialEntries={["/availability-sharings/new"]}>
+        <Routes>
+          <Route path="/availability-sharings/new" element={<LinkForm />} />
+          <Route path="/availability-sharings/:id/edit" element={<LinkForm />} />
+          <Route path="/availability-sharings" element={<div>Links list page</div>} />
+        </Routes>
+      </MemoryRouter>
+    </ToastProvider>,
   );
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Default: slug check resolves as available so we don't accidentally disable the submit button.
-  mockedApi.checkSlugAvailable.mockResolvedValue({ slug: "intro", available: true });
 });
 
 afterEach(() => {
@@ -63,38 +65,28 @@ afterEach(() => {
 });
 
 describe("<LinkForm />", () => {
-  test("validation: shows the 'taken' message and disables submit when slug is unavailable", async () => {
-    mockedApi.checkSlugAvailable.mockResolvedValue({ slug: "taken-slug", available: false });
-
+  // ISH-296 (B/C): スラッグ / タイムゾーンの Input は FE から削除済み
+  test("does not render slug or timezone inputs", () => {
     renderForm();
-
-    fireEvent.change(screen.getByLabelText("スラッグ (URL)"), {
-      target: { value: "taken-slug" },
-    });
-
-    expect(await screen.findByText("このスラッグは使用済みです")).toBeInTheDocument();
-    const submit = screen.getByRole("button", { name: /リンクを発行/ });
-    expect(submit).toBeDisabled();
+    expect(screen.queryByLabelText(/スラッグ/)).toBeNull();
+    expect(screen.queryByLabelText(/タイムゾーン/)).toBeNull();
   });
 
-  test("submit success: calls api.createLink and navigates to the list page", async () => {
+  test("submit success: omits slug from payload (BE auto-generates) and navigates", async () => {
     mockedApi.createLink.mockResolvedValue({ link: stubLink });
 
     renderForm();
 
-    fireEvent.change(screen.getByLabelText("スラッグ (URL)"), { target: { value: "intro" } });
     fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: "Intro 30" } });
-
-    // Wait for the slug debounce (300ms) to settle as "available"
-    await screen.findByText("✓ 利用可能");
 
     fireEvent.click(screen.getByRole("button", { name: /リンクを発行/ }));
 
     await waitFor(() => expect(mockedApi.createLink).toHaveBeenCalledTimes(1));
-    expect(mockedApi.createLink).toHaveBeenCalledWith(
-      expect.objectContaining({ slug: "intro", title: "Intro 30" }),
-      expect.any(Function),
-    );
+    const sentPayload = mockedApi.createLink.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(sentPayload.title).toBe("Intro 30");
+    expect(sentPayload.timeZone).toBe("Asia/Tokyo");
+    // ISH-296 (B): slug は payload に乗せない (BE が auto-generate する)
+    expect("slug" in sentPayload).toBe(false);
 
     // Navigation to the links list happened
     await waitFor(() => expect(screen.getByText("Links list page")).toBeInTheDocument());
@@ -105,14 +97,29 @@ describe("<LinkForm />", () => {
 
     renderForm();
 
-    fireEvent.change(screen.getByLabelText("スラッグ (URL)"), { target: { value: "intro" } });
     fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: "Intro 30" } });
-    await screen.findByText("✓ 利用可能");
 
     fireEvent.click(screen.getByRole("button", { name: /リンクを発行/ }));
 
     expect(await screen.findByText("409: slug_taken")).toBeInTheDocument();
     // The user remains on the form (not on the redirected list page).
+    expect(screen.queryByText("Links list page")).toBeNull();
+  });
+
+  // ISH-297: 下書き保存 button が常時 enable で、押下で同ページに留まる
+  test("draft save: button is enabled and stays on the page after success", async () => {
+    mockedApi.createLink.mockResolvedValue({ link: stubLink });
+
+    renderForm();
+
+    fireEvent.change(screen.getByLabelText("タイトル"), { target: { value: "Intro 30" } });
+
+    const draftBtn = screen.getByRole("button", { name: /下書き保存/ });
+    expect(draftBtn).not.toBeDisabled();
+    fireEvent.click(draftBtn);
+
+    await waitFor(() => expect(mockedApi.createLink).toHaveBeenCalledTimes(1));
+    // navigates to /availability-sharings/{id}/edit (replace) — list page is not shown.
     expect(screen.queryByText("Links list page")).toBeNull();
   });
 
@@ -122,12 +129,9 @@ describe("<LinkForm />", () => {
     fireEvent.click(screen.getByRole("button", { name: "1ヶ月" }));
     const from = screen.getByLabelText("公開期間 開始日") as HTMLInputElement;
     const to = screen.getByLabelText("公開期間 終了日") as HTMLInputElement;
-    // From=today; To=today+30. We can't pin "today" globally here, but we can
-    // assert (a) preset is now active and (b) from === today's input value.
     expect(from.value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(to.value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(screen.getByRole("button", { name: "1ヶ月" })).toHaveAttribute("aria-pressed", "true");
-    // diff(to, from) should be exactly 30 days
     const dayMs = 86400000;
     const diff = Math.round(
       (new Date(to.value).getTime() - new Date(from.value).getTime()) / dayMs,
@@ -137,17 +141,14 @@ describe("<LinkForm />", () => {
 
   test("form mode: weekday toggle on → off replaces time inputs with '受付なし'", () => {
     renderForm();
-    // emptyInput has Mon-Fri populated with 9-17 ranges; only Sat/Sun start off.
     expect(screen.getAllByText("受付なし")).toHaveLength(2);
     expect(screen.getByLabelText("月曜日 1番目 開始時刻")).toHaveValue("09:00");
 
-    // Toggle monday off
     fireEvent.click(screen.getByLabelText("月曜日 受付"));
 
     expect(screen.queryByLabelText("月曜日 1番目 開始時刻")).toBeNull();
     expect(screen.getAllByText("受付なし")).toHaveLength(3);
 
-    // Toggle monday back on → default 09-17
     fireEvent.click(screen.getByLabelText("月曜日 受付"));
     expect(screen.getByLabelText("月曜日 1番目 開始時刻")).toHaveValue("09:00");
     expect(screen.getByLabelText("月曜日 1番目 終了時刻")).toHaveValue("17:00");
@@ -155,7 +156,6 @@ describe("<LinkForm />", () => {
 
   test("form mode: '平日に一括適用' copies monday's ranges to tue-fri", () => {
     renderForm();
-    // Tighten monday to 10-12
     fireEvent.change(screen.getByLabelText("月曜日 1番目 開始時刻"), {
       target: { value: "10:00" },
     });
@@ -169,7 +169,6 @@ describe("<LinkForm />", () => {
       expect(screen.getByLabelText(`${day}曜日 1番目 開始時刻`)).toHaveValue("10:00");
       expect(screen.getByLabelText(`${day}曜日 1番目 終了時刻`)).toHaveValue("12:00");
     }
-    // 土日 stay off
     expect(screen.getAllByText("受付なし")).toHaveLength(2);
   });
 });
