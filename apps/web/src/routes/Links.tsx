@@ -1,45 +1,29 @@
 import * as stylex from "@stylexjs/stylex";
-import {
-  Calendar as CalendarIcon,
-  Clock,
-  Copy,
-  Edit,
-  Filter,
-  Globe,
-  Link2,
-  MoreHorizontal,
-  Plus,
-  Search,
-  Sparkles,
-  Video,
-} from "lucide-react";
+import { Clock, Copy, Edit, Filter, MoreHorizontal, Plus, Search, Video } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { AvatarStackMember } from "@/components/ui/avatar-stack";
 import { AvatarStack } from "@/components/ui/avatar-stack";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { PromoBanner } from "@/components/ui/promo-banner";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatCard } from "@/components/ui/stat-card";
 import { ApiError } from "@/lib/api";
 import { useLinksQuery } from "@/lib/queries";
 import type { LinkSummary } from "@/lib/types";
-import { colors, radius, shadow, space, typography } from "@/styles/tokens.stylex";
+import { colors, radius, space, typography } from "@/styles/tokens.stylex";
 
 // ---------------------------------------------------------------------------
 // Links 一覧画面 (ISH-237 / L-04)
 //
 // Spir 系 Artboard 1 (links-list) を Pastel Blue palette + 既存 component 群
-// (PromoBanner / StatCard / AvatarStack / Button / Input / Badge / Card) で
-// 再構築する。Page header → Promo banner → Stats row (4 枚) → Links table
-// (Card 内 grid) という 4 段構成。
+// (AvatarStack / Button / Input / Badge / Card) で再構築する。
+// Page header → Links table (Card 内 grid) という構成。
 //
 // Mock data 方針:
 //   - links.length のみ実 API。
-//   - StatCard の 3 値 / 各 row の visits + members + meetType + candidates
-//     は MVP 用途のため固定値か link.id の hash で導出 (deterministic で test
-//     しやすく、デモでも見栄えする)。
+//   - 各 row の visits + members + meetType + candidates は MVP 用途のため
+//     固定値か link.id の hash で導出 (deterministic で test しやすく、
+//     デモでも見栄えする)。
 //   - AvatarStack の members は link.id の seed から色 + initial を導出する
 //     (実際の "共催者" 概念は MVP 未実装)。
 //   - 更新の相対時刻は updatedAt から計算する (今日 / 昨日 / N日前 / 1週間前)。
@@ -87,24 +71,7 @@ const styles = stylex.create({
   searchWrap: {
     width: "15rem",
   },
-  // stats grid
-  statsGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(4, 1fr)",
-    gap: space.md,
-    "@media (max-width: 1024px)": {
-      gridTemplateColumns: "repeat(2, 1fr)",
-    },
-    "@media (max-width: 640px)": {
-      gridTemplateColumns: "1fr",
-    },
-  },
   // table
-  tableCard: {
-    padding: 0,
-    overflow: "hidden",
-    borderColor: colors.ink200,
-  },
   tableHeader: {
     display: "grid",
     gridTemplateColumns: "90px 1fr 200px 140px 120px 110px",
@@ -206,15 +173,9 @@ const styles = stylex.create({
     color: colors.blue600,
   },
   // states
-  errorCard: {
-    borderColor: colors.ink200,
-  },
   errorMsg: {
     color: colors.destructive,
     fontSize: typography.fontSizeSm,
-  },
-  emptyTitle: {
-    color: colors.blue900,
   },
   // skeleton
   skeletonRow: {
@@ -225,12 +186,6 @@ const styles = stylex.create({
     gap: space.md,
     borderBottom: `1px solid ${colors.ink100}`,
     backgroundColor: colors.bg,
-  },
-  // primary CTA — Pastel Blue glow
-  primaryCta: {
-    backgroundColor: { default: colors.blue600, ":hover": colors.blue700 },
-    color: colors.bg,
-    boxShadow: shadow.blueGlow,
   },
 });
 
@@ -304,16 +259,6 @@ export default function Links() {
     <div {...stylex.props(styles.page)}>
       <PageHeader />
 
-      <PromoBanner
-        title="お試し期間中は空き時間リンクを無制限にご利用いただけます"
-        description="2026/05/25まで · チームメンバーを招待して、共催リンクも作成できます"
-        primaryAction={{ label: "プランについて" }}
-        secondaryAction={{ label: "詳細を見る" }}
-        icon={<Sparkles size={22} />}
-      />
-
-      <StatsGrid linksCount={links.length} />
-
       {isLoading && <LinksTableSkeleton />}
 
       {isError && (
@@ -384,45 +329,6 @@ function PageHeader() {
         </Button>
       </div>
     </header>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Stats grid (4 枚 — links.length のみ real, 残りは mock)
-// ---------------------------------------------------------------------------
-
-function StatsGrid({ linksCount }: { linksCount: number }) {
-  return (
-    <div {...stylex.props(styles.statsGrid)}>
-      <StatCard
-        label="アクティブなリンク"
-        value={linksCount}
-        sub="+1 今月"
-        icon={<Link2 size={18} />}
-        tone="blue"
-      />
-      <StatCard
-        label="今週のアクセス数"
-        value={270}
-        sub="+18% 先週比"
-        icon={<Globe size={18} />}
-        tone="mint"
-      />
-      <StatCard
-        label="予約済の予定"
-        value={29}
-        sub="今月"
-        icon={<CalendarIcon size={18} />}
-        tone="lilac"
-      />
-      <StatCard
-        label="平均応答時間"
-        value="2.4h"
-        sub="リンク作成→予約"
-        icon={<Clock size={18} />}
-        tone="amber"
-      />
-    </div>
   );
 }
 
