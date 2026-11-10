@@ -1,0 +1,5 @@
+# bootstrap-specific (in addition to ../.gitignore)
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/terraform.tfvars

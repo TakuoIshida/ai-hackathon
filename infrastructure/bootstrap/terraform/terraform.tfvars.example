@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars and fill in real values.
+# terraform.tfvars is gitignored — never commit project IDs that you do not want public.
+
+github_repository = "TakuoIshida/ai-hackathon"
+
+envs = {
+  dev = {
+    project_id = "ai-hackathon-dev"
+    region     = "asia-northeast1"
+  }
+  stg = {
+    project_id = "ai-hackathon-stg"
+    region     = "asia-northeast1"
+  }
+  prod = {
+    project_id = "ai-hackathon-prod"
+    region     = "asia-northeast1"
+  }
+}
